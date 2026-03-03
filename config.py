@@ -66,6 +66,27 @@ def init_db():
             draft_created     INTEGER DEFAULT 0,
             notification_sent INTEGER DEFAULT 0
         );
+
+        CREATE TABLE IF NOT EXISTS memory_style (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            content   TEXT NOT NULL,
+            updated   TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS memory_feedback (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT DEFAULT (datetime('now','localtime')),
+            role      TEXT NOT NULL,
+            message   TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS memory_lessons (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            timestamp TEXT DEFAULT (datetime('now','localtime')),
+            lesson    TEXT NOT NULL,
+            source    TEXT,
+            active    INTEGER DEFAULT 1
+        );
     """)
 
     # Seed default settings
@@ -368,3 +389,93 @@ def get_all_plugin_states() -> dict:
     rows = conn.execute("SELECT * FROM plugin_registry").fetchall()
     conn.close()
     return {r["plugin_id"]: dict(r) for r in rows}
+
+
+# ── Memory: Style Preferences ────────────────────────────────────────────────
+
+def get_style_preferences() -> str:
+    """Return the global style/tone instructions, or empty string."""
+    conn = get_db()
+    row = conn.execute("SELECT content FROM memory_style ORDER BY id DESC LIMIT 1").fetchone()
+    conn.close()
+    return row["content"] if row else ""
+
+
+def save_style_preferences(content: str):
+    """Overwrite the global style/tone instructions."""
+    conn = get_db()
+    conn.execute("DELETE FROM memory_style")
+    if content.strip():
+        conn.execute("INSERT INTO memory_style (content) VALUES (?)", (content.strip(),))
+    conn.commit()
+    conn.close()
+
+
+# ── Memory: Chat Feedback ────────────────────────────────────────────────────
+
+def add_feedback_message(role: str, message: str):
+    """Add a message to the feedback chat history. role = 'user' or 'agent'."""
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO memory_feedback (role, message) VALUES (?, ?)",
+        (role, message),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_feedback_history(limit=200) -> list[dict]:
+    """Return chat history ordered oldest-first."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM memory_feedback ORDER BY id ASC LIMIT ?", (limit,)
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def clear_feedback_history():
+    conn = get_db()
+    conn.execute("DELETE FROM memory_feedback")
+    conn.commit()
+    conn.close()
+
+
+# ── Memory: Extracted Lessons ────────────────────────────────────────────────
+
+def add_lesson(lesson: str, source: str = ""):
+    """Store an extracted lesson from user feedback."""
+    conn = get_db()
+    conn.execute(
+        "INSERT INTO memory_lessons (lesson, source) VALUES (?, ?)",
+        (lesson, source),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_active_lessons() -> list[dict]:
+    """Return all active lessons for injection into prompts."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM memory_lessons WHERE active=1 ORDER BY id ASC"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def delete_lesson(lesson_id: int):
+    conn = get_db()
+    conn.execute("DELETE FROM memory_lessons WHERE id=?", (lesson_id,))
+    conn.commit()
+    conn.close()
+
+
+def toggle_lesson(lesson_id: int, active: bool):
+    conn = get_db()
+    conn.execute(
+        "UPDATE memory_lessons SET active=? WHERE id=?",
+        (1 if active else 0, lesson_id),
+    )
+    conn.commit()
+    conn.close()

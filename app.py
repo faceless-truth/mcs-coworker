@@ -12,7 +12,10 @@ import tkinter as tk
 import config
 from config import (
     init_db, get_setting, set_setting, get_rules, save_rule, delete_rule,
-    get_staff, save_staff, delete_staff, get_recent_activity
+    get_staff, save_staff, delete_staff, get_recent_activity,
+    get_style_preferences, save_style_preferences,
+    add_feedback_message, get_feedback_history, clear_feedback_history,
+    add_lesson, get_active_lessons, delete_lesson, toggle_lesson,
 )
 from graph_client import GraphClient
 from plugin_loader import PluginLoader
@@ -90,6 +93,7 @@ class App(ctk.CTk):
             ("plugins",   "🧩  Plugins"),
             ("rules",     "📨  Email Rules"),
             ("staff",     "👥  Staff & Notify"),
+            ("memory",    "🧠  Memory"),
             ("settings",  "🔧  Settings"),
             ("activity",  "📋  Activity Log"),
         ]
@@ -110,6 +114,7 @@ class App(ctk.CTk):
         self._build_plugins_page()
         self._build_rules_page()
         self._build_staff_page()
+        self._build_memory_page()
         self._build_settings_page()
         self._build_activity_page()
 
@@ -706,6 +711,287 @@ PLUGIN IDEAS FOR MC & S
         if messagebox.askyesno("Delete", f"Remove {staff['name']}?"):
             delete_staff(staff["id"])
             self._refresh_staff_list()
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Memory page
+    # ────────────────────────────────────────────────────────────────────────
+
+    def _build_memory_page(self):
+        page = ctk.CTkFrame(self.content, fg_color=BG_LIGHT, corner_radius=0)
+        self._pages["memory"] = page
+
+        ctk.CTkLabel(page, text="Memory",
+                     font=ctk.CTkFont(size=22, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(anchor="w", padx=28, pady=(24, 2))
+        ctk.CTkLabel(page,
+                     text="Teach the agent how you like things done. Give feedback on drafts and it will learn for next time.",
+                     text_color=TEXT_MUTED, font=ctk.CTkFont(size=13)).pack(anchor="w", padx=28, pady=(0, 12))
+
+        # ── Main horizontal split ──
+        body = ctk.CTkFrame(page, fg_color=BG_LIGHT)
+        body.pack(fill="both", expand=True, padx=28, pady=(0, 20))
+
+        # Left: Chat + Style
+        left = ctk.CTkFrame(body, fg_color=BG_LIGHT)
+        left.pack(side="left", fill="both", expand=True, padx=(0, 8))
+
+        # ── Style Preferences Card ──
+        style_card = ctk.CTkFrame(left, fg_color=CARD_BG, corner_radius=12)
+        style_card.pack(fill="x", pady=(0, 10))
+
+        style_top = ctk.CTkFrame(style_card, fg_color=CARD_BG)
+        style_top.pack(fill="x", padx=16, pady=(12, 4))
+        ctk.CTkLabel(style_top, text="✍️  Tone & Style Preferences",
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(side="left")
+        ctk.CTkButton(style_top, text="Save", width=70, height=28,
+                      fg_color=ACCENT_GREEN, hover_color="#1B5E20",
+                      font=ctk.CTkFont(size=12),
+                      command=self._save_style_prefs).pack(side="right")
+
+        ctk.CTkLabel(style_card,
+                     text="These instructions are included in every AI prompt. Write naturally.",
+                     text_color=TEXT_MUTED, font=ctk.CTkFont(size=11)).pack(anchor="w", padx=16, pady=(0, 4))
+
+        self.style_textbox = ctk.CTkTextbox(style_card, height=80,
+                                            font=ctk.CTkFont(size=12),
+                                            fg_color="#F8F9FA", corner_radius=8)
+        self.style_textbox.pack(fill="x", padx=16, pady=(0, 12))
+        existing_style = get_style_preferences()
+        if existing_style:
+            self.style_textbox.insert("1.0", existing_style)
+
+        # ── Chat Feedback Interface ──
+        chat_card = ctk.CTkFrame(left, fg_color=CARD_BG, corner_radius=12)
+        chat_card.pack(fill="both", expand=True)
+
+        chat_top = ctk.CTkFrame(chat_card, fg_color=CARD_BG)
+        chat_top.pack(fill="x", padx=16, pady=(12, 4))
+        ctk.CTkLabel(chat_top, text="💬  Feedback Chat",
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(side="left")
+        ctk.CTkButton(chat_top, text="Clear Chat", width=90, height=28,
+                      fg_color="#C62828", hover_color="#7F0000",
+                      font=ctk.CTkFont(size=11),
+                      command=self._clear_memory_chat).pack(side="right")
+
+        ctk.CTkLabel(chat_card,
+                     text='Tell the agent what you liked or didn\'t like. e.g. "The Monday draft to John was too formal."',
+                     text_color=TEXT_MUTED, font=ctk.CTkFont(size=11),
+                     wraplength=550).pack(anchor="w", padx=16, pady=(0, 6))
+
+        self.chat_display = ctk.CTkTextbox(chat_card,
+                                           font=ctk.CTkFont(size=12),
+                                           fg_color="#1A1A2E", text_color="#E0E0E0",
+                                           corner_radius=8, state="disabled")
+        self.chat_display.pack(fill="both", expand=True, padx=16, pady=(0, 8))
+
+        # Configure tags for chat bubbles
+        self.chat_display._textbox.tag_configure("user_name", foreground="#64B5F6",
+                                                  font=("Arial", 11, "bold"))
+        self.chat_display._textbox.tag_configure("agent_name", foreground="#81C784",
+                                                  font=("Arial", 11, "bold"))
+        self.chat_display._textbox.tag_configure("timestamp", foreground="#616161",
+                                                  font=("Courier", 9))
+        self.chat_display._textbox.tag_configure("user_msg", foreground="#E3F2FD",
+                                                  font=("Arial", 12))
+        self.chat_display._textbox.tag_configure("agent_msg", foreground="#C8E6C9",
+                                                  font=("Arial", 12))
+
+        input_row = ctk.CTkFrame(chat_card, fg_color=CARD_BG)
+        input_row.pack(fill="x", padx=16, pady=(0, 12))
+
+        self.chat_input = ctk.CTkEntry(input_row, height=40,
+                                       placeholder_text="Type your feedback here...",
+                                       font=ctk.CTkFont(size=13))
+        self.chat_input.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self.chat_input.bind("<Return>", lambda e: self._send_feedback())
+
+        ctk.CTkButton(input_row, text="Send", width=80, height=40,
+                      fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
+                      font=ctk.CTkFont(size=13, weight="bold"),
+                      command=self._send_feedback).pack(side="right")
+
+        # ── Right side: Learned Lessons panel ──
+        right = ctk.CTkFrame(body, fg_color=CARD_BG, corner_radius=12, width=320)
+        right.pack(side="right", fill="y", padx=(8, 0))
+        right.pack_propagate(False)
+
+        ctk.CTkLabel(right, text="📚  Learned Lessons",
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(anchor="w", padx=16, pady=(12, 2))
+        ctk.CTkLabel(right,
+                     text="Extracted from your feedback. These guide every future email.",
+                     text_color=TEXT_MUTED, font=ctk.CTkFont(size=11),
+                     wraplength=280).pack(anchor="w", padx=16, pady=(0, 8))
+
+        self.lessons_scroll = ctk.CTkScrollableFrame(right, fg_color=CARD_BG)
+        self.lessons_scroll.pack(fill="both", expand=True, padx=8, pady=(0, 12))
+
+        # Load existing data
+        self._refresh_chat_display()
+        self._refresh_lessons_panel()
+
+    def _save_style_prefs(self):
+        content = self.style_textbox.get("1.0", "end-1c")
+        save_style_preferences(content)
+        self._log("✍️  Style preferences saved.")
+        messagebox.showinfo("Saved", "Tone & style preferences saved. These will be used in all future emails.")
+
+    def _refresh_chat_display(self):
+        self.chat_display.configure(state="normal")
+        self.chat_display.delete("1.0", "end")
+        history = get_feedback_history()
+        if not history:
+            self.chat_display.insert("end", "  No feedback yet.\n\n", "agent_msg")
+            self.chat_display.insert("end",
+                "  Start by telling me what you think of the emails I draft.\n"
+                "  For example:\n"
+                '  \u2022 "The email to John on Monday was too formal"\n'
+                '  \u2022 "Always use Warm regards, not Kind regards"\n'
+                '  \u2022 "Keep pricing emails under 3 paragraphs"\n',
+                "agent_msg")
+        else:
+            for msg in history:
+                ts = msg.get("timestamp", "")
+                role = msg["role"]
+                text = msg["message"]
+                if role == "user":
+                    self.chat_display.insert("end", f"  You", "user_name")
+                    self.chat_display.insert("end", f"  {ts}\n", "timestamp")
+                    self.chat_display.insert("end", f"  {text}\n\n", "user_msg")
+                else:
+                    self.chat_display.insert("end", f"  Agent", "agent_name")
+                    self.chat_display.insert("end", f"  {ts}\n", "timestamp")
+                    self.chat_display.insert("end", f"  {text}\n\n", "agent_msg")
+        self.chat_display.see("end")
+        self.chat_display.configure(state="disabled")
+
+    def _send_feedback(self):
+        text = self.chat_input.get().strip()
+        if not text:
+            return
+        self.chat_input.delete(0, "end")
+
+        # Save user message
+        add_feedback_message("user", text)
+        self._refresh_chat_display()
+
+        # Process with Claude in background
+        def process():
+            api_key = get_setting("anthropic_api_key")
+            if not api_key:
+                agent_reply = (
+                    "I\'ve noted your feedback, but I can\'t extract a lesson right now "
+                    "because the Anthropic API key isn\'t configured. Please add it in Settings. "
+                    "Your feedback has been saved and I\'ll process it once connected."
+                )
+                add_feedback_message("agent", agent_reply)
+                # Still save the raw feedback as a lesson
+                add_lesson(text, source="direct_feedback")
+                self.after(0, self._refresh_chat_display)
+                self.after(0, self._refresh_lessons_panel)
+                return
+
+            try:
+                import anthropic
+                client = anthropic.Anthropic(api_key=api_key)
+
+                existing_lessons = get_active_lessons()
+                lessons_context = ""
+                if existing_lessons:
+                    lessons_context = "\nExisting lessons already learned:\n" + "\n".join(
+                        f"- {l['lesson']}" for l in existing_lessons
+                    )
+
+                prompt = f"""You are the memory system for MC & S Coworker, a desktop email agent for an accounting firm.
+
+The user (Elio, the managing director) is giving you feedback about how the agent writes emails. Your job is to:
+1. Acknowledge the feedback warmly and briefly
+2. Extract a clear, actionable lesson that can be applied to future emails
+3. Return your response in this exact JSON format:
+
+{{"reply": "Your conversational acknowledgment", "lesson": "The clear, concise rule to remember"}}
+
+Keep the reply friendly and under 2 sentences. The lesson should be a single, specific instruction.
+If the feedback doesn't contain an actionable email-writing lesson, set lesson to null.
+{lessons_context}
+
+User feedback: {text}"""
+
+                response = client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=300,
+                    messages=[{"role": "user", "content": prompt}],
+                )
+
+                import re, json
+                raw = response.content[0].text.strip()
+                raw = re.sub(r"```json\s*|```", "", raw).strip()
+                parsed = json.loads(raw)
+
+                agent_reply = parsed.get("reply", "Got it, I\'ll remember that.")
+                lesson = parsed.get("lesson")
+
+                add_feedback_message("agent", agent_reply)
+
+                if lesson:
+                    add_lesson(lesson, source=text[:100])
+                    add_feedback_message("agent", f"📝 Lesson stored: \"{lesson}\"")
+
+            except Exception as e:
+                agent_reply = f"I\'ve saved your feedback. (Note: {e})"
+                add_feedback_message("agent", agent_reply)
+                add_lesson(text, source="direct_feedback")
+
+            self.after(0, self._refresh_chat_display)
+            self.after(0, self._refresh_lessons_panel)
+
+        threading.Thread(target=process, daemon=True).start()
+
+    def _clear_memory_chat(self):
+        if messagebox.askyesno("Clear Chat", "Clear the feedback chat history?\n\nNote: Learned lessons will NOT be deleted."):
+            clear_feedback_history()
+            self._refresh_chat_display()
+
+    def _refresh_lessons_panel(self):
+        for w in self.lessons_scroll.winfo_children():
+            w.destroy()
+
+        lessons = get_active_lessons()
+        if not lessons:
+            ctk.CTkLabel(self.lessons_scroll,
+                         text="No lessons yet. Start giving feedback in the chat!",
+                         text_color=TEXT_MUTED, font=ctk.CTkFont(size=11),
+                         wraplength=260).pack(pady=20)
+            return
+
+        for lesson in lessons:
+            card = ctk.CTkFrame(self.lessons_scroll, fg_color="#F0F4FF", corner_radius=8)
+            card.pack(fill="x", pady=3)
+
+            top_row = ctk.CTkFrame(card, fg_color="transparent")
+            top_row.pack(fill="x", padx=10, pady=(8, 2))
+
+            ctk.CTkLabel(top_row, text=lesson["lesson"],
+                         font=ctk.CTkFont(size=11),
+                         text_color=TEXT_PRIMARY,
+                         wraplength=220, anchor="w", justify="left").pack(side="left", fill="x", expand=True)
+
+            ctk.CTkButton(top_row, text="✕", width=24, height=24,
+                          fg_color="transparent", hover_color="#FFCDD2",
+                          text_color="#C62828", font=ctk.CTkFont(size=12),
+                          command=lambda lid=lesson["id"]: self._delete_lesson(lid)).pack(side="right")
+
+            if lesson.get("source"):
+                ctk.CTkLabel(card, text=f'From: "{lesson["source"]}"',
+                             text_color=TEXT_MUTED, font=ctk.CTkFont(size=9),
+                             wraplength=260, anchor="w").pack(anchor="w", padx=10, pady=(0, 6))
+
+    def _delete_lesson(self, lesson_id):
+        delete_lesson(lesson_id)
+        self._refresh_lessons_panel()
+        self._log("📚  Lesson removed from memory.")
 
     # ────────────────────────────────────────────────────────────────────────
     # Settings page

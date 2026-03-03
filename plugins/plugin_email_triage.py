@@ -34,7 +34,7 @@ from datetime import datetime
 import anthropic
 
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
-from config import get_rules, get_staff, get_setting, log_activity
+from config import get_rules, get_staff, get_setting, log_activity, get_style_preferences, get_active_lessons
 
 
 class EmailTriagePlugin(AgentPlugin):
@@ -211,6 +211,18 @@ class EmailTriagePlugin(AgentPlugin):
             for r in rules if r.get("enabled")
         ])
 
+        # ── Inject memory context ──
+        memory_block = ""
+        style_prefs = get_style_preferences()
+        if style_prefs:
+            memory_block += f"\n\nIMPORTANT — TONE & STYLE INSTRUCTIONS FROM THE USER:\n{style_prefs}\n"
+
+        lessons = get_active_lessons()
+        if lessons:
+            memory_block += "\nLEARNED PREFERENCES (apply these to all responses):\n"
+            memory_block += "\n".join(f"- {l['lesson']}" for l in lessons)
+            memory_block += "\n"
+
         prompt = f"""You are an email classifier for MC & S, an accounting firm in Keysborough, Victoria.
 
 Classify the email below into one of these categories, or OTHER if none fit:
@@ -219,7 +231,7 @@ Classify the email below into one of these categories, or OTHER if none fit:
 - OTHER: Anything not listed above (meeting requests, complaints, ATO notices, etc.)
 
 Also extract the sender's first name from any sign-off in the body. If not found, return "there".
-
+{memory_block}
 Subject: {subject}
 Body: {body[:1500]}
 
