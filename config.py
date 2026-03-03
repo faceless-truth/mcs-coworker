@@ -106,6 +106,7 @@ def init_db():
         "practice_email":         "",
         "timezone":               "AUS Eastern Standard Time",
         "setup_complete":         "0",
+        "checklist_forms_link":  "",
     }
     for key, value in defaults.items():
         c.execute(
@@ -134,41 +135,17 @@ def init_db():
 <li><strong>BAS lodgement (with your software):</strong> from $165</li>
 </ul>
 <p>Fees may vary based on the complexity of your situation. We are happy to provide a specific quote after an initial discussion.</p>
-<p>Please don\u2019t hesitate to call us on [PHONE] or reply to this email to arrange a time to chat.</p>
-<p>Kind regards,<br>MC & S Accounting Team<br>Keysborough, VIC</p>""",
+<p>Please don\u2019t hesitate to call us on [PHONE] or reply to this email to arrange a time to chat.</p>""",
                 1, 1,
             ),
             (
                 "CHECKLIST_REQUEST",
                 "what do i need,what documents,checklist,what to bring,prepare,what should i gather,what paperwork",
                 "Re: Tax Return Checklist \u2013 MC & S Accounting",
-                """<p>Dear {client_name},</p>
-<p>Thank you for getting in touch. Here is what you\u2019ll need for your tax return appointment:</p>
-<p><strong>All Clients:</strong></p>
-<ul>
-<li>Your Tax File Number (TFN)</li>
-<li>Bank account details for your refund</li>
-<li>Any ATO correspondence received during the year</li>
-</ul>
-<p><strong>Income:</strong></p>
-<ul>
-<li>Payment summaries / income statements from all employers</li>
-<li>Any government payments (Centrelink, JobKeeper, etc.)</li>
-<li>Interest statements from banks</li>
-<li>Dividend statements</li>
-<li>Any other income earned</li>
-</ul>
-<p><strong>Deductions (if applicable):</strong></p>
-<ul>
-<li>Work-related expense receipts</li>
-<li>Home office expenses</li>
-<li>Union/professional membership fees</li>
-<li>Self-education expenses</li>
-<li>Rental property income and expense statements</li>
-</ul>
-<p>If you\u2019re unsure whether something is relevant, bring it along and we\u2019ll advise you.</p>
-<p>We look forward to seeing you. Please reply or call [PHONE] to book your appointment.</p>
-<p>Kind regards,<br>MC & S Accounting Team<br>Keysborough, VIC</p>""",
+                """<p>Hi {client_name},</p>
+<p>Thank you for getting in touch. Please complete the checklist below \u2014 it will help us understand your deductions and what\u2019s relevant to your situation.</p>
+<p><a href="{checklist_forms_link}" style="display:inline-block;background:#1565C0;color:white;padding:10px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">Complete the Checklist</a></p>
+<p>Please have a read through and let me know if you have any questions.</p>""",
                 1, 2,
             ),
             (
@@ -178,8 +155,7 @@ def init_db():
                 """<p>Dear {client_name},</p>
 <p>Thank you for sending through your documents.</p>
 <p>We have received them and they are now in our queue for processing. A member of our team will be in touch once your return has been prepared or if we have any questions.</p>
-<p>If you have any urgent queries in the meantime, please don\u2019t hesitate to contact us on [PHONE].</p>
-<p>Kind regards,<br>MC & S Accounting Team<br>Keysborough, VIC</p>""",
+<p>If you have any urgent queries in the meantime, please don\u2019t hesitate to contact us on [PHONE].</p>""",
                 1, 3,
             ),
         ]

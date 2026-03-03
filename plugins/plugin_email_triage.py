@@ -258,6 +258,9 @@ Respond ONLY with valid JSON:
         result = template.replace("{client_name}", sender_name or "there")
         result = result.replace("{subject}", subject or "")
         result = result.replace("{date}", datetime.now().strftime("%d %B %Y"))
+        # Inject configurable links
+        forms_link = get_setting("checklist_forms_link", "")
+        result = result.replace("{checklist_forms_link}", forms_link)
         return result
 
     def _send_staff_notification(self, context: PluginContext,

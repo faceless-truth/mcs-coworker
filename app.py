@@ -1054,6 +1054,11 @@ User feedback: {text}"""
         self._setting_entries["practice_name"] = field(pr, "Practice Name", "practice_name")
         self._setting_entries["monitor_folder"] = field(pr, "Default Folder to Watch", "monitor_folder")
 
+        lf = section("Links & Forms")
+        ctk.CTkLabel(lf, text="Paste your Microsoft Forms URL here. It will be used in the Checklist email template.",
+                     text_color=TEXT_MUTED, font=ctk.CTkFont(size=11)).pack(anchor="w", padx=16, pady=(4, 0))
+        self._setting_entries["checklist_forms_link"] = field(lf, "Checklist Forms Link", "checklist_forms_link")
+
         bz = section("Business Hours")
         bi = ctk.CTkFrame(bz, fg_color=CARD_BG)
         bi.pack(fill="x", padx=16, pady=8)
