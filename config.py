@@ -67,6 +67,14 @@ def init_db():
             notification_sent INTEGER DEFAULT 0
         );
 
+        CREATE TABLE IF NOT EXISTS links_forms (
+            id        INTEGER PRIMARY KEY AUTOINCREMENT,
+            name      TEXT NOT NULL,
+            tag       TEXT NOT NULL UNIQUE,
+            url       TEXT NOT NULL DEFAULT '',
+            enabled   INTEGER DEFAULT 1
+        );
+
         CREATE TABLE IF NOT EXISTS memory_style (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
             content   TEXT NOT NULL,
@@ -106,7 +114,6 @@ def init_db():
         "practice_email":         "",
         "timezone":               "AUS Eastern Standard Time",
         "setup_complete":         "0",
-        "checklist_forms_link":  "",
     }
     for key, value in defaults.items():
         c.execute(
@@ -144,7 +151,7 @@ def init_db():
                 "Re: Tax Return Checklist \u2013 MC & S Accounting",
                 """<p>Hi {client_name},</p>
 <p>Thank you for getting in touch. Please complete the checklist below \u2014 it will help us understand your deductions and what\u2019s relevant to your situation.</p>
-<p><a href="{checklist_forms_link}" style="display:inline-block;background:#1565C0;color:white;padding:10px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">Complete the Checklist</a></p>
+<p><a href="{checklist_form}" style="display:inline-block;background:#1565C0;color:white;padding:10px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">Complete the Checklist</a></p>
 <p>Please have a read through and let me know if you have any questions.</p>""",
                 1, 2,
             ),
@@ -162,6 +169,17 @@ def init_db():
         c.executemany(
             "INSERT INTO email_rules (category, keywords, subject_template, body_template, enabled, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
             rules,
+        )
+
+    # Seed default links & forms
+    existing_links = c.execute("SELECT COUNT(*) FROM links_forms").fetchone()[0]
+    if existing_links == 0:
+        default_links = [
+            ("Tax Return Checklist", "checklist_form", ""),
+        ]
+        c.executemany(
+            "INSERT INTO links_forms (name, tag, url) VALUES (?, ?, ?)",
+            default_links,
         )
 
     conn.commit()
@@ -365,6 +383,49 @@ def get_all_plugin_states() -> dict:
     rows = conn.execute("SELECT * FROM plugin_registry").fetchall()
     conn.close()
     return {r["plugin_id"]: dict(r) for r in rows}
+
+
+# ── Links & Forms ────────────────────────────────────────────────────────────
+
+def get_links() -> list[dict]:
+    """Return all links/forms."""
+    conn = get_db()
+    rows = conn.execute("SELECT * FROM links_forms ORDER BY id").fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_links_as_dict() -> dict:
+    """Return {tag: url} for all enabled links. Used for template injection."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT tag, url FROM links_forms WHERE enabled=1"
+    ).fetchall()
+    conn.close()
+    return {r["tag"]: r["url"] for r in rows}
+
+
+def save_link(link: dict):
+    conn = get_db()
+    if link.get("id"):
+        conn.execute(
+            """UPDATE links_forms SET name=?, tag=?, url=?, enabled=? WHERE id=?""",
+            (link["name"], link["tag"], link["url"], link["enabled"], link["id"]),
+        )
+    else:
+        conn.execute(
+            """INSERT INTO links_forms (name, tag, url, enabled) VALUES (?, ?, ?, ?)""",
+            (link["name"], link["tag"], link.get("url", ""), link.get("enabled", 1)),
+        )
+    conn.commit()
+    conn.close()
+
+
+def delete_link(link_id: int):
+    conn = get_db()
+    conn.execute("DELETE FROM links_forms WHERE id=?", (link_id,))
+    conn.commit()
+    conn.close()
 
 
 # ── Memory: Style Preferences ────────────────────────────────────────────────

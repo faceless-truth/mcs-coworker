@@ -13,6 +13,7 @@ import config
 from config import (
     init_db, get_setting, set_setting, get_rules, save_rule, delete_rule,
     get_staff, save_staff, delete_staff, get_recent_activity,
+    get_links, save_link, delete_link,
     get_style_preferences, save_style_preferences,
     add_feedback_message, get_feedback_history, clear_feedback_history,
     add_lesson, get_active_lessons, delete_lesson, toggle_lesson,
@@ -1055,9 +1056,21 @@ User feedback: {text}"""
         self._setting_entries["monitor_folder"] = field(pr, "Default Folder to Watch", "monitor_folder")
 
         lf = section("Links & Forms")
-        ctk.CTkLabel(lf, text="Paste your Microsoft Forms URL here. It will be used in the Checklist email template.",
-                     text_color=TEXT_MUTED, font=ctk.CTkFont(size=11)).pack(anchor="w", padx=16, pady=(4, 0))
-        self._setting_entries["checklist_forms_link"] = field(lf, "Checklist Forms Link", "checklist_forms_link")
+        ctk.CTkLabel(lf,
+                     text="Add links and forms here. Use the {tag} in any Email Rule template body to insert the URL.",
+                     text_color=TEXT_MUTED, font=ctk.CTkFont(size=11),
+                     wraplength=740).pack(anchor="w", padx=16, pady=(4, 6))
+
+        self._links_container = ctk.CTkFrame(lf, fg_color=CARD_BG)
+        self._links_container.pack(fill="x", padx=16, pady=(0, 8))
+        self._refresh_links_list()
+
+        add_link_row = ctk.CTkFrame(lf, fg_color=CARD_BG)
+        add_link_row.pack(fill="x", padx=16, pady=(0, 12))
+        ctk.CTkButton(add_link_row, text="+ Add Link / Form", width=160, height=32,
+                      fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
+                      font=ctk.CTkFont(size=12),
+                      command=self._add_link_dialog).pack(side="left", pady=6)
 
         bz = section("Business Hours")
         bi = ctk.CTkFrame(bz, fg_color=CARD_BG)
@@ -1072,6 +1085,148 @@ User feedback: {text}"""
                       fg_color=ACCENT_GREEN, hover_color="#1B5E20",
                       font=ctk.CTkFont(size=14, weight="bold"),
                       command=self._save_settings).pack(fill="x", pady=16)
+
+    def _refresh_links_list(self):
+        for w in self._links_container.winfo_children():
+            w.destroy()
+
+        links = get_links()
+        if not links:
+            ctk.CTkLabel(self._links_container,
+                         text="No links yet. Click '+ Add Link / Form' to create one.",
+                         text_color=TEXT_MUTED, font=ctk.CTkFont(size=11)).pack(pady=12)
+            return
+
+        # Header
+        hdr = ctk.CTkFrame(self._links_container, fg_color="transparent")
+        hdr.pack(fill="x", padx=8, pady=(8, 2))
+        ctk.CTkLabel(hdr, text="Name", width=180, font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color=TEXT_MUTED).pack(side="left")
+        ctk.CTkLabel(hdr, text="Tag (use in templates)", width=160, font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color=TEXT_MUTED).pack(side="left")
+        ctk.CTkLabel(hdr, text="URL", font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color=TEXT_MUTED).pack(side="left", padx=(0, 8))
+
+        for link in links:
+            row = ctk.CTkFrame(self._links_container, fg_color="#F0F4FF", corner_radius=6)
+            row.pack(fill="x", padx=8, pady=2)
+
+            ctk.CTkLabel(row, text=link["name"], width=180,
+                         font=ctk.CTkFont(size=12),
+                         text_color=TEXT_PRIMARY, anchor="w").pack(side="left", padx=(10, 4), pady=8)
+
+            tag_label = f"{{{link['tag']}}}"
+            ctk.CTkLabel(row, text=tag_label, width=160,
+                         font=ctk.CTkFont(family="Courier", size=12),
+                         text_color=BRAND_BLUE, anchor="w").pack(side="left", padx=4)
+
+            url_text = link["url"] if link["url"] else "(not set — paste URL)"
+            url_color = TEXT_PRIMARY if link["url"] else "#C62828"
+            ctk.CTkLabel(row, text=url_text[:60] + ("..." if len(url_text) > 60 else ""),
+                         font=ctk.CTkFont(size=11),
+                         text_color=url_color, anchor="w").pack(side="left", fill="x", expand=True, padx=4)
+
+            ctk.CTkButton(row, text="Edit", width=50, height=26,
+                          fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
+                          font=ctk.CTkFont(size=11),
+                          command=lambda l=link: self._edit_link_dialog(l)).pack(side="right", padx=2, pady=4)
+            ctk.CTkButton(row, text="\u2715", width=30, height=26,
+                          fg_color="transparent", hover_color="#FFCDD2",
+                          text_color="#C62828", font=ctk.CTkFont(size=12),
+                          command=lambda l=link: self._delete_link(l)).pack(side="right", padx=(0, 2), pady=4)
+
+    def _add_link_dialog(self):
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Add Link / Form")
+        dialog.geometry("500x280")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        ctk.CTkLabel(dialog, text="Add a New Link or Form",
+                     font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(16, 12))
+
+        form = ctk.CTkFrame(dialog, fg_color="transparent")
+        form.pack(fill="x", padx=24)
+
+        ctk.CTkLabel(form, text="Name (e.g. Tax Return Checklist):",
+                     font=ctk.CTkFont(size=12)).pack(anchor="w")
+        name_entry = ctk.CTkEntry(form, height=32)
+        name_entry.pack(fill="x", pady=(2, 8))
+
+        ctk.CTkLabel(form, text="Tag (e.g. checklist_form — no spaces, lowercase):",
+                     font=ctk.CTkFont(size=12)).pack(anchor="w")
+        tag_entry = ctk.CTkEntry(form, height=32, placeholder_text="onboarding_form")
+        tag_entry.pack(fill="x", pady=(2, 8))
+
+        ctk.CTkLabel(form, text="URL (paste your Forms/link URL here):",
+                     font=ctk.CTkFont(size=12)).pack(anchor="w")
+        url_entry = ctk.CTkEntry(form, height=32, placeholder_text="https://forms.office.com/r/...")
+        url_entry.pack(fill="x", pady=(2, 12))
+
+        def save():
+            name = name_entry.get().strip()
+            tag = tag_entry.get().strip().lower().replace(" ", "_")
+            url = url_entry.get().strip()
+            if not name or not tag:
+                messagebox.showerror("Missing Info", "Name and Tag are required.", parent=dialog)
+                return
+            save_link({"name": name, "tag": tag, "url": url, "enabled": 1})
+            dialog.destroy()
+            self._refresh_links_list()
+            self._log(f"\U0001f517 Link added: {name} → {{{tag}}}")
+
+        ctk.CTkButton(dialog, text="Save", height=36,
+                      fg_color=ACCENT_GREEN, hover_color="#1B5E20",
+                      command=save).pack(pady=(0, 16))
+
+    def _edit_link_dialog(self, link):
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Edit Link / Form")
+        dialog.geometry("500x280")
+        dialog.resizable(False, False)
+        dialog.grab_set()
+
+        ctk.CTkLabel(dialog, text="Edit Link or Form",
+                     font=ctk.CTkFont(size=16, weight="bold")).pack(pady=(16, 12))
+
+        form = ctk.CTkFrame(dialog, fg_color="transparent")
+        form.pack(fill="x", padx=24)
+
+        ctk.CTkLabel(form, text="Name:", font=ctk.CTkFont(size=12)).pack(anchor="w")
+        name_entry = ctk.CTkEntry(form, height=32)
+        name_entry.pack(fill="x", pady=(2, 8))
+        name_entry.insert(0, link["name"])
+
+        ctk.CTkLabel(form, text=f"Tag:  {{{link['tag']}}}",
+                     font=ctk.CTkFont(family="Courier", size=12),
+                     text_color=TEXT_MUTED).pack(anchor="w", pady=(0, 8))
+
+        ctk.CTkLabel(form, text="URL:", font=ctk.CTkFont(size=12)).pack(anchor="w")
+        url_entry = ctk.CTkEntry(form, height=32, placeholder_text="https://forms.office.com/r/...")
+        url_entry.pack(fill="x", pady=(2, 12))
+        if link["url"]:
+            url_entry.insert(0, link["url"])
+
+        def save():
+            name = name_entry.get().strip()
+            url = url_entry.get().strip()
+            if not name:
+                messagebox.showerror("Missing Info", "Name is required.", parent=dialog)
+                return
+            save_link({"id": link["id"], "name": name, "tag": link["tag"], "url": url, "enabled": 1})
+            dialog.destroy()
+            self._refresh_links_list()
+            self._log(f"\U0001f517 Link updated: {name}")
+
+        ctk.CTkButton(dialog, text="Save", height=36,
+                      fg_color=ACCENT_GREEN, hover_color="#1B5E20",
+                      command=save).pack(pady=(0, 16))
+
+    def _delete_link(self, link):
+        if messagebox.askyesno("Delete Link", f"Remove '{link['name']}'?\n\nMake sure no email rules are using {{{link['tag']}}} before deleting."):
+            delete_link(link["id"])
+            self._refresh_links_list()
+            self._log(f"\U0001f517 Link removed: {link['name']}")
 
     def _save_settings(self):
         for key, entry in self._setting_entries.items():

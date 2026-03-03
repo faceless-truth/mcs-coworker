@@ -34,7 +34,7 @@ from datetime import datetime
 import anthropic
 
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
-from config import get_rules, get_staff, get_setting, log_activity, get_style_preferences, get_active_lessons
+from config import get_rules, get_staff, get_setting, log_activity, get_style_preferences, get_active_lessons, get_links_as_dict
 
 
 class EmailTriagePlugin(AgentPlugin):
@@ -258,9 +258,10 @@ Respond ONLY with valid JSON:
         result = template.replace("{client_name}", sender_name or "there")
         result = result.replace("{subject}", subject or "")
         result = result.replace("{date}", datetime.now().strftime("%d %B %Y"))
-        # Inject configurable links
-        forms_link = get_setting("checklist_forms_link", "")
-        result = result.replace("{checklist_forms_link}", forms_link)
+        # Inject all dynamic links from Links & Forms manager
+        links = get_links_as_dict()
+        for tag, url in links.items():
+            result = result.replace(f"{{{tag}}}", url)
         return result
 
     def _send_staff_notification(self, context: PluginContext,
