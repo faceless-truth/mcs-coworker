@@ -27,3 +27,6 @@ Thumbs.db
 
 # MSAL token cache
 .msal_cache.bin
+
+# First-run marker
+.shortcut_created
