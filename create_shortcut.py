@@ -22,20 +22,19 @@ def create_shortcut():
     shortcut_path = os.path.join(desktop, "MC & S Coworker.lnk")
     app_dir = os.path.dirname(os.path.abspath(__file__))
     icon_path = os.path.join(app_dir, "assets", "icon.ico")
-    bat_path = os.path.join(app_dir, "launch.bat")
+    vbs_path = os.path.join(app_dir, "launch_silent.vbs")
 
     shell = Dispatch("WScript.Shell")
     shortcut = shell.CreateShortCut(shortcut_path)
-    shortcut.Targetpath = bat_path
+    shortcut.Targetpath = vbs_path
     shortcut.WorkingDirectory = app_dir
     shortcut.IconLocation = icon_path
     shortcut.Description = "MC & S Coworker — Desktop Agent"
-    shortcut.WindowStyle = 7  # Minimised (hides the CMD window)
     shortcut.save()
 
     print(f"✓ Desktop shortcut created: {shortcut_path}")
     print(f"  Icon: {icon_path}")
-    print(f"  Target: {bat_path}")
+    print(f"  Target: {vbs_path}")
 
 
 if __name__ == "__main__":

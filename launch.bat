@@ -44,7 +44,16 @@ if not exist ".shortcut_created" (
 
 echo.
 echo [START] Launching MC ^& S Coworker...
+echo         You can close this window — the app will keep running.
 echo.
-python app.py
 
-pause
+:: Launch with pythonw (no terminal) if available, otherwise fall back to python
+if exist "venv\Scripts\pythonw.exe" (
+    start "" venv\Scripts\pythonw.exe app.py
+) else (
+    start /min "" python app.py
+)
+
+:: Give it a moment to start, then close the terminal
+timeout /t 2 /nobreak >nul
+exit
