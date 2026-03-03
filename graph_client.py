@@ -15,7 +15,6 @@ import msal
 GRAPH_SCOPES = [
     "Mail.ReadWrite",
     "Mail.Send",
-    "offline_access",
 ]
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
