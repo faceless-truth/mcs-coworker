@@ -52,6 +52,18 @@ class App(ctk.CTk):
         self._session_actions = 0
         self._session_drafts  = 0
 
+        # Check if first-run setup is needed
+        if not get_setting("setup_completed"):
+            self._show_setup_wizard()
+        else:
+            self._launch_main_ui()
+
+    def _launch_main_ui(self):
+        """Build and show the main application interface."""
+        # Destroy wizard frame if it exists
+        if hasattr(self, '_wizard_frame'):
+            self._wizard_frame.destroy()
+
         self._build_header()
         self._build_nav()
         self._build_content_area()
@@ -59,6 +71,374 @@ class App(ctk.CTk):
         self._try_restore_session()
         self.after(200, self._initialise_plugins)
         self._show_page("dashboard")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # First-Run Setup Wizard
+    # ────────────────────────────────────────────────────────────────────────
+
+    def _show_setup_wizard(self):
+        """Display a step-by-step setup wizard for first-time users."""
+        self._wizard_step = 0
+        self._wizard_frame = ctk.CTkFrame(self, fg_color=BG_LIGHT, corner_radius=0)
+        self._wizard_frame.pack(fill="both", expand=True)
+
+        # Header bar
+        hdr = ctk.CTkFrame(self._wizard_frame, height=64, fg_color=BRAND_BLUE, corner_radius=0)
+        hdr.pack(fill="x")
+        hdr.pack_propagate(False)
+        ctk.CTkLabel(hdr, text="🏢  MC & S  Coworker — Setup",
+                     font=ctk.CTkFont(family="Arial", size=20, weight="bold"),
+                     text_color="white").pack(side="left", padx=20, pady=16)
+
+        # Progress indicator
+        self._wizard_progress_frame = ctk.CTkFrame(self._wizard_frame, fg_color=BG_LIGHT, height=50)
+        self._wizard_progress_frame.pack(fill="x", padx=60, pady=(20, 0))
+        self._wizard_progress_frame.pack_propagate(False)
+        self._wizard_step_labels = []
+        steps = ["Welcome", "Sign In", "AI Key", "Ready"]
+        for i, step_name in enumerate(steps):
+            lbl = ctk.CTkLabel(self._wizard_progress_frame,
+                               text=f"  {i+1}. {step_name}  ",
+                               font=ctk.CTkFont(size=13, weight="bold" if i == 0 else "normal"),
+                               text_color=BRAND_BLUE if i == 0 else TEXT_MUTED)
+            lbl.pack(side="left", padx=12)
+            self._wizard_step_labels.append(lbl)
+
+        # Content area for wizard steps
+        self._wizard_content = ctk.CTkFrame(self._wizard_frame, fg_color=BG_LIGHT)
+        self._wizard_content.pack(fill="both", expand=True, padx=60, pady=(10, 20))
+
+        # Button row
+        self._wizard_btn_frame = ctk.CTkFrame(self._wizard_frame, fg_color=BG_LIGHT, height=60)
+        self._wizard_btn_frame.pack(fill="x", padx=60, pady=(0, 30))
+        self._wizard_btn_frame.pack_propagate(False)
+
+        self._wizard_back_btn = ctk.CTkButton(
+            self._wizard_btn_frame, text="← Back", width=120, height=42,
+            fg_color="transparent", hover_color="#E3F2FD",
+            text_color=BRAND_BLUE, border_width=1, border_color=BRAND_BLUE,
+            font=ctk.CTkFont(size=14), command=self._wizard_back)
+        self._wizard_back_btn.pack(side="left")
+
+        self._wizard_next_btn = ctk.CTkButton(
+            self._wizard_btn_frame, text="Get Started →", width=180, height=42,
+            fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
+            font=ctk.CTkFont(size=14, weight="bold"), command=self._wizard_next)
+        self._wizard_next_btn.pack(side="right")
+
+        self._wizard_show_step(0)
+
+    def _wizard_update_progress(self, step):
+        for i, lbl in enumerate(self._wizard_step_labels):
+            if i < step:
+                lbl.configure(text_color=ACCENT_GREEN,
+                              font=ctk.CTkFont(size=13, weight="normal"))
+            elif i == step:
+                lbl.configure(text_color=BRAND_BLUE,
+                              font=ctk.CTkFont(size=13, weight="bold"))
+            else:
+                lbl.configure(text_color=TEXT_MUTED,
+                              font=ctk.CTkFont(size=13, weight="normal"))
+
+    def _wizard_show_step(self, step):
+        self._wizard_step = step
+        self._wizard_update_progress(step)
+
+        # Clear content area
+        for w in self._wizard_content.winfo_children():
+            w.destroy()
+
+        # Update button states
+        if step == 0:
+            self._wizard_back_btn.configure(state="disabled")
+            self._wizard_next_btn.configure(text="Get Started →")
+        elif step == 3:
+            self._wizard_back_btn.configure(state="normal")
+            self._wizard_next_btn.configure(text="✓  Launch MC & S Coworker")
+        else:
+            self._wizard_back_btn.configure(state="normal")
+            self._wizard_next_btn.configure(text="Next →")
+
+        if step == 0:
+            self._wizard_step_welcome()
+        elif step == 1:
+            self._wizard_step_signin()
+        elif step == 2:
+            self._wizard_step_apikey()
+        elif step == 3:
+            self._wizard_step_ready()
+
+    def _wizard_step_welcome(self):
+        card = ctk.CTkFrame(self._wizard_content, fg_color=CARD_BG, corner_radius=16)
+        card.pack(fill="both", expand=True, padx=40, pady=20)
+
+        ctk.CTkLabel(card, text="👋", font=ctk.CTkFont(size=48)).pack(pady=(40, 10))
+        ctk.CTkLabel(card, text="Welcome to MC & S Coworker",
+                     font=ctk.CTkFont(size=26, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(pady=(0, 8))
+        ctk.CTkLabel(card, text="Your AI-powered desktop assistant for email triage and automation.",
+                     font=ctk.CTkFont(size=14), text_color=TEXT_MUTED).pack(pady=(0, 24))
+
+        features = [
+            ("📨", "Email Triage", "Automatically classifies incoming emails and drafts replies"),
+            ("🧠", "Learning Memory", "Remembers your preferences and improves over time"),
+            ("🔌", "Plugin System", "Extensible — add new automations as your needs grow"),
+        ]
+        for icon, title, desc in features:
+            row = ctk.CTkFrame(card, fg_color="#F0F4FF", corner_radius=10)
+            row.pack(fill="x", padx=60, pady=4)
+            ctk.CTkLabel(row, text=icon, font=ctk.CTkFont(size=22)).pack(side="left", padx=(16, 10), pady=12)
+            text_frame = ctk.CTkFrame(row, fg_color="transparent")
+            text_frame.pack(side="left", fill="x", expand=True, pady=8)
+            ctk.CTkLabel(text_frame, text=title,
+                         font=ctk.CTkFont(size=14, weight="bold"),
+                         text_color=TEXT_PRIMARY, anchor="w").pack(anchor="w")
+            ctk.CTkLabel(text_frame, text=desc,
+                         font=ctk.CTkFont(size=12),
+                         text_color=TEXT_MUTED, anchor="w").pack(anchor="w")
+
+        ctk.CTkLabel(card, text="Let's get you set up — it only takes 2 minutes.",
+                     font=ctk.CTkFont(size=13), text_color=TEXT_MUTED).pack(pady=(24, 40))
+
+    def _wizard_step_signin(self):
+        card = ctk.CTkFrame(self._wizard_content, fg_color=CARD_BG, corner_radius=16)
+        card.pack(fill="both", expand=True, padx=40, pady=20)
+
+        ctk.CTkLabel(card, text="🔐", font=ctk.CTkFont(size=40)).pack(pady=(30, 8))
+        ctk.CTkLabel(card, text="Connect to Microsoft 365",
+                     font=ctk.CTkFont(size=22, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(pady=(0, 4))
+        ctk.CTkLabel(card, text="Sign in with your MC & S email so the agent can read and draft emails on your behalf.",
+                     font=ctk.CTkFont(size=13), text_color=TEXT_MUTED,
+                     wraplength=500).pack(pady=(0, 20))
+
+        form = ctk.CTkFrame(card, fg_color="transparent")
+        form.pack(padx=80, fill="x")
+
+        # Pre-fill Tenant ID and Client ID (hidden from user in a collapsed section)
+        saved_tid = get_setting("ms_tenant_id")
+        saved_cid = get_setting("ms_client_id")
+
+        ctk.CTkLabel(form, text="Your Email Address",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(anchor="w", pady=(0, 4))
+        self._wizard_email = ctk.CTkEntry(form, height=40,
+                                          font=ctk.CTkFont(size=14),
+                                          placeholder_text="e.g. sarah@mcands.com.au")
+        saved_email = get_setting("ms_account_email")
+        if saved_email:
+            self._wizard_email.insert(0, saved_email)
+        self._wizard_email.pack(fill="x", pady=(0, 16))
+
+        # Advanced section for Tenant/Client ID (collapsible)
+        adv_toggle = ctk.CTkButton(form, text="▸ Advanced — Entra ID credentials",
+                                    fg_color="transparent", hover_color="#E3F2FD",
+                                    text_color=TEXT_MUTED, anchor="w",
+                                    font=ctk.CTkFont(size=12),
+                                    height=28, width=300)
+        adv_toggle.pack(anchor="w", pady=(0, 4))
+
+        adv_frame = ctk.CTkFrame(form, fg_color="#F8F9FA", corner_radius=8)
+        adv_visible = [False]
+
+        def toggle_advanced():
+            if adv_visible[0]:
+                adv_frame.pack_forget()
+                adv_toggle.configure(text="▸ Advanced — Entra ID credentials")
+            else:
+                adv_frame.pack(fill="x", pady=(0, 12))
+                adv_toggle.configure(text="▾ Advanced — Entra ID credentials")
+            adv_visible[0] = not adv_visible[0]
+
+        adv_toggle.configure(command=toggle_advanced)
+
+        ctk.CTkLabel(adv_frame, text="Tenant ID",
+                     font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(anchor="w", padx=12, pady=(8, 2))
+        self._wizard_tenant = ctk.CTkEntry(adv_frame, height=34, font=ctk.CTkFont(size=12))
+        if saved_tid:
+            self._wizard_tenant.insert(0, saved_tid)
+        self._wizard_tenant.pack(fill="x", padx=12, pady=(0, 6))
+
+        ctk.CTkLabel(adv_frame, text="Client ID (App ID)",
+                     font=ctk.CTkFont(size=12, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(anchor="w", padx=12, pady=(4, 2))
+        self._wizard_client = ctk.CTkEntry(adv_frame, height=34, font=ctk.CTkFont(size=12))
+        if saved_cid:
+            self._wizard_client.insert(0, saved_cid)
+        self._wizard_client.pack(fill="x", padx=12, pady=(0, 10))
+
+        ctk.CTkLabel(adv_frame,
+                     text="These are pre-filled for MC & S. Only change if you have a different Entra ID app.",
+                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED,
+                     wraplength=400).pack(anchor="w", padx=12, pady=(0, 8))
+
+        # Sign in button
+        btn_frame = ctk.CTkFrame(card, fg_color="transparent")
+        btn_frame.pack(pady=(8, 4))
+        self._wizard_signin_btn = ctk.CTkButton(
+            btn_frame, text="🔐  Sign in to Microsoft 365",
+            width=280, height=44, fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self._wizard_do_signin)
+        self._wizard_signin_btn.pack()
+
+        self._wizard_signin_status = ctk.CTkLabel(
+            card, text="", font=ctk.CTkFont(size=13), text_color=TEXT_MUTED)
+        self._wizard_signin_status.pack(pady=(4, 20))
+
+    def _wizard_do_signin(self):
+        email = self._wizard_email.get().strip()
+        tid = self._wizard_tenant.get().strip()
+        cid = self._wizard_client.get().strip()
+
+        if not email:
+            messagebox.showerror("Missing Email", "Please enter your email address.")
+            return
+        if not tid or not cid:
+            messagebox.showerror("Missing Credentials",
+                                 "Tenant ID and Client ID are required. Click 'Advanced' to enter them.")
+            return
+
+        # Save settings
+        set_setting("ms_tenant_id", tid)
+        set_setting("ms_client_id", cid)
+        set_setting("ms_account_email", email)
+
+        # Build graph client and authenticate
+        self._graph = GraphClient(tid, cid)
+        self._wizard_signin_status.configure(text="Opening browser…", text_color=TEXT_MUTED)
+        self._wizard_signin_btn.configure(state="disabled")
+
+        def callback(success, error):
+            if success:
+                self.after(0, self._wizard_signin_success)
+            else:
+                self.after(0, lambda: self._wizard_signin_fail(str(error)))
+
+        self._graph.authenticate(callback=callback)
+
+    def _wizard_signin_success(self):
+        self._wizard_signin_status.configure(
+            text="✓  Signed in successfully!", text_color=ACCENT_GREEN)
+        self._wizard_signin_btn.configure(state="normal",
+                                           text="✓  Signed In", fg_color=ACCENT_GREEN)
+
+    def _wizard_signin_fail(self, error):
+        self._wizard_signin_status.configure(
+            text=f"✗  {error}", text_color="#C62828")
+        self._wizard_signin_btn.configure(state="normal")
+
+    def _wizard_step_apikey(self):
+        card = ctk.CTkFrame(self._wizard_content, fg_color=CARD_BG, corner_radius=16)
+        card.pack(fill="both", expand=True, padx=40, pady=20)
+
+        ctk.CTkLabel(card, text="🤖", font=ctk.CTkFont(size=40)).pack(pady=(30, 8))
+        ctk.CTkLabel(card, text="Connect to Claude AI",
+                     font=ctk.CTkFont(size=22, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(pady=(0, 4))
+        ctk.CTkLabel(card, text="Claude powers the email classification and smart drafting. "
+                              "You need an API key from Anthropic.",
+                     font=ctk.CTkFont(size=13), text_color=TEXT_MUTED,
+                     wraplength=500).pack(pady=(0, 20))
+
+        form = ctk.CTkFrame(card, fg_color="transparent")
+        form.pack(padx=80, fill="x")
+
+        ctk.CTkLabel(form, text="Anthropic API Key",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(anchor="w", pady=(0, 4))
+        self._wizard_apikey = ctk.CTkEntry(form, height=40,
+                                           font=ctk.CTkFont(size=14),
+                                           show="*",
+                                           placeholder_text="sk-ant-...")
+        saved_key = get_setting("anthropic_api_key")
+        if saved_key:
+            self._wizard_apikey.insert(0, saved_key)
+        self._wizard_apikey.pack(fill="x", pady=(0, 12))
+
+        ctk.CTkLabel(form, text="Get your key from console.anthropic.com → API Keys",
+                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED).pack(anchor="w")
+
+        ctk.CTkLabel(card, text="",
+                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED).pack(expand=True)
+
+        note = ctk.CTkFrame(card, fg_color="#FFF3E0", corner_radius=10)
+        note.pack(fill="x", padx=60, pady=(0, 30))
+        ctk.CTkLabel(note, text="💡  If your firm uses a shared API key, ask your administrator for it. "
+                              "You can always change this later in Settings.",
+                     font=ctk.CTkFont(size=12), text_color="#E65100",
+                     wraplength=480).pack(padx=16, pady=12)
+
+    def _wizard_step_ready(self):
+        card = ctk.CTkFrame(self._wizard_content, fg_color=CARD_BG, corner_radius=16)
+        card.pack(fill="both", expand=True, padx=40, pady=20)
+
+        ctk.CTkLabel(card, text="🎉", font=ctk.CTkFont(size=48)).pack(pady=(40, 10))
+        ctk.CTkLabel(card, text="You're All Set!",
+                     font=ctk.CTkFont(size=26, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(pady=(0, 8))
+
+        email = get_setting("ms_account_email") or "your mailbox"
+        ctk.CTkLabel(card, text=f"MC & S Coworker is ready to start working for you.",
+                     font=ctk.CTkFont(size=14), text_color=TEXT_MUTED).pack(pady=(0, 24))
+
+        summary_items = [
+            ("📨", f"Monitoring: {email}"),
+            ("✏️", "Mode: Draft — emails are drafted for your review before sending"),
+            ("✍️", "Signature: Automatically pulled from your recent sent emails"),
+            ("🧠", "Memory: Use the Memory tab to teach the agent your preferences"),
+        ]
+        for icon, text in summary_items:
+            row = ctk.CTkFrame(card, fg_color="#E8F5E9", corner_radius=8)
+            row.pack(fill="x", padx=80, pady=3)
+            ctk.CTkLabel(row, text=f"{icon}  {text}",
+                         font=ctk.CTkFont(size=13),
+                         text_color=TEXT_PRIMARY, anchor="w").pack(anchor="w", padx=16, pady=10)
+
+        ctk.CTkLabel(card, text="Click the button below to launch the dashboard and start the scheduler.",
+                     font=ctk.CTkFont(size=13), text_color=TEXT_MUTED).pack(pady=(24, 30))
+
+    def _wizard_next(self):
+        if self._wizard_step == 0:
+            # Welcome → Sign In
+            self._wizard_show_step(1)
+
+        elif self._wizard_step == 1:
+            # Sign In → save and move to API key
+            email = self._wizard_email.get().strip()
+            tid = self._wizard_tenant.get().strip()
+            cid = self._wizard_client.get().strip()
+            if not email:
+                messagebox.showerror("Missing Email", "Please enter your email address before continuing.")
+                return
+            if not tid or not cid:
+                messagebox.showerror("Missing Credentials",
+                                     "Please enter Tenant ID and Client ID. Click 'Advanced' to expand.")
+                return
+            set_setting("ms_tenant_id", tid)
+            set_setting("ms_client_id", cid)
+            set_setting("ms_account_email", email)
+            self._wizard_show_step(2)
+
+        elif self._wizard_step == 2:
+            # API Key → save and move to Ready
+            key = self._wizard_apikey.get().strip()
+            if not key:
+                messagebox.showerror("Missing API Key",
+                                     "Please enter your Anthropic API key to continue.")
+                return
+            set_setting("anthropic_api_key", key)
+            self._wizard_show_step(3)
+
+        elif self._wizard_step == 3:
+            # Ready → mark complete and launch main UI
+            set_setting("setup_completed", "1")
+            self._launch_main_ui()
+
+    def _wizard_back(self):
+        if self._wizard_step > 0:
+            self._wizard_show_step(self._wizard_step - 1)
 
     def _initialise_plugins(self):
         self._loader.discover()
