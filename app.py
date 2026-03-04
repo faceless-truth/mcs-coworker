@@ -5,9 +5,17 @@ import customtkinter as ctk
 import threading
 import time
 import sys
+import os
 from datetime import datetime
 from tkinter import messagebox
 import tkinter as tk
+
+try:
+    import pystray
+    from PIL import Image as PILImage
+    HAS_TRAY = True
+except ImportError:
+    HAS_TRAY = False
 
 import config
 from config import (
@@ -64,6 +72,9 @@ class App(ctk.CTk):
         if hasattr(self, '_wizard_frame'):
             self._wizard_frame.destroy()
 
+        self._tray_icon = None
+        self._tray_thread = None
+
         self._build_header()
         self._build_nav()
         self._build_content_area()
@@ -71,6 +82,9 @@ class App(ctk.CTk):
         self._try_restore_session()
         self.after(200, self._initialise_plugins)
         self._show_page("dashboard")
+
+        # Override window close to minimise to tray instead of quitting
+        self.protocol("WM_DELETE_WINDOW", self._on_close_requested)
 
     # ────────────────────────────────────────────────────────────────────────
     # First-Run Setup Wizard
@@ -843,6 +857,13 @@ PLUGIN IDEAS FOR MC & S
         self._session_actions += result.actions_taken
         self._session_drafts  += result.drafts_created
         self.after(0, self._update_dashboard_stats)
+
+        # Send tray notification if drafts were created and window is hidden
+        if result.drafts_created > 0 and not self.winfo_viewable():
+            self.send_tray_notification(
+                "MC & S Coworker",
+                f"{result.drafts_created} new draft(s) ready for review in Outlook."
+            )
 
     def _update_dashboard_stats(self):
         self._stat_labels["actions"].configure(text=str(self._session_actions))
@@ -1699,6 +1720,94 @@ User feedback: {text}"""
         self._loader.set_graph(self._graph)
         self._loader.set_claude()
         self._log("🔑 Signed in to Microsoft 365.")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # System Tray
+    # ────────────────────────────────────────────────────────────────────────
+
+    def _on_close_requested(self):
+        """Called when the user clicks the X button. Minimise to tray if available."""
+        if HAS_TRAY:
+            self._minimise_to_tray()
+        else:
+            if messagebox.askyesno(
+                "Close MC & S Coworker",
+                "Closing the window will stop the scheduler.\n\n"
+                "Are you sure you want to quit?"
+            ):
+                self._quit_app()
+
+    def _minimise_to_tray(self):
+        """Hide the window and show a system tray icon."""
+        self.withdraw()  # Hide the window
+
+        if self._tray_icon is not None:
+            return  # Already in tray
+
+        # Load the app icon for the tray
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets", "icon.png")
+        if os.path.exists(icon_path):
+            tray_image = PILImage.open(icon_path)
+        else:
+            # Fallback: create a simple blue square icon
+            tray_image = PILImage.new("RGB", (64, 64), BRAND_BLUE)
+
+        menu = pystray.Menu(
+            pystray.MenuItem("Open MC & S Coworker", self._restore_from_tray, default=True),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Scheduler Running", None, enabled=False),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Quit", self._quit_from_tray),
+        )
+
+        self._tray_icon = pystray.Icon(
+            "mcs_coworker",
+            tray_image,
+            "MC & S Coworker",
+            menu,
+        )
+
+        self._tray_thread = threading.Thread(target=self._tray_icon.run, daemon=True)
+        self._tray_thread.start()
+
+    def _restore_from_tray(self, icon=None, item=None):
+        """Restore the window from the system tray."""
+        if self._tray_icon is not None:
+            self._tray_icon.stop()
+            self._tray_icon = None
+            self._tray_thread = None
+
+        self.after(0, self._do_restore)
+
+    def _do_restore(self):
+        """Restore window on the main thread."""
+        self.deiconify()  # Show the window
+        self.lift()       # Bring to front
+        self.focus_force()
+
+    def _quit_from_tray(self, icon=None, item=None):
+        """Quit the app from the tray menu."""
+        if self._tray_icon is not None:
+            self._tray_icon.stop()
+            self._tray_icon = None
+        self.after(0, self._quit_app)
+
+    def _quit_app(self):
+        """Fully shut down the application."""
+        try:
+            if hasattr(self, '_loader') and self._loader:
+                self._loader.stop()
+        except Exception:
+            pass
+        self.destroy()
+
+    def send_tray_notification(self, title: str, message: str):
+        """Show a notification bubble from the system tray icon."""
+        if self._tray_icon is not None and HAS_TRAY:
+            try:
+                self._tray_icon.notify(message, title)
+            except Exception:
+                pass  # Not all platforms support notifications
 
     def _log(self, message: str):
         ts = datetime.now().strftime("%H:%M:%S")
