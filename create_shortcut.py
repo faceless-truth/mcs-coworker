@@ -24,9 +24,13 @@ def create_shortcut():
     icon_path = os.path.join(app_dir, "assets", "icon.ico")
     vbs_path = os.path.join(app_dir, "launch_silent.vbs")
 
+    # Use wscript.exe as the target to properly handle paths with spaces
+    wscript_exe = os.path.join(os.environ.get("SYSTEMROOT", r"C:\Windows"), "System32", "wscript.exe")
+
     shell = Dispatch("WScript.Shell")
     shortcut = shell.CreateShortCut(shortcut_path)
-    shortcut.Targetpath = vbs_path
+    shortcut.Targetpath = wscript_exe
+    shortcut.Arguments = '"' + vbs_path + '"'
     shortcut.WorkingDirectory = app_dir
     shortcut.IconLocation = icon_path
     shortcut.Description = "MC & S Coworker — Desktop Agent"
@@ -34,7 +38,7 @@ def create_shortcut():
 
     print(f"✓ Desktop shortcut created: {shortcut_path}")
     print(f"  Icon: {icon_path}")
-    print(f"  Target: {vbs_path}")
+    print(f"  Target: wscript.exe -> {vbs_path}")
 
 
 if __name__ == "__main__":

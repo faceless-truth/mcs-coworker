@@ -1,2 +1,5 @@
+Set objFSO = CreateObject("Scripting.FileSystemObject")
+strFolder = objFSO.GetParentFolderName(WScript.ScriptFullName)
 Set WshShell = CreateObject("WScript.Shell")
-WshShell.Run Chr(34) & WshShell.CurrentDirectory & "\launch.bat" & Chr(34), 0, False
+WshShell.CurrentDirectory = strFolder
+WshShell.Run "cmd /c """ & strFolder & "\launch.bat""", 0, False
