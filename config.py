@@ -142,7 +142,7 @@ def init_db():
 <li><strong>BAS lodgement (with your software):</strong> from $165</li>
 </ul>
 <p>Fees may vary based on the complexity of your situation. We are happy to provide a specific quote after an initial discussion.</p>
-<p>Please don\u2019t hesitate to call us on [PHONE] or reply to this email to arrange a time to chat.</p>""",
+<p>Please don\u2019t hesitate to reply to this email or give us a call to arrange a time to chat.</p>""",
                 1, 1,
             ),
             (
@@ -162,7 +162,7 @@ def init_db():
                 """<p>Dear {client_name},</p>
 <p>Thank you for sending through your documents.</p>
 <p>We have received them and they are now in our queue for processing. A member of our team will be in touch once your return has been prepared or if we have any questions.</p>
-<p>If you have any urgent queries in the meantime, please don\u2019t hesitate to contact us on [PHONE].</p>""",
+<p>If you have any urgent queries in the meantime, please don\u2019t hesitate to reply to this email or give us a call.</p>""",
                 1, 3,
             ),
         ]

@@ -161,6 +161,11 @@ class EmailTriagePlugin(AgentPlugin):
                     matching_rule["body_template"], sender_name, subject
                 )
 
+                # Append the user's Outlook signature
+                signature = graph.get_signature_html()
+                if signature:
+                    reply_body = reply_body + "<br>" + signature
+
                 if draft_mode:
                     graph.create_draft(
                         from_email, reply_subject, reply_body, msg_id

@@ -273,3 +273,73 @@ class GraphClient:
             url, headers=self._headers(), json={"categories": [category]}
         )
         r.raise_for_status()
+
+    # ── Signature Extraction ─────────────────────────────────────────────────
+
+    _cached_signature: str = ""
+
+    def get_signature_html(self) -> str:
+        """Extract the user's email signature from a recent sent email.
+
+        The Graph API does not expose signatures directly, so we look at
+        the most recent sent email and extract everything after the last
+        occurrence of common signature delimiters.
+        """
+        if self._cached_signature:
+            return self._cached_signature
+
+        try:
+            url = f"{GRAPH_BASE}/me/mailFolders/SentItems/messages"
+            params = {
+                "$top": 5,
+                "$orderby": "sentDateTime desc",
+                "$select": "body",
+            }
+            r = requests.get(url, headers=self._headers(), params=params)
+            r.raise_for_status()
+            messages = r.json().get("value", [])
+
+            for msg in messages:
+                body = msg.get("body", {}).get("content", "")
+                if not body:
+                    continue
+
+                # Look for common signature markers
+                import re
+                # Try to find signature after "Regards", "Kind regards",
+                # "Warm regards", "Thanks", "Cheers", etc.
+                patterns = [
+                    r'(?i)((?:warm\s+|kind\s+|best\s+)?regards[,.]?\s*<br\s*/?>.*)',
+                    r'(?i)(cheers[,.]?\s*<br\s*/?>.*)',
+                    r'(?i)(thanks[,.]?\s*<br\s*/?>.*)',
+                    r'(?i)(thank\s+you[,.]?\s*<br\s*/?>.*)',
+                ]
+                for pattern in patterns:
+                    match = re.search(pattern, body, re.DOTALL)
+                    if match:
+                        sig = match.group(1).strip()
+                        # Only use if it contains meaningful content
+                        # (name, phone, image, etc.) beyond just the sign-off
+                        if len(sig) > 100:
+                            self._cached_signature = sig
+                            return sig
+
+                # Fallback: look for a <table> near the end (many signatures
+                # use tables for layout)
+                table_match = re.search(
+                    r'(?i)((?:warm\s+|kind\s+|best\s+)?regards[\s\S]{0,50}<table[\s\S]*</table>)',
+                    body, re.DOTALL
+                )
+                if table_match:
+                    self._cached_signature = table_match.group(1).strip()
+                    return self._cached_signature
+
+        except Exception:
+            pass  # Signature extraction is best-effort
+
+        return ""
+
+    def clear_signature_cache(self):
+        """Force re-fetch of signature on next call."""
+        self._cached_signature = ""
+
