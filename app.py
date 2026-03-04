@@ -184,14 +184,13 @@ class App(ctk.CTk):
 
     def _wizard_step_welcome(self):
         card = ctk.CTkFrame(self._wizard_content, fg_color=CARD_BG, corner_radius=16)
-        card.pack(fill="both", expand=True, padx=40, pady=20)
+        card.pack(fill="both", expand=True, padx=40, pady=10)
 
-        ctk.CTkLabel(card, text="👋", font=ctk.CTkFont(size=48)).pack(pady=(40, 10))
         ctk.CTkLabel(card, text="Welcome to MC & S Coworker",
-                     font=ctk.CTkFont(size=26, weight="bold"),
-                     text_color=TEXT_PRIMARY).pack(pady=(0, 8))
+                     font=ctk.CTkFont(size=24, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(pady=(30, 6))
         ctk.CTkLabel(card, text="Your AI-powered desktop assistant for email triage and automation.",
-                     font=ctk.CTkFont(size=14), text_color=TEXT_MUTED).pack(pady=(0, 24))
+                     font=ctk.CTkFont(size=14), text_color=TEXT_MUTED).pack(pady=(0, 20))
 
         features = [
             ("📨", "Email Triage", "Automatically classifies incoming emails and drafts replies"),
@@ -200,10 +199,10 @@ class App(ctk.CTk):
         ]
         for icon, title, desc in features:
             row = ctk.CTkFrame(card, fg_color="#F0F4FF", corner_radius=10)
-            row.pack(fill="x", padx=60, pady=4)
-            ctk.CTkLabel(row, text=icon, font=ctk.CTkFont(size=22)).pack(side="left", padx=(16, 10), pady=12)
+            row.pack(fill="x", padx=60, pady=3)
+            ctk.CTkLabel(row, text=icon, font=ctk.CTkFont(size=20)).pack(side="left", padx=(16, 10), pady=10)
             text_frame = ctk.CTkFrame(row, fg_color="transparent")
-            text_frame.pack(side="left", fill="x", expand=True, pady=8)
+            text_frame.pack(side="left", fill="x", expand=True, pady=6)
             ctk.CTkLabel(text_frame, text=title,
                          font=ctk.CTkFont(size=14, weight="bold"),
                          text_color=TEXT_PRIMARY, anchor="w").pack(anchor="w")
@@ -212,7 +211,7 @@ class App(ctk.CTk):
                          text_color=TEXT_MUTED, anchor="w").pack(anchor="w")
 
         ctk.CTkLabel(card, text="Let's get you set up — it only takes 2 minutes.",
-                     font=ctk.CTkFont(size=13), text_color=TEXT_MUTED).pack(pady=(24, 40))
+                     font=ctk.CTkFont(size=13), text_color=TEXT_MUTED).pack(pady=(16, 20))
 
     def _wizard_step_signin(self):
         card = ctk.CTkFrame(self._wizard_content, fg_color=CARD_BG, corner_radius=16)
