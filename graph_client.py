@@ -2,6 +2,7 @@
 MC & S Email Automation - Microsoft Graph API Client
 Handles OAuth2 authentication and email operations.
 """
+import os
 import threading
 import webbrowser
 import requests
@@ -342,4 +343,235 @@ class GraphClient:
     def clear_signature_cache(self):
         """Force re-fetch of signature on next call."""
         self._cached_signature = ""
+
+    # ── Attachment Methods ───────────────────────────────────────────────────
+
+    def get_attachments(self, message_id: str) -> list[dict]:
+        """Return a list of attachments for a given message.
+        Each dict has: id, name, contentType, size, contentBytes (base64).
+        """
+        url = f"{GRAPH_BASE}/me/messages/{message_id}/attachments"
+        r = requests.get(url, headers=self._headers())
+        r.raise_for_status()
+        return r.json().get("value", [])
+
+    def download_attachment(self, message_id: str, attachment_id: str,
+                           save_dir: str) -> str:
+        """Download a specific attachment and save to save_dir.
+        Returns the full path to the saved file.
+        """
+        import base64
+        url = f"{GRAPH_BASE}/me/messages/{message_id}/attachments/{attachment_id}"
+        r = requests.get(url, headers=self._headers())
+        r.raise_for_status()
+        att = r.json()
+        filename = att.get("name", "attachment")
+        content = base64.b64decode(att.get("contentBytes", ""))
+        os.makedirs(save_dir, exist_ok=True)
+        filepath = os.path.join(save_dir, filename)
+        with open(filepath, "wb") as f:
+            f.write(content)
+        return filepath
+
+    def download_all_attachments(self, message_id: str,
+                                save_dir: str) -> list[str]:
+        """Download all attachments for a message. Returns list of file paths."""
+        attachments = self.get_attachments(message_id)
+        paths = []
+        for att in attachments:
+            if att.get("@odata.type", "") == "#microsoft.graph.fileAttachment":
+                import base64
+                filename = att.get("name", "attachment")
+                content = base64.b64decode(att.get("contentBytes", ""))
+                os.makedirs(save_dir, exist_ok=True)
+                filepath = os.path.join(save_dir, filename)
+                with open(filepath, "wb") as f:
+                    f.write(content)
+                paths.append(filepath)
+        return paths
+
+    # ── Email Search & Filtering ─────────────────────────────────────────────
+
+    def search_emails(self, query: str, folder: str = "Inbox",
+                      max_count: int = 50) -> list[dict]:
+        """Search emails using OData $search query.
+        E.g. query='subject:Notice of Assessment' or 'from:noreply@nowinfinity.com.au'
+        """
+        url = f"{GRAPH_BASE}/me/mailFolders/{folder}/messages"
+        params = {
+            "$search": f'"{query}"',
+            "$top": max_count,
+            "$select": "id,subject,from,receivedDateTime,body,bodyPreview,hasAttachments,toRecipients",
+        }
+        r = requests.get(url, headers=self._headers(), params=params)
+        r.raise_for_status()
+        return r.json().get("value", [])
+
+    def fetch_emails_from_sender(self, sender_email: str,
+                                 folder: str = "Inbox",
+                                 unread_only: bool = True,
+                                 max_count: int = 50) -> list[dict]:
+        """Fetch emails from a specific sender address."""
+        filter_str = f"from/emailAddress/address eq '{sender_email}'"
+        if unread_only:
+            filter_str += " and isRead eq false"
+        url = f"{GRAPH_BASE}/me/mailFolders/{folder}/messages"
+        params = {
+            "$filter": filter_str,
+            "$top": max_count,
+            "$orderby": "receivedDateTime desc",
+            "$select": "id,subject,from,receivedDateTime,body,bodyPreview,hasAttachments,toRecipients",
+        }
+        r = requests.get(url, headers=self._headers(), params=params)
+        r.raise_for_status()
+        return r.json().get("value", [])
+
+    def fetch_recent_emails(self, folder: str = "Inbox",
+                            max_count: int = 50,
+                            since_datetime: str = None) -> list[dict]:
+        """Fetch recent emails, optionally filtered by date.
+        since_datetime should be ISO format e.g. '2025-01-01T00:00:00Z'
+        """
+        filter_str = ""
+        if since_datetime:
+            filter_str = f"receivedDateTime ge {since_datetime}"
+        url = f"{GRAPH_BASE}/me/mailFolders/{folder}/messages"
+        params = {
+            "$top": max_count,
+            "$orderby": "receivedDateTime desc",
+            "$select": "id,subject,from,receivedDateTime,body,bodyPreview,hasAttachments,toRecipients,categories",
+        }
+        if filter_str:
+            params["$filter"] = filter_str
+        r = requests.get(url, headers=self._headers(), params=params)
+        r.raise_for_status()
+        return r.json().get("value", [])
+
+    # ── Email with Attachments ───────────────────────────────────────────────
+
+    def send_email_with_attachments(self, to_address: str, subject: str,
+                                    body_html: str,
+                                    attachment_paths: list[str] = None,
+                                    reply_to_id: str = None):
+        """Send an email with file attachments."""
+        import base64
+        message = {
+            "subject": subject,
+            "body": {"contentType": "HTML", "content": body_html},
+            "toRecipients": [{"emailAddress": {"address": to_address}}],
+        }
+        if attachment_paths:
+            attachments = []
+            for path in attachment_paths:
+                filename = os.path.basename(path)
+                with open(path, "rb") as f:
+                    content = base64.b64encode(f.read()).decode("utf-8")
+                attachments.append({
+                    "@odata.type": "#microsoft.graph.fileAttachment",
+                    "name": filename,
+                    "contentBytes": content,
+                })
+            message["attachments"] = attachments
+
+        url = f"{GRAPH_BASE}/me/sendMail"
+        r = requests.post(
+            url, headers=self._headers(),
+            json={"message": message, "saveToSentItems": True},
+        )
+        r.raise_for_status()
+
+    def create_draft_with_attachments(self, to_address: str, subject: str,
+                                      body_html: str,
+                                      attachment_paths: list[str] = None,
+                                      reply_to_id: str = None) -> str:
+        """Create a draft email with file attachments. Returns draft ID."""
+        import base64
+
+        # Create the draft first
+        if reply_to_id:
+            url = f"{GRAPH_BASE}/me/messages/{reply_to_id}/createReply"
+            r = requests.post(url, headers=self._headers(), json={})
+            r.raise_for_status()
+            draft = r.json()
+            draft_id = draft["id"]
+            update_url = f"{GRAPH_BASE}/me/messages/{draft_id}"
+            r2 = requests.patch(
+                update_url, headers=self._headers(),
+                json={
+                    "subject": subject,
+                    "body": {"contentType": "HTML", "content": body_html},
+                },
+            )
+            r2.raise_for_status()
+        else:
+            url = f"{GRAPH_BASE}/me/messages"
+            payload = {
+                "subject": subject,
+                "body": {"contentType": "HTML", "content": body_html},
+                "toRecipients": [{"emailAddress": {"address": to_address}}],
+                "isDraft": True,
+            }
+            r = requests.post(url, headers=self._headers(), json=payload)
+            r.raise_for_status()
+            draft_id = r.json()["id"]
+
+        # Add attachments to the draft
+        if attachment_paths:
+            for path in attachment_paths:
+                filename = os.path.basename(path)
+                with open(path, "rb") as f:
+                    content = base64.b64encode(f.read()).decode("utf-8")
+                att_url = f"{GRAPH_BASE}/me/messages/{draft_id}/attachments"
+                att_payload = {
+                    "@odata.type": "#microsoft.graph.fileAttachment",
+                    "name": filename,
+                    "contentBytes": content,
+                }
+                r = requests.post(att_url, headers=self._headers(), json=att_payload)
+                r.raise_for_status()
+
+        return draft_id
+
+    # ── Folder Operations ────────────────────────────────────────────────────
+
+    def move_email(self, message_id: str, destination_folder: str):
+        """Move an email to a different folder by folder name or ID."""
+        # First try to resolve folder name to ID
+        folder_id = self._resolve_folder_id(destination_folder)
+        url = f"{GRAPH_BASE}/me/messages/{message_id}/move"
+        r = requests.post(
+            url, headers=self._headers(),
+            json={"destinationId": folder_id},
+        )
+        r.raise_for_status()
+        return r.json()
+
+    def _resolve_folder_id(self, folder_name: str) -> str:
+        """Resolve a folder name to its Graph API ID."""
+        # Well-known folder names work directly
+        well_known = [
+            "inbox", "drafts", "sentitems", "deleteditems",
+            "archive", "junkemail", "outbox",
+        ]
+        if folder_name.lower().replace(" ", "") in well_known:
+            return folder_name
+        # Otherwise search for the folder
+        url = f"{GRAPH_BASE}/me/mailFolders"
+        params = {"$filter": f"displayName eq '{folder_name}'"}
+        r = requests.get(url, headers=self._headers(), params=params)
+        r.raise_for_status()
+        folders = r.json().get("value", [])
+        if folders:
+            return folders[0]["id"]
+        # If not found, create it
+        r = requests.post(
+            url, headers=self._headers(),
+            json={"displayName": folder_name},
+        )
+        r.raise_for_status()
+        return r.json()["id"]
+
+    def create_folder(self, folder_name: str) -> str:
+        """Create a mail folder if it doesn't exist. Returns folder ID."""
+        return self._resolve_folder_id(folder_name)
 
