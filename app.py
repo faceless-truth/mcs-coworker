@@ -1696,6 +1696,11 @@ User feedback: {text}"""
         return False
 
     def _try_restore_session(self):
+        # If already authenticated (e.g. from setup wizard), just update the UI
+        if self._graph and self._graph.is_authenticated():
+            self._on_auth_success()
+            return
+        # Otherwise try to restore from saved token cache
         if self._build_graph_client() and self._graph.is_authenticated():
             self._on_auth_success()
 
