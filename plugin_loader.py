@@ -15,7 +15,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
-import anthropic
+try:
+    import anthropic
+except ImportError:
+    anthropic = None
 
 from plugin_base import AgentPlugin, PluginContext, PluginResult
 from config import (
@@ -25,7 +28,18 @@ from config import (
 PLUGINS_DIR = Path(__file__).parent / "plugins"
 
 # Plugin IDs that are shown as templates / not run automatically
-TEMPLATE_PLUGIN_IDS = {"plugin_template"}
+# Only plugin_email_triage is active — everything else is hidden
+TEMPLATE_PLUGIN_IDS = {
+    "plugin_template",
+    "plugin_noa_workflow",
+    "plugin_fusesign_monitor",
+    "plugin_meeting_prep",
+    "plugin_monthly_invoicing",
+    "plugin_debtor_followup",
+    "plugin_asic_reminder",
+    "plugin_client_checkin",
+    "plugin_client_outreach",
+}
 
 
 class LoadedPlugin:
@@ -137,6 +151,9 @@ class PluginLoader:
         self._graph = graph_client
 
     def set_claude(self):
+        if anthropic is None:
+            self._claude = None
+            return
         api_key = get_setting("anthropic_api_key")
         if api_key:
             self._claude = anthropic.Anthropic(api_key=api_key)
@@ -329,12 +346,12 @@ class PluginLoader:
         from config import get_all_settings
 
         def notify(subject: str, body: str, to: str = None):
-            from config import get_staff
-            recipients = [{"email": to}] if to else get_staff()
-            for s in recipients:
+            user_email = get_setting("user_email")
+            recipients = [to] if to else ([user_email] if user_email else [])
+            for email_addr in recipients:
                 try:
-                    if self._graph:
-                        self._graph.send_email(s["email"], subject, body)
+                    if self._graph and email_addr:
+                        self._graph.send_email(email_addr, subject, body)
                 except Exception as e:
                     self._log(f"⚠ Notify failed: {e}")
 

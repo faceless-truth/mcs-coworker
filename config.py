@@ -105,15 +105,16 @@ def init_db():
         "business_hours_end":     "18",
         "business_days":          "1,2,3,4,5",
         "polling_interval":       "60",
-        "ms_tenant_id":           "88ea4eb1-1dce-414e-bbfe-ce0c51a5bd98",
-        "ms_client_id":           "0bad4828-f05f-4580-8e6f-ede96c098642",
-        "anthropic_api_key":      "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",
         "ms_account_email":       "",
         "monitor_folder":         "Inbox",
         "practice_name":          "MC & S",
         "practice_email":         "",
         "timezone":               "AUS Eastern Standard Time",
         "setup_complete":         "0",
+        "user_name":              "",
+        "user_firm":              "",
+        "user_email":             "",
+        "user_setup_complete":    "0",
     }
     for key, value in defaults.items():
         c.execute(
@@ -121,55 +122,7 @@ def init_db():
             (key, value),
         )
 
-    # Seed default email rules based on the automation guide
-    existing = c.execute("SELECT COUNT(*) FROM email_rules").fetchone()[0]
-    if existing == 0:
-        rules = [
-            (
-                "PRICING_ENQUIRY",
-                "how much,what do you charge,price,cost,fee,fees,rates,how much for,quote",
-                "Re: Your Enquiry \u2013 MC & S Accounting",
-                """<p>Dear {client_name},</p>
-<p>Thank you for reaching out to MC & S.</p>
-<p>Here is a summary of our standard fees (GST inclusive):</p>
-<ul>
-<li><strong>Individual tax return:</strong> from $176</li>
-<li><strong>Rental property add-on:</strong> $88 per property</li>
-<li><strong>Company annual compliance:</strong> from $1,210</li>
-<li><strong>Trust annual compliance:</strong> from $1,210</li>
-<li><strong>SMSF compliance only:</strong> $1,430</li>
-<li><strong>SMSF compliance + audit:</strong> $1,760</li>
-<li><strong>BAS lodgement (with your software):</strong> from $165</li>
-</ul>
-<p>Fees may vary based on the complexity of your situation. We are happy to provide a specific quote after an initial discussion.</p>
-<p>Please don\u2019t hesitate to reply to this email or give us a call to arrange a time to chat.</p>""",
-                1, 1,
-            ),
-            (
-                "CHECKLIST_REQUEST",
-                "what do i need,what documents,checklist,what to bring,prepare,what should i gather,what paperwork",
-                "Re: Tax Return Checklist \u2013 MC & S Accounting",
-                """<p>Hi {client_name},</p>
-<p>Thank you for getting in touch. Please complete the checklist below \u2014 it will help us understand your deductions and what\u2019s relevant to your situation.</p>
-<p><a href="{checklist_form}" style="display:inline-block;background:#1565C0;color:white;padding:10px 24px;border-radius:6px;text-decoration:none;font-weight:bold;">Complete the Checklist</a></p>
-<p>Please have a read through and let me know if you have any questions.</p>""",
-                1, 2,
-            ),
-            (
-                "DOCUMENTS_RECEIVED",
-                "please find attached,here are my documents,attached are,documents attached,sending through,enclosed,please find,i have attached",
-                "Re: Documents Received \u2013 MC & S Accounting",
-                """<p>Dear {client_name},</p>
-<p>Thank you for sending through your documents.</p>
-<p>We have received them and they are now in our queue for processing. A member of our team will be in touch once your return has been prepared or if we have any questions.</p>
-<p>If you have any urgent queries in the meantime, please don\u2019t hesitate to reply to this email or give us a call.</p>""",
-                1, 3,
-            ),
-        ]
-        c.executemany(
-            "INSERT INTO email_rules (category, keywords, subject_template, body_template, enabled, sort_order) VALUES (?, ?, ?, ?, ?, ?)",
-            rules,
-        )
+    # No default email rules — accountant builds their own from scratch
 
     # Seed default links & forms
     existing_links = c.execute("SELECT COUNT(*) FROM links_forms").fetchone()[0]

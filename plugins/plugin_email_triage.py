@@ -31,10 +31,13 @@ import json
 import re
 from datetime import datetime
 
-import anthropic
+import requests
 
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
-from config import get_rules, get_staff, get_setting, log_activity, get_style_preferences, get_active_lessons, get_links_as_dict
+from config import get_rules, get_setting, log_activity, get_links_as_dict
+
+# Proxy server URL — classification requests are routed here
+PROXY_URL = "http://134.199.150.35:8000"
 
 
 class EmailTriagePlugin(AgentPlugin):
@@ -51,7 +54,7 @@ class EmailTriagePlugin(AgentPlugin):
     icon    = "📧"
 
     requires_graph  = True
-    requires_claude = True
+    requires_claude = False
 
     default_schedule = Schedule.every_minutes(1)
 
@@ -63,9 +66,6 @@ class EmailTriagePlugin(AgentPlugin):
 
         if not context.graph:
             context.log("📧 Email Triage: Microsoft 365 not connected.")
-            return False
-        if not context.claude:
-            context.log("📧 Email Triage: Anthropic API key not configured.")
             return False
 
         return True
@@ -91,7 +91,6 @@ class EmailTriagePlugin(AgentPlugin):
 
     def run(self, context: PluginContext) -> PluginResult:
         graph      = context.graph
-        claude     = context.claude
         log        = context.log
         draft_mode = context.draft_mode
 
@@ -133,7 +132,7 @@ class EmailTriagePlugin(AgentPlugin):
 
             try:
                 classification = self._classify(
-                    claude, subject, body_plain, enabled_rules
+                    subject, body_plain, enabled_rules
                 )
                 category    = classification.get("category", "OTHER")
                 sender_name = classification.get("sender_name", "there")
@@ -208,55 +207,24 @@ class EmailTriagePlugin(AgentPlugin):
 
     # ── Private helpers ───────────────────────────────────────────────────────
 
-    def _classify(self, claude_client: anthropic.Anthropic,
-                  subject: str, body: str, rules: list) -> dict:
+    def _classify(self, subject: str, body: str, rules: list) -> dict:
+        """Classify an email via the proxy server."""
+        payload = {
+            "email_subject": subject,
+            "email_body": body[:1500],
+            "rules": [
+                {"category": r["category"], "keywords": r["keywords"]}
+                for r in rules if r.get("enabled")
+            ],
+        }
 
-        categories_desc = "\n".join([
-            f"- {r['category']}: Keywords include: {r['keywords']}"
-            for r in rules if r.get("enabled")
-        ])
-
-        # ── Inject memory context ──
-        memory_block = ""
-        style_prefs = get_style_preferences()
-        if style_prefs:
-            memory_block += f"\n\nIMPORTANT — TONE & STYLE INSTRUCTIONS FROM THE USER:\n{style_prefs}\n"
-
-        lessons = get_active_lessons()
-        if lessons:
-            memory_block += "\nLEARNED PREFERENCES (apply these to all responses):\n"
-            memory_block += "\n".join(f"- {l['lesson']}" for l in lessons)
-            memory_block += "\n"
-
-        prompt = f"""You are an email classifier for MC & S, an accounting firm in Keysborough, Victoria.
-
-Classify the email below into one of these categories, or OTHER if none fit:
-
-{categories_desc}
-- OTHER: Anything not listed above (meeting requests, complaints, ATO notices, etc.)
-
-Also extract the sender's first name from any sign-off in the body. If not found, return "there".
-{memory_block}
-Subject: {subject}
-Body: {body[:1500]}
-
-Respond ONLY with valid JSON:
-{{
-  "category": "PRICING_ENQUIRY",
-  "confidence": "high",
-  "reasoning": "Asks about fees.",
-  "sender_name": "John"
-}}"""
-
-        response = claude_client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=300,
-            messages=[{"role": "user", "content": prompt}],
+        resp = requests.post(
+            f"{PROXY_URL}/classify",
+            json=payload,
+            timeout=30,
         )
-
-        text = response.content[0].text.strip()
-        text = re.sub(r"```json\s*|```", "", text).strip()
-        return json.loads(text)
+        resp.raise_for_status()
+        return resp.json()
 
     def _apply_template(self, template: str, sender_name: str,
                         subject: str) -> str:
@@ -272,11 +240,9 @@ Respond ONLY with valid JSON:
     def _send_staff_notification(self, context: PluginContext,
                                  client_email: str, original_subject: str,
                                  category: str):
-        staff      = get_staff()
-        notifiable = [s for s in staff if s.get("receives_drafts")]
-
-        if not notifiable:
-            context.log("    ↳ ⚠ No staff configured for draft notifications.")
+        user_email = get_setting("user_email")
+        if not user_email:
+            context.log("    ↳ ⚠ No user email configured for draft notifications.")
             return
 
         practice = get_setting("practice_name", "MC & S")
@@ -323,9 +289,8 @@ Respond ONLY with valid JSON:
   </div>
 </div>"""
 
-        for s in notifiable:
-            try:
-                context.graph.send_email(s["email"], subject, body)
-                context.log(f"    ↳ Notified {s['name']}")
-            except Exception as e:
-                context.log(f"    ↳ ⚠ Could not notify {s['name']}: {e}")
+        try:
+            context.graph.send_email(user_email, subject, body)
+            context.log(f"    ↳ Notified {user_email}")
+        except Exception as e:
+            context.log(f"    ↳ ⚠ Could not notify {user_email}: {e}")

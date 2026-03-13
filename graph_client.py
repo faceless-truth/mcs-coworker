@@ -21,12 +21,16 @@ GRAPH_SCOPES = [
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 REDIRECT_URI = "http://localhost:8765"
 
+# Hardcoded MC&S Entra ID credentials — accountants don't need Azure setup
+MCS_TENANT_ID = "88ea4eb1-1dce-414e-bbfe-ce0c51a5bd98"   
+MCS_CLIENT_ID = "0bad4828-f05f-4580-8e6f-ede96c098642"  
+
 
 class GraphClient:
 
-    def __init__(self, tenant_id: str, client_id: str):
-        self.tenant_id = tenant_id
-        self.client_id = client_id
+    def __init__(self, tenant_id: str = None, client_id: str = None):
+        self.tenant_id = tenant_id or MCS_TENANT_ID
+        self.client_id = client_id or MCS_CLIENT_ID
         self._token_cache = msal.SerializableTokenCache()
         self._app = None
         self._account = None

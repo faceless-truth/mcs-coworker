@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd C:/Users/Elio/mcs-coworker && python -c \"import ast; [ast.parse\\(open\\(f\\).read\\(\\)\\) for f in ['app.py', 'config.py', 'graph_client.py', 'plugin_loader.py', 'plugins/plugin_email_triage.py', 'server/proxy.py']]; print\\('All files parse OK'\\)\")",
+      "Bash(cd C:/Users/Elio/mcs-coworker && python -c \"import ast; [ast.parse\\(open\\(f, encoding='utf-8'\\).read\\(\\)\\) for f in ['app.py', 'config.py', 'graph_client.py', 'plugin_loader.py', 'plugins/plugin_email_triage.py', 'server/proxy.py']]; print\\('All files parse OK'\\)\")"
+    ]
+  }
+}
