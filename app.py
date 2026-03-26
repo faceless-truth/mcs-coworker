@@ -8,8 +8,9 @@ import sys
 import os
 import json
 import re
+import shutil
 from datetime import datetime
-from tkinter import messagebox
+from tkinter import messagebox, filedialog
 import tkinter as tk
 
 try:
@@ -62,18 +63,66 @@ SCHEDULE_OPTIONS = [
 ]
 
 CHAT_SYSTEM_PROMPT = """\
-You are an automation assistant for MC & S CoWorker, a desktop \
-agent for accounting practices.
+You are an automation assistant built into MC & S CoWorker, a desktop agent \
+for accounting practices. Your job is to build automations for accountants \
+using plugins.
 
-You help accountants create automations by either:
-1. Creating email rules (for pattern-matched auto-responses)
-2. Writing new plugin files (for complex, multi-step automations)
-3. Modifying existing plugin configuration
+You NEVER suggest using native Outlook rules, native Windows tools, or any \
+external app to handle something. MC & S CoWorker handles ALL automations — \
+that is the whole point of this product.
 
-You have access to these tools (respond in JSON when using them):
+When an accountant describes what they want, you always build it as either \
+an email rule (simple keyword auto-responses) or a custom plugin \
+(anything else). If it requires logic, actions, or anything beyond a simple \
+auto-response — build a plugin.
+
+=== WHAT YOU CAN BUILD ===
+
+Email Rules (for simple auto-responses only):
+- Keyword-matched incoming emails get an automatic reply
+- Use for: pricing enquiries, checklist requests, acknowledgements
+
+Custom Plugins (for everything else — always prefer this):
+You have full access to the Microsoft Graph API via the graph object in \
+PluginContext. This means you can build plugins that:
+
+EMAIL:
+- Monitor any inbox folder for emails from specific senders
+- Forward emails to any internal staff member
+- Move emails to named Outlook folders (create if not exists)
+- Reply, draft, flag, categorise, mark as read
+- Send emails with attachments
+- Search emails by sender, subject, date, keywords
+
+CALENDAR:
+- Read upcoming calendar appointments
+- Summarise today's or this week's meetings
+- Extract attendees, subject, location, time
+- Draft preparation briefs before appointments
+- Alert staff of upcoming deadlines or meetings
+
+AI / CLAUDE:
+- Use Claude Haiku to read and understand email content
+- Draft intelligent, contextual replies based on email content
+- Summarise long email threads
+- Extract key information (amounts, dates, names) from emails or PDFs
+- Classify and route emails intelligently
+
+WEB / RESEARCH:
+- Use the requests library to fetch web pages
+- Search for accounting news, ATO updates, legislative changes
+- Summarise relevant content and email it to staff
+- Monitor specific URLs for changes
+
+FILES & ATTACHMENTS:
+- Download PDF attachments from emails
+- Extract text content from PDFs using PyMuPDF if available
+- Attach files to drafted emails
+
+=== TOOLS ===
+Respond in JSON when using a tool:
 
 TOOL: create_email_rule
-Creates a new rule in the email_rules table.
 {
   "tool": "create_email_rule",
   "category": "CATEGORY_NAME",
@@ -84,17 +133,22 @@ Creates a new rule in the email_rules table.
 }
 
 TOOL: create_plugin
-Creates a new .py file in the plugins/ folder.
 {
   "tool": "create_plugin",
   "filename": "plugin_name.py",
-  "code": "...full python code..."
+  "code": "...complete python code..."
 }
-The plugin must inherit from AgentPlugin, implement run(), \
-and follow the existing plugin pattern.
+Plugin code must:
+- Import from plugin_base: AgentPlugin, PluginContext, PluginResult, Schedule
+- Define a class inheriting AgentPlugin
+- Implement run(self, context: PluginContext) -> PluginResult
+- Use context.graph for all Microsoft Graph operations
+- Use context.claude for Claude AI calls
+- Use context.log for logging
+- Use context.draft_mode to check draft mode
+- Follow the exact same pattern as plugin_email_triage.py
 
 TOOL: update_setting
-Updates a value in the settings table.
 {
   "tool": "update_setting",
   "key": "setting_key",
@@ -102,23 +156,65 @@ Updates a value in the settings table.
 }
 
 TOOL: clarify
-Ask the user a clarifying question before proceeding.
 {
   "tool": "clarify",
   "question": "..."
 }
 
-When a user describes an automation:
-1. Decide if it's a simple auto-response (use email rule) or \
-complex logic (use plugin)
-2. If unclear, use the clarify tool first
-3. Generate the full configuration or code
-4. Explain in plain English what you created and how it works
-5. Tell them where to find it in the app (Email Rules tab or \
-Plugins tab)
+=== RULES ===
+1. NEVER suggest native Outlook rules, Windows Task Scheduler, Power Automate, \
+or any tool outside MC & S CoWorker
+2. NEVER say something "requires additional setup outside CoWorker"
+3. ALWAYS build a plugin for anything beyond a simple auto-response
+4. For email forwarding + folder moving — build a plugin using \
+graph.send_email() to forward and graph.move_email() to move
+5. For calendar summaries — build a plugin using Graph API \
+/me/calendarView endpoint
+6. For web research — build a plugin using requests.get()
+7. Always produce complete, working plugin code — no TODOs, no placeholders, \
+no stubs
+8. After creating anything, explain in plain English what was built and where \
+to find it in the app
+9. Use clarify tool only when genuinely ambiguous — prefer making reasonable \
+assumptions and building
+10. If a request is genuinely outside current capabilities — for example \
+requiring integration with a third-party system that has no API, requiring \
+local file system access beyond the app, or requiring hardware/OS-level \
+controls — do NOT suggest workarounds or external tools. Instead respond with: \
+"This one is outside what I can currently build inside MC & S CoWorker. I'd \
+suggest speaking to Elio directly — he may be able to extend CoWorker to \
+support this."
+Examples of when to say this:
+- Integrating with software that has no API (e.g. a legacy desktop accounting \
+app with no web access)
+- Controlling printers, scanners, or local hardware
+- Accessing files on a network drive or Z drive directly
+- Anything requiring a human decision or physical action
+Everything else — build it.
 
-Always produce complete, working output. Never use placeholders \
-or TODOs.
+=== GRAPH API REFERENCE ===
+Available on context.graph:
+- fetch_unread_emails(folder, max_count)
+- fetch_recent_emails(folder, max_count)
+- fetch_emails_from_sender(sender, max_count)
+- search_emails(query, max_count)
+- send_email(to, subject, body_html, reply_to_id=None)
+- send_email_with_attachments(to, subject, body_html, attachments)
+- create_draft(to, subject, body_html, reply_to_id=None)
+- create_draft_with_attachments(to, subject, body_html, attachments)
+- mark_as_read(message_id)
+- move_email(message_id, destination_folder_name)
+- flag_email(message_id)
+- add_category(message_id, category)
+- get_attachments(message_id)
+- download_all_attachments(message_id, save_dir)
+- get_user_info()
+
+For calendar access, use context.graph._make_request() with:
+GET /me/calendarView?startDateTime=...&endDateTime=...
+
+For web requests, import requests at the top of the plugin and use \
+requests.get(url).
 """
 
 
@@ -1177,6 +1273,53 @@ class App(ctk.CTk):
                             font=ctk.CTkFont(size=12)).pack(side="left", padx=4)
             self._bh_day_vars[num] = var
 
+        # ── Email Signature ───────────────────────────────────────────────
+        self._settings_section(scroll, "Email Signature")
+        ctk.CTkLabel(scroll, text="Your email signature",
+                     font=ctk.CTkFont(size=13),
+                     text_color=TEXT_PRIMARY).pack(anchor="w", pady=(0, 4))
+
+        # Preview box
+        self._sig_preview_frame = ctk.CTkFrame(
+            scroll, width=300, height=120, fg_color="#F0F0F0",
+            corner_radius=10, border_width=2, border_color="#555555")
+        self._sig_preview_frame.pack(anchor="w", pady=(0, 8))
+        self._sig_preview_frame.pack_propagate(False)
+
+        self._sig_preview_label = ctk.CTkLabel(
+            self._sig_preview_frame, text="No signature image uploaded",
+            font=ctk.CTkFont(size=12), text_color=TEXT_MUTED)
+        self._sig_preview_label.pack(expand=True)
+
+        # Keep a reference to prevent garbage collection of the CTkImage
+        self._sig_ctk_image = None
+
+        # Load existing signature image into preview
+        self._refresh_signature_preview()
+
+        # Buttons row
+        sig_btn_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        sig_btn_row.pack(anchor="w", pady=(0, 4))
+        ctk.CTkButton(sig_btn_row, text="Upload Signature Image",
+                      width=180, height=34, fg_color=BRAND_BLUE,
+                      hover_color=BRAND_DARK,
+                      command=self._upload_signature_image).pack(side="left", padx=(0, 8))
+        ctk.CTkButton(sig_btn_row, text="Remove Signature",
+                      width=140, height=34, fg_color="#C62828",
+                      hover_color="#7F0000",
+                      command=self._remove_signature_image).pack(side="left")
+
+        # Status label for upload feedback
+        self._sig_status_label = ctk.CTkLabel(
+            scroll, text="", font=ctk.CTkFont(size=12), text_color=ACCENT_GREEN)
+        self._sig_status_label.pack(anchor="w")
+
+        ctk.CTkLabel(scroll,
+                     text="Take a screenshot of your Outlook signature and upload it here.\n"
+                          "It will be appended to all automated email replies.",
+                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED,
+                     wraplength=500, anchor="w", justify="left").pack(anchor="w", pady=(2, 0))
+
         # ── Save button ──────────────────────────────────────────────────
         ctk.CTkButton(scroll, text="Save All Settings", height=42,
                       fg_color=ACCENT_GREEN, hover_color="#1B5E20",
@@ -1238,6 +1381,100 @@ class App(ctk.CTk):
         self.auth_status_label.configure(text="Connected", text_color="#66BB6A")
         self._loader.set_graph(self._graph)
         self._log("Connected to Microsoft 365 (from Settings).")
+
+    # ── Signature image helpers ───────────────────────────────────────────
+
+    def _get_signature_dest_path(self) -> str:
+        """Return the canonical path for the saved signature image."""
+        from pathlib import Path
+        return str(Path.home() / ".mcs_email_automation" / "signature.png")
+
+    def _refresh_signature_preview(self):
+        """Load the saved signature image into the preview box, or show placeholder."""
+        sig_path = get_setting("signature_image_path", "")
+        if sig_path and os.path.isfile(sig_path):
+            try:
+                from PIL import Image as PILImageLib
+                img = PILImageLib.open(sig_path)
+                # Scale to fit 300x120 box while maintaining aspect ratio
+                img.thumbnail((296, 116), PILImageLib.LANCZOS)
+                ctk_img = ctk.CTkImage(light_image=img, dark_image=img,
+                                       size=(img.width, img.height))
+                self._sig_ctk_image = ctk_img  # prevent GC
+                self._sig_preview_label.configure(image=ctk_img, text="")
+            except ImportError:
+                self._sig_preview_label.configure(
+                    image=None, text="Pillow not installed.\nRun: pip install Pillow")
+            except Exception as e:
+                self._sig_preview_label.configure(
+                    image=None, text=f"Could not load image:\n{e}")
+        else:
+            self._sig_ctk_image = None
+            self._sig_preview_label.configure(
+                image=None if not hasattr(self._sig_preview_label, '_image') else None,
+                text="No signature image uploaded")
+
+    def _upload_signature_image(self):
+        """Open a file dialog to select a signature image and save it."""
+        filepath = filedialog.askopenfilename(
+            title="Select Signature Image",
+            filetypes=[
+                ("Image files", "*.png *.jpg *.jpeg *.gif"),
+                ("PNG", "*.png"),
+                ("JPEG", "*.jpg *.jpeg"),
+                ("GIF", "*.gif"),
+            ],
+        )
+        if not filepath:
+            return  # User cancelled
+
+        def do_upload():
+            try:
+                from PIL import Image as PILImageLib
+            except ImportError:
+                self.after(0, lambda: self._sig_status_label.configure(
+                    text="Please run: pip install Pillow", text_color="#C62828"))
+                return
+
+            try:
+                dest = self._get_signature_dest_path()
+                os.makedirs(os.path.dirname(dest), exist_ok=True)
+
+                # Convert to PNG regardless of input format
+                img = PILImageLib.open(filepath)
+                img.save(dest, "PNG")
+
+                set_setting("signature_image_path", dest)
+
+                # Clear graph signature cache so the new image is picked up
+                if self._graph:
+                    self._graph.clear_signature_cache()
+
+                self.after(0, self._refresh_signature_preview)
+                self.after(0, lambda: self._sig_status_label.configure(
+                    text="Signature image saved", text_color=ACCENT_GREEN))
+            except Exception as e:
+                self.after(0, lambda: self._sig_status_label.configure(
+                    text=f"Error: {e}", text_color="#C62828"))
+
+        threading.Thread(target=do_upload, daemon=True).start()
+
+    def _remove_signature_image(self):
+        """Delete the signature image and clear the setting."""
+        try:
+            sig_path = get_setting("signature_image_path", "")
+            if sig_path and os.path.isfile(sig_path):
+                os.remove(sig_path)
+        except Exception:
+            pass
+
+        set_setting("signature_image_path", "")
+
+        if self._graph:
+            self._graph.clear_signature_cache()
+
+        self._refresh_signature_preview()
+        self._sig_status_label.configure(text="Signature removed.", text_color=TEXT_MUTED)
 
     # ────────────────────────────────────────────────────────────────────────
     # Chat page — AI Automation Builder
@@ -1314,6 +1551,12 @@ class App(ctk.CTk):
             ctk.CTkLabel(bubble, text=text, text_color="#A5D6A7",
                          wraplength=600, justify="left",
                          font=ctk.CTkFont(size=12)).pack(padx=12, pady=6)
+
+        self.after(50, lambda: self._chat_scroll_to_bottom())
+
+    def _chat_scroll_to_bottom(self):
+        self._chat_scroll._parent_canvas.update_idletasks()
+        self._chat_scroll._parent_canvas.yview_moveto(1.0)
 
     def _chat_show_typing(self, show=True):
         if show:
