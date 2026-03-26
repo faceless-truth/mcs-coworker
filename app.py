@@ -983,6 +983,73 @@ class App(ctk.CTk):
                       fg_color=ACCENT_GREEN, hover_color="#1B5E20",
                       command=_run_now).pack(side="right")
 
+        # Delete Plugin button
+        CORE_PLUGINS = {"plugin_email_triage", "plugin_noa_processor",
+                        "plugin_asic_returns", "plugin_correspondence_logger"}
+
+        def _delete_plugin(pid=lp.plugin_id, pname=lp.name):
+            # Block deletion of core plugins
+            base_id = pid.replace("plugins.", "").split(".")[-1]
+            if base_id in CORE_PLUGINS:
+                dlg = ctk.CTkToplevel(self)
+                dlg.title("Cannot Delete")
+                dlg.geometry("420x160")
+                dlg.grab_set()
+                ctk.CTkLabel(dlg, text="This is a core plugin and cannot be deleted.\n"
+                             "You can disable it instead.",
+                             font=ctk.CTkFont(size=13), text_color=TEXT_PRIMARY,
+                             wraplength=380, justify="center").pack(pady=(28, 16))
+                ctk.CTkButton(dlg, text="OK", width=100, height=34,
+                              fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
+                              command=dlg.destroy).pack()
+                return
+
+            # Confirmation dialog
+            dlg = ctk.CTkToplevel(self)
+            dlg.title("Delete Plugin")
+            dlg.geometry("460x180")
+            dlg.grab_set()
+            ctk.CTkLabel(dlg, text=f"Are you sure you want to delete {pname}?\n"
+                         "This will permanently remove the plugin file.",
+                         font=ctk.CTkFont(size=13), text_color=TEXT_PRIMARY,
+                         wraplength=420, justify="center").pack(pady=(24, 16))
+
+            btn_row = ctk.CTkFrame(dlg, fg_color="transparent")
+            btn_row.pack()
+
+            def _do_delete():
+                dlg.destroy()
+                self._loader.set_plugin_enabled(pid, False)
+                if getattr(sys, 'frozen', False):
+                    plugins_dir = os.path.join(os.path.dirname(sys.executable), 'plugins')
+                else:
+                    plugins_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'plugins')
+                # Derive filename from plugin_id
+                fname = base_id + ".py"
+                fpath = os.path.join(plugins_dir, fname)
+                try:
+                    if os.path.exists(fpath):
+                        os.remove(fpath)
+                except Exception as e:
+                    self._log(f"Error deleting plugin file: {e}")
+                self._loader.reload_plugins()
+                self._refresh_plugins_list()
+                self._log(f"Plugin {pname} deleted.")
+
+            ctk.CTkButton(btn_row, text="Delete", width=100, height=34,
+                          fg_color="#C62828", hover_color="#7F0000",
+                          text_color="white",
+                          command=_do_delete).pack(side="left", padx=8)
+            ctk.CTkButton(btn_row, text="Cancel", width=100, height=34,
+                          fg_color="transparent", hover_color="#E3F2FD",
+                          text_color=TEXT_PRIMARY, border_width=1, border_color=TEXT_MUTED,
+                          command=dlg.destroy).pack(side="left", padx=8)
+
+        ctk.CTkButton(row2, text="Delete Plugin", width=100, height=30,
+                      fg_color="#C62828", hover_color="#7F0000",
+                      text_color="white",
+                      command=_delete_plugin).pack(side="right", padx=(0, 8))
+
         # ── Row 3: status strip ──
         row3 = ctk.CTkFrame(card, fg_color="#F0F4FF", corner_radius=6)
         row3.pack(fill="x", padx=16, pady=(4, 4))
@@ -1689,7 +1756,10 @@ class App(ctk.CTk):
                     filename = f"plugin_{filename}"
                 if not filename.endswith(".py"):
                     filename += ".py"
-                plugins_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
+                if getattr(sys, 'frozen', False):
+                    plugins_dir = os.path.join(os.path.dirname(sys.executable), 'plugins')
+                else:
+                    plugins_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'plugins')
                 filepath = os.path.join(plugins_dir, filename)
                 with open(filepath, "w", encoding="utf-8") as f:
                     f.write(code)
