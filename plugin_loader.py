@@ -20,6 +20,11 @@ try:
 except ImportError:
     anthropic = None
 
+try:
+    import pytz
+except ImportError:
+    pytz = None
+
 from plugin_base import AgentPlugin, PluginContext, PluginResult
 from config import (
     get_setting, get_plugin_state, save_plugin_state, get_all_plugin_states
@@ -292,9 +297,46 @@ class PluginLoader:
         self._running = False
         self._log("⏱ Scheduler stopped.")
 
+    def _is_within_business_hours(self) -> bool:
+        """Check if current Melbourne time is within configured business hours."""
+        if get_setting("business_hours_enabled", "1") != "1":
+            return True  # business hours check disabled
+
+        if pytz is None:
+            return True  # can't check without pytz — allow all
+
+        try:
+            melb_tz = pytz.timezone("Australia/Melbourne")
+            now = datetime.now(melb_tz)
+
+            # Check day of week (isoweekday: 1=Mon … 7=Sun)
+            business_days_str = get_setting("business_days", "1,2,3,4,5")
+            business_days = [
+                int(d.strip()) for d in business_days_str.split(",") if d.strip()
+            ]
+            if now.isoweekday() not in business_days:
+                return False
+
+            start_hour = int(get_setting("business_hours_start", "8"))
+            end_hour = int(get_setting("business_hours_end", "18"))
+            if not (start_hour <= now.hour < end_hour):
+                return False
+
+            return True
+        except Exception:
+            return True  # on error, allow execution
+
     def _scheduler_loop(self):
+        _outside_hours_logged = False
         while self._running:
             try:
+                if not self._is_within_business_hours():
+                    if not _outside_hours_logged:
+                        self._log("⏱ Outside business hours — scheduler paused.")
+                        _outside_hours_logged = True
+                    time.sleep(10)
+                    continue
+                _outside_hours_logged = False
                 self.run_all_due()
             except Exception as e:
                 self._log(f"⚠ Scheduler error: {e}")
@@ -339,6 +381,21 @@ class PluginLoader:
             except Exception as e:
                 self._log(f"⚠ Reload failed for {lp.name}: {e}")
                 lp.is_ready = False
+
+    def reload_plugins(self) -> list[str]:
+        """Re-scan plugins/ directory and load any newly added plugins."""
+        new_ids = self.discover()
+        ctx = self._make_context(draft_mode=True)
+        for pid in new_ids:
+            lp = self._plugins.get(pid)
+            if lp and not lp.is_template:
+                try:
+                    lp.is_ready = lp.instance.load(ctx)
+                    lp.schedule_next()
+                except Exception as e:
+                    self._log(f"⚠ Plugin {lp.name} failed to load: {e}")
+                    lp.is_ready = False
+        return new_ids
 
     # ── Context factory ───────────────────────────────────────────────────────
 

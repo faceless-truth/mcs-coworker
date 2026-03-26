@@ -6,6 +6,8 @@ import threading
 import time
 import sys
 import os
+import json
+import re
 from datetime import datetime
 from tkinter import messagebox
 import tkinter as tk
@@ -17,13 +19,19 @@ try:
 except ImportError:
     HAS_TRAY = False
 
+try:
+    import anthropic as anthropic_lib
+except ImportError:
+    anthropic_lib = None
+
 import config
 from config import (
     init_db, get_setting, set_setting, get_rules, save_rule, delete_rule,
     get_recent_activity,
     get_links, save_link, delete_link,
+    get_staff, save_staff, delete_staff,
 )
-from graph_client import GraphClient
+from graph_client import GraphClient, MCS_TENANT_ID, MCS_CLIENT_ID
 from plugin_loader import PluginLoader
 
 ctk.set_appearance_mode("light")
@@ -40,6 +48,90 @@ TEXT_MUTED     = "#6B7280"
 SUCCESS_FG     = "#2E7D32"
 DRAFT_BG       = "#E3F2FD"
 DRAFT_FG       = "#1565C0"
+CHAT_DARK      = "#2D2D3F"
+
+SCHEDULE_OPTIONS = [
+    ("Manual", 0),
+    ("1 min", 60),
+    ("5 min", 300),
+    ("15 min", 900),
+    ("30 min", 1800),
+    ("1 hr", 3600),
+    ("4 hr", 14400),
+    ("24 hr", 86400),
+]
+
+CHAT_SYSTEM_PROMPT = """\
+You are an automation assistant for MC & S CoWorker, a desktop \
+agent for accounting practices.
+
+You help accountants create automations by either:
+1. Creating email rules (for pattern-matched auto-responses)
+2. Writing new plugin files (for complex, multi-step automations)
+3. Modifying existing plugin configuration
+
+You have access to these tools (respond in JSON when using them):
+
+TOOL: create_email_rule
+Creates a new rule in the email_rules table.
+{
+  "tool": "create_email_rule",
+  "category": "CATEGORY_NAME",
+  "keywords": "comma,separated,keywords",
+  "subject_template": "Re: Subject here",
+  "body_template": "<html>...</html>",
+  "enabled": 1
+}
+
+TOOL: create_plugin
+Creates a new .py file in the plugins/ folder.
+{
+  "tool": "create_plugin",
+  "filename": "plugin_name.py",
+  "code": "...full python code..."
+}
+The plugin must inherit from AgentPlugin, implement run(), \
+and follow the existing plugin pattern.
+
+TOOL: update_setting
+Updates a value in the settings table.
+{
+  "tool": "update_setting",
+  "key": "setting_key",
+  "value": "value"
+}
+
+TOOL: clarify
+Ask the user a clarifying question before proceeding.
+{
+  "tool": "clarify",
+  "question": "..."
+}
+
+When a user describes an automation:
+1. Decide if it's a simple auto-response (use email rule) or \
+complex logic (use plugin)
+2. If unclear, use the clarify tool first
+3. Generate the full configuration or code
+4. Explain in plain English what you created and how it works
+5. Tell them where to find it in the app (Email Rules tab or \
+Plugins tab)
+
+Always produce complete, working output. Never use placeholders \
+or TODOs.
+"""
+
+
+def _seconds_to_schedule_label(seconds: int) -> str:
+    """Convert schedule seconds to a dropdown label."""
+    for label, secs in SCHEDULE_OPTIONS:
+        if secs == seconds:
+            return label
+    if seconds <= 0:
+        return "Manual"
+    if seconds < 3600:
+        return f"{seconds // 60} min"
+    return f"{seconds // 3600} hr"
 
 
 class App(ctk.CTk):
@@ -396,13 +488,17 @@ class App(ctk.CTk):
         nav.pack_propagate(False)
         self._nav_btns = {}
         pages = [
-            ("dashboard", "Dashboard"),
-            ("rules",     "Email Rules"),
-            ("activity",  "Activity Log"),
+            ("dashboard", "  Dashboard"),
+            ("plugins",   "  Plugins"),
+            ("rules",     "  Email Rules"),
+            ("staff",     "  Staff & Notify"),
+            ("settings",  "  Settings"),
+            ("chat",      "  Chat"),
+            ("activity",  "  Activity Log"),
         ]
         ctk.CTkLabel(nav, text="", height=10).pack()
         for key, label in pages:
-            btn = ctk.CTkButton(nav, text=f"  {label}", width=200, height=42,
+            btn = ctk.CTkButton(nav, text=label, width=200, height=42,
                                 fg_color="transparent", hover_color="#1565C0",
                                 text_color="white", anchor="w", font=ctk.CTkFont(size=13),
                                 command=lambda k=key: self._show_page(k))
@@ -414,7 +510,11 @@ class App(ctk.CTk):
         self.content.pack(side="left", fill="both", expand=True)
         self._pages = {}
         self._build_dashboard()
+        self._build_plugins_page()
         self._build_rules_page()
+        self._build_staff_page()
+        self._build_settings_page()
+        self._build_chat_page()
         self._build_activity_page()
 
     # ────────────────────────────────────────────────────────────────────────
@@ -656,6 +756,739 @@ class App(ctk.CTk):
                     f"{str(r.get('action',''))[:14]:<16} "
                     f"{'Yes' if r.get('draft_created') else 'No'}\n")
         self.activity_box.configure(state="disabled")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Plugins page
+    # ────────────────────────────────────────────────────────────────────────
+
+    def _build_plugins_page(self):
+        page = ctk.CTkFrame(self.content, fg_color=BG_LIGHT, corner_radius=0)
+        self._pages["plugins"] = page
+
+        top = ctk.CTkFrame(page, fg_color=BG_LIGHT)
+        top.pack(fill="x", padx=28, pady=(24, 0))
+        ctk.CTkLabel(top, text="Plugins",
+                     font=ctk.CTkFont(size=22, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(side="left")
+        ctk.CTkButton(top, text="Refresh", width=100, height=32,
+                      fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
+                      command=self._refresh_plugins_list).pack(side="right")
+
+        ctk.CTkLabel(page,
+                     text="Manage your automation plugins — enable, configure schedules, and run on demand.",
+                     text_color=TEXT_MUTED, font=ctk.CTkFont(size=13)).pack(anchor="w", padx=28, pady=(4, 12))
+
+        self._plugins_scroll = ctk.CTkScrollableFrame(page, fg_color=BG_LIGHT)
+        self._plugins_scroll.pack(fill="both", expand=True, padx=28, pady=(0, 20))
+
+        self.after(500, self._refresh_plugins_list)
+
+    def _refresh_plugins_list(self):
+        for w in self._plugins_scroll.winfo_children():
+            w.destroy()
+
+        plugins = self._loader.get_plugins()
+        active_plugins = [p for p in plugins if not p.is_template]
+        template_plugins = [p for p in plugins if p.is_template]
+
+        if not active_plugins and not template_plugins:
+            empty = ctk.CTkFrame(self._plugins_scroll, fg_color=CARD_BG, corner_radius=12)
+            empty.pack(fill="x", pady=20)
+            ctk.CTkLabel(empty, text="No plugins loaded yet.",
+                         font=ctk.CTkFont(size=16, weight="bold"),
+                         text_color=TEXT_PRIMARY).pack(pady=(30, 4))
+            ctk.CTkLabel(empty, text="Plugins are discovered automatically from the plugins/ folder.",
+                         font=ctk.CTkFont(size=13),
+                         text_color=TEXT_MUTED).pack(pady=(0, 30))
+            return
+
+        for lp in active_plugins:
+            self._plugin_card(self._plugins_scroll, lp)
+
+        if template_plugins:
+            ctk.CTkLabel(self._plugins_scroll,
+                         text="Available Templates — not active",
+                         font=ctk.CTkFont(size=13, weight="bold"),
+                         text_color=TEXT_MUTED).pack(anchor="w", pady=(20, 6))
+            for lp in template_plugins:
+                self._plugin_card(self._plugins_scroll, lp, is_template=True)
+
+    def _plugin_card(self, parent, lp, is_template=False):
+        card_fg = "#ECECEC" if is_template else CARD_BG
+        text_col = TEXT_MUTED if is_template else TEXT_PRIMARY
+        card = ctk.CTkFrame(parent, fg_color=card_fg, corner_radius=12)
+        card.pack(fill="x", pady=6)
+
+        # ── Row 1: identity ──
+        row1 = ctk.CTkFrame(card, fg_color="transparent")
+        row1.pack(fill="x", padx=16, pady=(12, 2))
+        ctk.CTkLabel(row1, text=f"{lp.icon}  {lp.name}",
+                     font=ctk.CTkFont(size=15, weight="bold"),
+                     text_color=text_col).pack(side="left")
+        ctk.CTkLabel(row1, text=f"v{lp.version}",
+                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED).pack(side="left", padx=8)
+
+        ctk.CTkLabel(card, text=lp.description,
+                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED,
+                     wraplength=700, anchor="w").pack(anchor="w", padx=16, pady=(0, 6))
+
+        if is_template:
+            ctk.CTkLabel(card, text="Template only — copy and customise to activate.",
+                         font=ctk.CTkFont(size=11), text_color=TEXT_MUTED).pack(anchor="w", padx=16, pady=(0, 10))
+            return
+
+        # ── Row 2: controls ──
+        row2 = ctk.CTkFrame(card, fg_color="transparent")
+        row2.pack(fill="x", padx=16, pady=(0, 4))
+
+        en_var = ctk.BooleanVar(value=lp.enabled)
+        ctk.CTkSwitch(row2, text="Enabled", variable=en_var, width=50,
+                       onvalue=True, offvalue=False,
+                       command=lambda pid=lp.plugin_id, v=en_var: (
+                           self._loader.set_plugin_enabled(pid, v.get())
+                       )).pack(side="left", padx=(0, 16))
+
+        dm_var = ctk.BooleanVar(value=lp.draft_mode)
+        dm_label = ctk.CTkLabel(row2,
+                                text="Draft Mode: ON" if lp.draft_mode else "Draft Mode: OFF",
+                                font=ctk.CTkFont(size=12),
+                                text_color=DRAFT_FG if lp.draft_mode else ACCENT_AMBER)
+        def _toggle_draft(pid=lp.plugin_id, v=dm_var, lbl=dm_label):
+            val = v.get()
+            self._loader.set_plugin_draft_mode(pid, val)
+            lbl.configure(text="Draft Mode: ON" if val else "Draft Mode: OFF",
+                          text_color=DRAFT_FG if val else ACCENT_AMBER)
+        ctk.CTkSwitch(row2, text="", variable=dm_var, width=50,
+                       onvalue=True, offvalue=False,
+                       command=_toggle_draft).pack(side="left")
+        dm_label.pack(side="left", padx=(4, 16))
+
+        # Schedule dropdown
+        ctk.CTkLabel(row2, text="Schedule:", font=ctk.CTkFont(size=12),
+                     text_color=TEXT_PRIMARY).pack(side="left", padx=(8, 4))
+        sched_labels = [s[0] for s in SCHEDULE_OPTIONS]
+        current_label = _seconds_to_schedule_label(lp.schedule_seconds)
+        sched_var = ctk.StringVar(value=current_label)
+        def _on_schedule(choice, pid=lp.plugin_id):
+            secs = dict(SCHEDULE_OPTIONS).get(choice, 0)
+            self._loader.set_plugin_schedule(pid, secs)
+        ctk.CTkOptionMenu(row2, variable=sched_var, values=sched_labels,
+                          width=110, height=30, command=_on_schedule,
+                          fg_color=BRAND_BLUE, button_color=BRAND_DARK
+                          ).pack(side="left", padx=(0, 16))
+
+        # Run Now button
+        def _run_now(pid=lp.plugin_id):
+            def do_run():
+                self._loader.run_plugin(pid, manual=True)
+                self.after(0, self._refresh_plugins_list)
+            threading.Thread(target=do_run, daemon=True).start()
+        ctk.CTkButton(row2, text="Run Now", width=80, height=30,
+                      fg_color=ACCENT_GREEN, hover_color="#1B5E20",
+                      command=_run_now).pack(side="right")
+
+        # ── Row 3: status strip ──
+        row3 = ctk.CTkFrame(card, fg_color="#F0F4FF", corner_radius=6)
+        row3.pack(fill="x", padx=16, pady=(4, 4))
+
+        ready_text = "Ready" if lp.is_ready else "Not Ready"
+        ready_color = ACCENT_GREEN if lp.is_ready else ACCENT_AMBER
+        ctk.CTkLabel(row3, text=ready_text, font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color=ready_color).pack(side="left", padx=8, pady=4)
+        ctk.CTkLabel(row3, text=f"|  {lp.schedule_label}",
+                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED).pack(side="left", padx=4)
+
+        last_run_str = lp.last_run.strftime("%H:%M:%S") if lp.last_run else "—"
+        ctk.CTkLabel(row3, text=f"|  Last: {last_run_str}",
+                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED).pack(side="left", padx=4)
+        ctk.CTkLabel(row3, text=f"|  {lp.last_result}",
+                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED).pack(side="left", padx=4)
+
+        if lp.last_summary:
+            ctk.CTkLabel(card, text=f"Summary: {lp.last_summary}",
+                         font=ctk.CTkFont(size=11), text_color=TEXT_MUTED,
+                         wraplength=700, anchor="w").pack(anchor="w", padx=16, pady=(0, 2))
+
+        # ── Plugin settings (if schema exists) ──
+        schema = lp.instance.settings_schema()
+        if schema:
+            settings_frame = ctk.CTkFrame(card, fg_color="transparent")
+            settings_frame.pack(fill="x", padx=16, pady=(4, 10))
+
+            ctk.CTkLabel(settings_frame, text="Plugin Settings",
+                         font=ctk.CTkFont(size=12, weight="bold"),
+                         text_color=TEXT_PRIMARY).pack(anchor="w", pady=(0, 4))
+
+            field_widgets = {}
+            for field in schema:
+                key = field["key"]
+                label = field.get("label", key)
+                default = field.get("default", "")
+                ftype = field.get("type", "text")
+                current_val = lp.instance.get_plugin_setting(key, default)
+
+                frow = ctk.CTkFrame(settings_frame, fg_color="transparent")
+                frow.pack(fill="x", pady=2)
+                ctk.CTkLabel(frow, text=label, font=ctk.CTkFont(size=12),
+                             text_color=TEXT_PRIMARY, width=200, anchor="w").pack(side="left")
+
+                if ftype == "bool":
+                    bvar = ctk.BooleanVar(value=current_val == "1")
+                    ctk.CTkSwitch(frow, text="", variable=bvar, width=50,
+                                  onvalue=True, offvalue=False).pack(side="left")
+                    field_widgets[key] = ("bool", bvar)
+                elif ftype == "textarea":
+                    tb = ctk.CTkTextbox(frow, height=60, font=ctk.CTkFont(size=12), width=400)
+                    tb.insert("1.0", current_val)
+                    tb.pack(side="left", fill="x", expand=True)
+                    field_widgets[key] = ("textarea", tb)
+                elif ftype == "password":
+                    ent = ctk.CTkEntry(frow, height=30, font=ctk.CTkFont(size=12),
+                                       show="*", width=400)
+                    ent.insert(0, current_val)
+                    ent.pack(side="left", fill="x", expand=True)
+                    field_widgets[key] = ("entry", ent)
+                else:
+                    ent = ctk.CTkEntry(frow, height=30, font=ctk.CTkFont(size=12), width=400)
+                    ent.insert(0, current_val)
+                    ent.pack(side="left", fill="x", expand=True)
+                    field_widgets[key] = ("entry", ent)
+
+                help_text = field.get("help", "")
+                if help_text:
+                    ctk.CTkLabel(settings_frame, text=help_text,
+                                 font=ctk.CTkFont(size=10), text_color=TEXT_MUTED,
+                                 wraplength=600, anchor="w").pack(anchor="w", padx=200)
+
+            def _save_plugin_settings(pid=lp.plugin_id, inst=lp.instance, fw=field_widgets):
+                for fkey, (fkind, widget) in fw.items():
+                    if fkind == "bool":
+                        inst.set_plugin_setting(fkey, "1" if widget.get() else "0")
+                    elif fkind == "textarea":
+                        inst.set_plugin_setting(fkey, widget.get("1.0", "end-1c"))
+                    else:
+                        inst.set_plugin_setting(fkey, widget.get())
+                self._loader.reload_plugin(pid)
+                self._log(f"Plugin settings saved for {inst.name}.")
+
+            ctk.CTkButton(settings_frame, text="Save Plugin Settings",
+                          width=160, height=30, fg_color=ACCENT_GREEN,
+                          hover_color="#1B5E20", command=_save_plugin_settings
+                          ).pack(anchor="e", pady=(6, 0))
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Staff & Notify page
+    # ────────────────────────────────────────────────────────────────────────
+
+    def _build_staff_page(self):
+        page = ctk.CTkFrame(self.content, fg_color=BG_LIGHT, corner_radius=0)
+        self._pages["staff"] = page
+
+        top = ctk.CTkFrame(page, fg_color=BG_LIGHT)
+        top.pack(fill="x", padx=28, pady=(24, 0))
+        ctk.CTkLabel(top, text="Staff & Notifications",
+                     font=ctk.CTkFont(size=22, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(side="left")
+        ctk.CTkButton(top, text="+ Add Staff", width=120, height=34,
+                      fg_color=ACCENT_GREEN, hover_color="#1B5E20",
+                      command=self._add_staff_dialog).pack(side="right")
+
+        info = ctk.CTkFrame(page, fg_color=DRAFT_BG, corner_radius=8)
+        info.pack(fill="x", padx=28, pady=(12, 12))
+        ctk.CTkLabel(info,
+                     text="Staff listed here receive email notifications when a draft is created in Draft Mode.",
+                     font=ctk.CTkFont(size=13), text_color=DRAFT_FG).pack(padx=16, pady=10)
+
+        self._staff_scroll = ctk.CTkScrollableFrame(page, fg_color=BG_LIGHT)
+        self._staff_scroll.pack(fill="both", expand=True, padx=28, pady=(0, 20))
+        self._refresh_staff_list()
+
+    def _refresh_staff_list(self):
+        for w in self._staff_scroll.winfo_children():
+            w.destroy()
+
+        staff = get_staff()
+        if not staff:
+            empty = ctk.CTkFrame(self._staff_scroll, fg_color=CARD_BG, corner_radius=12)
+            empty.pack(fill="x", pady=20)
+            ctk.CTkLabel(empty, text="No staff added yet.",
+                         font=ctk.CTkFont(size=16, weight="bold"),
+                         text_color=TEXT_PRIMARY).pack(pady=(30, 4))
+            ctk.CTkLabel(empty, text="Add staff members who should receive draft notification emails.",
+                         font=ctk.CTkFont(size=13),
+                         text_color=TEXT_MUTED).pack(pady=(0, 30))
+            return
+
+        for s in staff:
+            card = ctk.CTkFrame(self._staff_scroll, fg_color=CARD_BG, corner_radius=10)
+            card.pack(fill="x", pady=4)
+
+            row = ctk.CTkFrame(card, fg_color=CARD_BG)
+            row.pack(fill="x", padx=16, pady=10)
+
+            ctk.CTkLabel(row, text=s["name"],
+                         font=ctk.CTkFont(size=14, weight="bold"),
+                         text_color=TEXT_PRIMARY).pack(side="left")
+            ctk.CTkLabel(row, text=s["email"],
+                         font=ctk.CTkFont(size=13),
+                         text_color=TEXT_MUTED).pack(side="left", padx=12)
+
+            ctk.CTkButton(row, text="Delete", width=60, height=28,
+                          fg_color="#C62828", hover_color="#7F0000",
+                          command=lambda sid=s["id"]: self._delete_staff_member(sid)
+                          ).pack(side="right")
+
+            drafts_var = ctk.BooleanVar(value=bool(s.get("receives_drafts", 1)))
+            def _toggle_drafts(staff_dict=s, v=drafts_var):
+                staff_dict["receives_drafts"] = 1 if v.get() else 0
+                save_staff(staff_dict)
+            ctk.CTkCheckBox(row, text="Receives draft notifications",
+                            variable=drafts_var, font=ctk.CTkFont(size=12),
+                            command=_toggle_drafts).pack(side="right", padx=12)
+
+    def _delete_staff_member(self, staff_id):
+        if messagebox.askyesno("Delete Staff", "Remove this staff member?"):
+            delete_staff(staff_id)
+            self._refresh_staff_list()
+
+    def _add_staff_dialog(self):
+        win = ctk.CTkToplevel(self)
+        win.title("Add Staff Member")
+        win.geometry("460x280")
+        win.grab_set()
+
+        ctk.CTkLabel(win, text="Name", font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(anchor="w", padx=24, pady=(20, 2))
+        name_entry = ctk.CTkEntry(win, height=36, font=ctk.CTkFont(size=13),
+                                  placeholder_text="e.g. Sarah Chen")
+        name_entry.pack(fill="x", padx=24)
+
+        ctk.CTkLabel(win, text="Email", font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(anchor="w", padx=24, pady=(12, 2))
+        email_entry = ctk.CTkEntry(win, height=36, font=ctk.CTkFont(size=13),
+                                   placeholder_text="e.g. sarah@firm.com.au")
+        email_entry.pack(fill="x", padx=24)
+
+        def save():
+            n = name_entry.get().strip()
+            e = email_entry.get().strip()
+            if not n or not e:
+                messagebox.showerror("Required", "Both name and email are required.")
+                return
+            save_staff({"name": n, "email": e, "receives_drafts": 1, "enabled": 1})
+            self._refresh_staff_list()
+            win.destroy()
+
+        ctk.CTkButton(win, text="Save", height=42,
+                      fg_color=ACCENT_GREEN, hover_color="#1B5E20",
+                      font=ctk.CTkFont(size=14, weight="bold"),
+                      command=save).pack(fill="x", padx=24, pady=20)
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Settings page
+    # ────────────────────────────────────────────────────────────────────────
+
+    def _build_settings_page(self):
+        page = ctk.CTkFrame(self.content, fg_color=BG_LIGHT, corner_radius=0)
+        self._pages["settings"] = page
+
+        ctk.CTkLabel(page, text="Settings",
+                     font=ctk.CTkFont(size=22, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(anchor="w", padx=28, pady=(24, 12))
+
+        scroll = ctk.CTkScrollableFrame(page, fg_color=BG_LIGHT)
+        scroll.pack(fill="both", expand=True, padx=28, pady=(0, 20))
+
+        self._settings_fields = {}
+
+        # ── Microsoft 365 ─────────────────────────────────────────────────
+        self._settings_section(scroll, "Microsoft 365")
+
+        self._settings_field(scroll, "ms_tenant_id", "Tenant ID",
+                             get_setting("ms_tenant_id", MCS_TENANT_ID))
+        self._settings_field(scroll, "ms_client_id", "Client ID",
+                             get_setting("ms_client_id", MCS_CLIENT_ID))
+        self._settings_field(scroll, "ms_account_email", "Mailbox to Monitor",
+                             get_setting("ms_account_email"))
+
+        signin_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        signin_row.pack(fill="x", pady=(4, 8))
+        ctk.CTkButton(signin_row, text="Sign in to Microsoft 365",
+                      width=220, height=36, fg_color=BRAND_BLUE,
+                      hover_color=BRAND_DARK,
+                      command=self._settings_do_signin).pack(side="left")
+        self._settings_auth_label = ctk.CTkLabel(
+            signin_row, text="", font=ctk.CTkFont(size=12), text_color=TEXT_MUTED)
+        self._settings_auth_label.pack(side="left", padx=12)
+
+        if self._graph and self._graph.is_authenticated():
+            self._settings_auth_label.configure(text="Connected", text_color=ACCENT_GREEN)
+
+        # ── Claude AI ─────────────────────────────────────────────────────
+        self._settings_section(scroll, "Claude AI")
+        self._settings_field(scroll, "anthropic_api_key", "Anthropic API Key",
+                             get_setting("anthropic_api_key"), show="*")
+
+        # ── Practice Details ──────────────────────────────────────────────
+        self._settings_section(scroll, "Practice Details")
+        self._settings_field(scroll, "practice_name", "Practice Name",
+                             get_setting("practice_name", "MC & S"))
+        self._settings_field(scroll, "monitor_folder", "Default Folder to Watch",
+                             get_setting("monitor_folder", "Inbox"))
+
+        # ── Business Hours ────────────────────────────────────────────────
+        self._settings_section(scroll, "Business Hours")
+
+        bh_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        bh_row.pack(fill="x", pady=2)
+        bh_var = ctk.BooleanVar(value=get_setting("business_hours_enabled", "1") == "1")
+        ctk.CTkCheckBox(bh_row, text="Only run plugins during business hours",
+                        variable=bh_var, font=ctk.CTkFont(size=13)).pack(side="left")
+        self._settings_fields["business_hours_enabled"] = ("bool", bh_var)
+
+        hours_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        hours_row.pack(fill="x", pady=4)
+        ctk.CTkLabel(hours_row, text="Start Hour (0-23):", font=ctk.CTkFont(size=12),
+                     text_color=TEXT_PRIMARY).pack(side="left")
+        start_entry = ctk.CTkEntry(hours_row, width=60, height=30)
+        start_entry.insert(0, get_setting("business_hours_start", "8"))
+        start_entry.pack(side="left", padx=(4, 20))
+        self._settings_fields["business_hours_start"] = ("entry", start_entry)
+
+        ctk.CTkLabel(hours_row, text="End Hour (0-23):", font=ctk.CTkFont(size=12),
+                     text_color=TEXT_PRIMARY).pack(side="left")
+        end_entry = ctk.CTkEntry(hours_row, width=60, height=30)
+        end_entry.insert(0, get_setting("business_hours_end", "18"))
+        end_entry.pack(side="left", padx=4)
+        self._settings_fields["business_hours_end"] = ("entry", end_entry)
+
+        # Business days checkboxes
+        days_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        days_row.pack(fill="x", pady=4)
+        ctk.CTkLabel(days_row, text="Business Days:", font=ctk.CTkFont(size=12),
+                     text_color=TEXT_PRIMARY).pack(side="left", padx=(0, 8))
+        active_days = get_setting("business_days", "1,2,3,4,5").split(",")
+        day_names = [("Mon", "1"), ("Tue", "2"), ("Wed", "3"), ("Thu", "4"),
+                     ("Fri", "5"), ("Sat", "6"), ("Sun", "7")]
+        self._bh_day_vars = {}
+        for name, num in day_names:
+            var = ctk.BooleanVar(value=num in active_days)
+            ctk.CTkCheckBox(days_row, text=name, variable=var, width=50,
+                            font=ctk.CTkFont(size=12)).pack(side="left", padx=4)
+            self._bh_day_vars[num] = var
+
+        # ── Save button ──────────────────────────────────────────────────
+        ctk.CTkButton(scroll, text="Save All Settings", height=42,
+                      fg_color=ACCENT_GREEN, hover_color="#1B5E20",
+                      font=ctk.CTkFont(size=14, weight="bold"),
+                      command=self._save_all_settings).pack(fill="x", pady=(20, 10))
+
+    def _settings_section(self, parent, title):
+        ctk.CTkLabel(parent, text=title,
+                     font=ctk.CTkFont(size=16, weight="bold"),
+                     text_color=BRAND_BLUE).pack(anchor="w", pady=(16, 6))
+
+    def _settings_field(self, parent, key, label, value, show=None):
+        row = ctk.CTkFrame(parent, fg_color="transparent")
+        row.pack(fill="x", pady=3)
+        ctk.CTkLabel(row, text=label, font=ctk.CTkFont(size=13),
+                     text_color=TEXT_PRIMARY, width=200, anchor="w").pack(side="left")
+        kwargs = {"height": 34, "font": ctk.CTkFont(size=13)}
+        if show:
+            kwargs["show"] = show
+        entry = ctk.CTkEntry(row, **kwargs)
+        entry.insert(0, value or "")
+        entry.pack(side="left", fill="x", expand=True)
+        self._settings_fields[key] = ("entry", entry)
+
+    def _save_all_settings(self):
+        for key, (kind, widget) in self._settings_fields.items():
+            if kind == "bool":
+                set_setting(key, "1" if widget.get() else "0")
+            elif kind == "entry":
+                set_setting(key, widget.get().strip())
+
+        # Save business days
+        active = [num for num, var in self._bh_day_vars.items() if var.get()]
+        set_setting("business_days", ",".join(sorted(active)))
+
+        # Re-init Claude client with new API key
+        self._loader.set_claude()
+
+        self._log("Settings saved.")
+        messagebox.showinfo("Settings", "All settings saved successfully.")
+
+    def _settings_do_signin(self):
+        tid = self._settings_fields["ms_tenant_id"][1].get().strip() or None
+        cid = self._settings_fields["ms_client_id"][1].get().strip() or None
+        self._graph = GraphClient(tenant_id=tid, client_id=cid)
+        self._settings_auth_label.configure(text="Opening browser...", text_color=TEXT_MUTED)
+
+        def callback(success, error):
+            if success:
+                self.after(0, self._settings_signin_success)
+            else:
+                self.after(0, lambda: self._settings_auth_label.configure(
+                    text=f"Failed: {error}", text_color="#C62828"))
+
+        self._graph.authenticate(callback=callback)
+
+    def _settings_signin_success(self):
+        self._settings_auth_label.configure(text="Connected", text_color=ACCENT_GREEN)
+        self.auth_status_label.configure(text="Connected", text_color="#66BB6A")
+        self._loader.set_graph(self._graph)
+        self._log("Connected to Microsoft 365 (from Settings).")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Chat page — AI Automation Builder
+    # ────────────────────────────────────────────────────────────────────────
+
+    def _build_chat_page(self):
+        page = ctk.CTkFrame(self.content, fg_color=BG_LIGHT, corner_radius=0)
+        self._pages["chat"] = page
+
+        self._chat_messages = []  # list of {"role": ..., "content": ...}
+
+        # Header row
+        top = ctk.CTkFrame(page, fg_color=BG_LIGHT)
+        top.pack(fill="x", padx=28, pady=(24, 0))
+        ctk.CTkLabel(top, text="Chat — Automation Builder",
+                     font=ctk.CTkFont(size=22, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(side="left")
+        ctk.CTkButton(top, text="What can I build?", width=140, height=32,
+                      fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
+                      command=self._chat_show_examples).pack(side="right")
+
+        ctk.CTkLabel(page,
+                     text="Describe an automation in plain English and the AI will build it for you.",
+                     text_color=TEXT_MUTED, font=ctk.CTkFont(size=13)).pack(anchor="w", padx=28, pady=(4, 8))
+
+        # Chat history area
+        self._chat_scroll = ctk.CTkScrollableFrame(
+            page, fg_color="#1A1A2E", corner_radius=8)
+        self._chat_scroll.pack(fill="both", expand=True, padx=28, pady=(0, 8))
+
+        # Typing indicator (hidden by default)
+        self._chat_typing_label = ctk.CTkLabel(
+            self._chat_scroll, text="", font=ctk.CTkFont(size=12),
+            text_color="#888888")
+
+        # Input area
+        input_row = ctk.CTkFrame(page, fg_color=BG_LIGHT, height=50)
+        input_row.pack(fill="x", padx=28, pady=(0, 20))
+        input_row.pack_propagate(False)
+
+        self._chat_input = ctk.CTkEntry(
+            input_row, height=42, font=ctk.CTkFont(size=14),
+            placeholder_text="Describe the automation you want...")
+        self._chat_input.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        self._chat_input.bind("<Return>", lambda e: self._chat_send())
+
+        self._chat_send_btn = ctk.CTkButton(
+            input_row, text="Send", width=80, height=42,
+            fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
+            font=ctk.CTkFont(size=14, weight="bold"),
+            command=self._chat_send)
+        self._chat_send_btn.pack(side="right")
+
+    def _chat_add_bubble(self, role, text):
+        """Add a message bubble to the chat display."""
+        msg_frame = ctk.CTkFrame(self._chat_scroll, fg_color="transparent")
+        msg_frame.pack(fill="x", padx=8, pady=4)
+
+        if role == "user":
+            bubble = ctk.CTkFrame(msg_frame, fg_color=BRAND_BLUE, corner_radius=12)
+            bubble.pack(side="right", padx=(60, 0))
+            ctk.CTkLabel(bubble, text=text, text_color="white",
+                         wraplength=500, justify="left",
+                         font=ctk.CTkFont(size=13)).pack(padx=14, pady=10)
+        elif role == "assistant":
+            bubble = ctk.CTkFrame(msg_frame, fg_color=CHAT_DARK, corner_radius=12)
+            bubble.pack(side="left", padx=(0, 60))
+            ctk.CTkLabel(bubble, text=text, text_color="#E0E0E0",
+                         wraplength=500, justify="left",
+                         font=ctk.CTkFont(size=13)).pack(padx=14, pady=10)
+        elif role == "system":
+            bubble = ctk.CTkFrame(msg_frame, fg_color="#1B3A1B", corner_radius=8)
+            bubble.pack(anchor="center")
+            ctk.CTkLabel(bubble, text=text, text_color="#A5D6A7",
+                         wraplength=600, justify="left",
+                         font=ctk.CTkFont(size=12)).pack(padx=12, pady=6)
+
+    def _chat_show_typing(self, show=True):
+        if show:
+            self._chat_typing_label.configure(text="Thinking...")
+            self._chat_typing_label.pack(anchor="w", padx=16, pady=4)
+        else:
+            self._chat_typing_label.pack_forget()
+
+    def _chat_send(self):
+        text = self._chat_input.get().strip()
+        if not text:
+            return
+
+        api_key = get_setting("anthropic_api_key")
+        if not api_key or anthropic_lib is None:
+            self._chat_add_bubble("system",
+                                  "Please add your Anthropic API key in Settings first.")
+            return
+
+        self._chat_input.delete(0, "end")
+        self._chat_add_bubble("user", text)
+        self._chat_messages.append({"role": "user", "content": text})
+
+        self._chat_send_btn.configure(state="disabled")
+        self._chat_show_typing(True)
+
+        def do_call():
+            try:
+                client = anthropic_lib.Anthropic(api_key=api_key)
+                response = client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=4096,
+                    system=CHAT_SYSTEM_PROMPT,
+                    messages=self._chat_messages,
+                )
+                reply_text = response.content[0].text
+                self._chat_messages.append({"role": "assistant", "content": reply_text})
+                self.after(0, lambda: self._chat_handle_response(reply_text))
+            except Exception as e:
+                self.after(0, lambda: self._chat_add_bubble("system", f"Error: {e}"))
+            finally:
+                self.after(0, lambda: self._chat_send_btn.configure(state="normal"))
+                self.after(0, lambda: self._chat_show_typing(False))
+
+        threading.Thread(target=do_call, daemon=True).start()
+
+    def _chat_handle_response(self, text):
+        """Parse response for tool calls, execute them, and display results."""
+        tools, clean_text = self._extract_tool_calls(text)
+
+        if clean_text.strip():
+            self._chat_add_bubble("assistant", clean_text.strip())
+
+        for tool in tools:
+            self._chat_execute_tool(tool)
+
+    def _extract_tool_calls(self, text):
+        """Find and parse JSON tool-call blocks from the assistant response."""
+        tools = []
+        # Strip markdown code fences for easier parsing
+        stripped = re.sub(r'```json\s*', '', text)
+        stripped = re.sub(r'```\s*', '', stripped)
+        clean = stripped
+
+        positions = []  # (start, end) of tool JSON in `stripped`
+        i = 0
+        while i < len(stripped):
+            if stripped[i] == '{':
+                depth = 0
+                start = i
+                for j in range(i, len(stripped)):
+                    if stripped[j] == '{':
+                        depth += 1
+                    elif stripped[j] == '}':
+                        depth -= 1
+                        if depth == 0:
+                            candidate = stripped[start:j + 1]
+                            try:
+                                obj = json.loads(candidate)
+                                if isinstance(obj, dict) and "tool" in obj:
+                                    tools.append(obj)
+                                    positions.append((start, j + 1))
+                            except (json.JSONDecodeError, ValueError):
+                                pass
+                            i = j + 1
+                            break
+                else:
+                    i += 1
+            else:
+                i += 1
+
+        # Remove tool JSON blocks from display text (reverse order to preserve offsets)
+        for start, end in reversed(positions):
+            clean = clean[:start] + clean[end:]
+
+        clean = re.sub(r'\n{3,}', '\n\n', clean).strip()
+        return tools, clean
+
+    def _chat_execute_tool(self, tool):
+        """Execute a parsed tool call and show result in chat."""
+        tool_name = tool.get("tool", "")
+
+        if tool_name == "create_email_rule":
+            try:
+                rule = {
+                    "category": tool.get("category", "UNKNOWN").upper().replace(" ", "_"),
+                    "keywords": tool.get("keywords", ""),
+                    "subject_template": tool.get("subject_template", ""),
+                    "body_template": tool.get("body_template", ""),
+                    "enabled": tool.get("enabled", 1),
+                    "sort_order": 99,
+                }
+                save_rule(rule)
+                self._refresh_rules_list()
+                self._chat_add_bubble("system",
+                    f"Created email rule: {rule['category']}\n"
+                    f"Keywords: {rule['keywords']}\n"
+                    f"Find it in the Email Rules tab.")
+            except Exception as e:
+                self._chat_add_bubble("system", f"Error creating rule: {e}")
+
+        elif tool_name == "create_plugin":
+            try:
+                filename = tool.get("filename", "")
+                code = tool.get("code", "")
+                if not filename or not code:
+                    self._chat_add_bubble("system", "Error: missing filename or code.")
+                    return
+                if not filename.startswith("plugin_"):
+                    filename = f"plugin_{filename}"
+                if not filename.endswith(".py"):
+                    filename += ".py"
+                plugins_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "plugins")
+                filepath = os.path.join(plugins_dir, filename)
+                with open(filepath, "w", encoding="utf-8") as f:
+                    f.write(code)
+                new_ids = self._loader.reload_plugins()
+                self._refresh_plugins_list()
+                self._chat_add_bubble("system",
+                    f"Created plugin: {filename}\n"
+                    f"Discovered {len(new_ids)} new plugin(s).\n"
+                    f"Find it in the Plugins tab.")
+            except Exception as e:
+                self._chat_add_bubble("system", f"Error creating plugin: {e}")
+
+        elif tool_name == "update_setting":
+            try:
+                key = tool.get("key", "")
+                value = tool.get("value", "")
+                set_setting(key, value)
+                if key == "anthropic_api_key":
+                    self._loader.set_claude()
+                self._chat_add_bubble("system",
+                    f"Updated setting: {key} = {value[:30]}{'...' if len(value) > 30 else ''}")
+            except Exception as e:
+                self._chat_add_bubble("system", f"Error updating setting: {e}")
+
+        elif tool_name == "clarify":
+            question = tool.get("question", "Could you provide more detail?")
+            self._chat_add_bubble("assistant", question)
+
+    def _chat_show_examples(self):
+        examples = (
+            "Example prompts you can try:\n\n"
+            "1. \"When a client emails asking about their tax refund "
+            "status, send them a holding response.\"\n\n"
+            "2. \"Create an automated response for pricing enquiry "
+            "emails with our standard fee schedule.\"\n\n"
+            "3. \"Monitor for emails from noreply@fusesign.com and "
+            "when a bundle hasn't been signed after 5 days, draft a "
+            "nudge email.\"\n\n"
+            "4. \"Create a plugin that checks for ATO emails and "
+            "drafts a contextual reply based on the content.\""
+        )
+        self._chat_add_bubble("assistant", examples)
 
     # ────────────────────────────────────────────────────────────────────────
     # Navigation / Auth / Log
