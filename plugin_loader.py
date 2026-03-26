@@ -161,6 +161,7 @@ class PluginLoader:
         self._scheduler_thread: threading.Thread | None = None
         self._running = False
         self._on_run_complete: Callable | None = None  # called after each plugin run
+        self._on_plugin_registered: Callable | None = None  # called when new plugin discovered
 
     # ── Setup ─────────────────────────────────────────────────────────────────
 
@@ -180,6 +181,10 @@ class PluginLoader:
     def on_run_complete(self, callback: Callable):
         """Register a callback to be called after any plugin finishes running."""
         self._on_run_complete = callback
+
+    def on_plugin_registered(self, callback: Callable):
+        """Register a callback to be called when a new plugin is discovered."""
+        self._on_plugin_registered = callback
 
     # ── Discovery ─────────────────────────────────────────────────────────────
 
@@ -217,6 +222,8 @@ class PluginLoader:
                         self._plugins[plugin_id] = lp
                         discovered.append(plugin_id)
                         self._log(f"  Loaded plugin: {lp.name} (v{lp.version})")
+                        if self._on_plugin_registered:
+                            self._on_plugin_registered(plugin_id, lp)
                         break
 
             except Exception as e:

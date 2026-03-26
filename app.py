@@ -1764,11 +1764,10 @@ class App(ctk.CTk):
                 with open(filepath, "w", encoding="utf-8") as f:
                     f.write(code)
                 new_ids = self._loader.reload_plugins()
-                self._refresh_plugins_list()
+                self.after(500, self._refresh_plugins_list)
                 self._chat_add_bubble("system",
-                    f"Created plugin: {filename}\n"
-                    f"Discovered {len(new_ids)} new plugin(s).\n"
-                    f"Find it in the Plugins tab.")
+                    f"Plugin created and loaded. Find it in the Plugins tab.")
+                self.after(500, self._switch_to_plugins)
             except Exception as e:
                 self._chat_add_bubble("system", f"Error creating plugin: {e}")
 
@@ -1802,6 +1801,10 @@ class App(ctk.CTk):
             "drafts a contextual reply based on the content.\""
         )
         self._chat_add_bubble("assistant", examples)
+
+    def _switch_to_plugins(self):
+        """Programmatically navigate to the Plugins tab."""
+        self._show_page("plugins")
 
     # ────────────────────────────────────────────────────────────────────────
     # Navigation / Auth / Log
