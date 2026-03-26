@@ -33,7 +33,13 @@ from config import (
 
 if getattr(sys, 'frozen', False):
     # Running as PyInstaller bundle — plugins sit next to the .exe
-    PLUGINS_DIR = Path(os.path.dirname(sys.executable)) / "plugins"
+    _base = os.path.dirname(sys.executable)
+    _internal = os.path.join(_base, '_internal')
+    PLUGINS_DIR = Path(os.path.join(_base, 'plugins'))
+    # Add paths so plugin imports (plugin_base, config, graph_client) resolve
+    for _p in [_base, _internal, str(PLUGINS_DIR)]:
+        if _p not in sys.path:
+            sys.path.insert(0, _p)
 else:
     # Running from source
     PLUGINS_DIR = Path(__file__).parent / "plugins"
@@ -214,7 +220,9 @@ class PluginLoader:
                         break
 
             except Exception as e:
+                import traceback
                 self._log(f"⚠ Failed to load plugin {module_name}: {e}")
+                self._log(traceback.format_exc())
 
         return discovered
 
