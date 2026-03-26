@@ -1763,6 +1763,14 @@ class App(ctk.CTk):
                 filepath = os.path.join(plugins_dir, filename)
                 with open(filepath, "w", encoding="utf-8") as f:
                     f.write(code)
+                # Also write to source plugins folder so the file survives rebuilds
+                if getattr(sys, 'frozen', False):
+                    source_plugins_dir = os.path.normpath(
+                        os.path.join(os.path.dirname(sys.executable), '..', '..', 'plugins'))
+                    if os.path.exists(source_plugins_dir):
+                        source_path = os.path.join(source_plugins_dir, filename)
+                        with open(source_path, "w", encoding="utf-8") as f:
+                            f.write(code)
                 new_ids = self._loader.reload_plugins()
                 self.after(500, self._refresh_plugins_list)
                 self._chat_add_bubble("system",
