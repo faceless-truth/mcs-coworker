@@ -8,6 +8,7 @@ and runs them on schedule in background threads.
 import importlib
 import importlib.util
 import inspect
+import os
 import sys
 import threading
 import time
@@ -30,7 +31,12 @@ from config import (
     get_setting, get_plugin_state, save_plugin_state, get_all_plugin_states
 )
 
-PLUGINS_DIR = Path(__file__).parent / "plugins"
+if getattr(sys, 'frozen', False):
+    # Running as PyInstaller bundle — plugins sit next to the .exe
+    PLUGINS_DIR = Path(os.path.dirname(sys.executable)) / "plugins"
+else:
+    # Running from source
+    PLUGINS_DIR = Path(__file__).parent / "plugins"
 
 # Plugin IDs that are shown as templates / not run automatically
 # Only plugin_email_triage is active — everything else is hidden

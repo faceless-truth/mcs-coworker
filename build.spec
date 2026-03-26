@@ -2,7 +2,6 @@
 # PyInstaller spec file for MC & S Desktop Agent
 
 import os
-import glob
 import customtkinter
 
 block_cipher = None
@@ -10,21 +9,14 @@ block_cipher = None
 # Locate CustomTkinter package data (themes, assets)
 ctk_path = os.path.dirname(customtkinter.__file__)
 
-# Collect all plugin files
-plugin_files = []
-plugins_dir = os.path.join(os.getcwd(), 'plugins')
-for f in glob.glob(os.path.join(plugins_dir, '*.py')):
-    plugin_files.append((f, 'plugins'))
-
 a = Analysis(
     ['app.py'],
     pathex=[],
     binaries=[],
     datas=[
         (ctk_path, 'customtkinter'),
-        (os.path.join('plugins', '__init__.py'), 'plugins'),
         (os.path.join('assets', '*'), 'assets'),
-    ] + plugin_files,
+    ],
     hiddenimports=[
         'customtkinter',
         'msal',

@@ -62,6 +62,14 @@ if errorlevel 1 (
     exit /b 1
 )
 
+:: Copy plugins folder next to the exe (must be a real writable directory)
+echo.
+echo [BUILD] Copying plugins folder...
+xcopy /E /I /Y plugins "dist\MCS Desktop Agent\plugins"
+if errorlevel 1 (
+    echo [WARN] Failed to copy plugins folder — check it exists.
+)
+
 echo.
 echo ============================================
 echo   Build complete. Find your app in the dist/ folder.
