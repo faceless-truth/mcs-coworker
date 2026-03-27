@@ -221,6 +221,19 @@ Available on context.graph:
 - move_email(message_id: str, destination_folder_name: str)
 - flag_email(message_id: str)
 
+=== GRAPH API FILTERING LIMITATION ===
+The Graph API does NOT support filtering messages by sender email address \
+in the URL query. Never use $filter on from/emailAddress/address.
+
+Instead, always fetch unread emails first then filter in Python:
+
+emails = context.graph.fetch_unread_emails(folder="Inbox", max_count=25)
+target_emails = [
+    e for e in emails
+    if e.get('from', {}).get('emailAddress', {}).get('address', '').lower()
+    == 'target@email.com'
+]
+
 === PluginResult FIELDS (only these, no others) ===
 PluginResult(
   success: bool,
