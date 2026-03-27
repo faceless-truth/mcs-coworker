@@ -165,23 +165,35 @@ class EmailTriagePlugin(AgentPlugin):
                 if signature:
                     reply_body = reply_body + "<br>" + signature
 
+                # Check if a signature image is uploaded for inline embedding
+                sig_image_path = graph.get_signature_image_path()
+
                 if draft_mode:
-                    graph.create_draft(
-                        from_email, reply_subject, reply_body, msg_id
-                    )
+                    if sig_image_path:
+                        graph.create_draft_with_inline_image(
+                            from_email, reply_subject, reply_body,
+                            sig_image_path, "signature_image", msg_id
+                        )
+                    else:
+                        graph.create_draft(
+                            from_email, reply_subject, reply_body, msg_id
+                        )
                     log("    ↳ Draft created in Drafts folder.")
-                    self._send_staff_notification(
-                        context, from_email, subject, category
-                    )
                     log_activity(
                         from_email, subject, category, "draft_created",
-                        draft_created=1, notification_sent=1,
+                        draft_created=1,
                     )
                     result.drafts_created += 1
                 else:
-                    graph.send_email(
-                        from_email, reply_subject, reply_body, msg_id
-                    )
+                    if sig_image_path:
+                        graph.send_email_with_inline_image(
+                            from_email, reply_subject, reply_body,
+                            sig_image_path, "signature_image", msg_id
+                        )
+                    else:
+                        graph.send_email(
+                            from_email, reply_subject, reply_body, msg_id
+                        )
                     log("    ↳ Reply sent.")
                     log_activity(from_email, subject, category, "auto_sent")
 
@@ -237,60 +249,3 @@ class EmailTriagePlugin(AgentPlugin):
             result = result.replace(f"{{{tag}}}", url)
         return result
 
-    def _send_staff_notification(self, context: PluginContext,
-                                 client_email: str, original_subject: str,
-                                 category: str):
-        user_email = get_setting("user_email")
-        if not user_email:
-            context.log("    ↳ ⚠ No user email configured for draft notifications.")
-            return
-
-        practice = get_setting("practice_name", "MC & S")
-
-        cat_friendly = {
-            "PRICING_ENQUIRY":    "Pricing Enquiry",
-            "CHECKLIST_REQUEST":  "Checklist Request",
-            "DOCUMENTS_RECEIVED": "Documents Received",
-        }.get(category, category.replace("_", " ").title())
-
-        subject = f"[DRAFT READY] {cat_friendly} — Response awaiting your review"
-
-        body = f"""
-<div style="font-family:Arial,sans-serif;max-width:600px">
-  <div style="background:#1565C0;color:white;padding:16px 24px;border-radius:8px 8px 0 0">
-    <h2 style="margin:0;font-size:18px">📝 Draft Email Ready for Review</h2>
-  </div>
-  <div style="background:#f5f5f5;padding:24px;border-radius:0 0 8px 8px;border:1px solid #ddd">
-    <p>A draft response has been prepared and is waiting in your <strong>Drafts folder</strong> in Outlook.</p>
-    <table style="width:100%;border-collapse:collapse;margin:16px 0">
-      <tr>
-        <td style="padding:8px;color:#555;width:120px"><strong>From:</strong></td>
-        <td style="padding:8px">{client_email}</td>
-      </tr>
-      <tr style="background:#fff">
-        <td style="padding:8px;color:#555"><strong>Subject:</strong></td>
-        <td style="padding:8px">{original_subject}</td>
-      </tr>
-      <tr>
-        <td style="padding:8px;color:#555"><strong>Category:</strong></td>
-        <td style="padding:8px">
-          <span style="background:#E3F2FD;color:#1565C0;padding:2px 8px;
-                       border-radius:12px;font-size:13px">{cat_friendly}</span>
-        </td>
-      </tr>
-    </table>
-    <div style="background:#FFF9C4;border-left:4px solid #F9A825;padding:12px 16px;
-                margin:16px 0;border-radius:4px">
-      <strong>Action Required:</strong> Open Outlook → Drafts, review, personalise if needed, then send.
-    </div>
-    <p style="color:#888;font-size:12px;margin-top:24px">
-      — {practice} Desktop Agent · Email Triage Plugin
-    </p>
-  </div>
-</div>"""
-
-        try:
-            context.graph.send_email(user_email, subject, body)
-            context.log(f"    ↳ Notified {user_email}")
-        except Exception as e:
-            context.log(f"    ↳ ⚠ Could not notify {user_email}: {e}")

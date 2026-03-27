@@ -72,6 +72,7 @@ class LoadedPlugin:
         state = get_plugin_state(plugin_id)
         self.enabled = bool(state.get("enabled", 1))
         self.draft_mode = bool(state.get("draft_mode", 1))
+        self.display_name = state.get("display_name") or None
 
         # Use DB schedule if set, otherwise fall back to plugin's default
         db_sched = state.get("schedule_seconds", 0)
@@ -87,7 +88,7 @@ class LoadedPlugin:
 
     @property
     def name(self) -> str:
-        return self.instance.name
+        return self.display_name or self.instance.name
 
     @property
     def description(self) -> str:

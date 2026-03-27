@@ -45,7 +45,7 @@ import anthropic
 
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
 from config import (
-    get_setting, get_staff, log_activity,
+    get_setting, log_activity,
     get_style_preferences, get_active_lessons,
 )
 
@@ -139,6 +139,30 @@ class NOAProcessorPlugin(AgentPlugin):
             context.log("📋 NOA Processor: Anthropic API key not configured.")
             return False
         return True
+
+    @classmethod
+    def email_templates_schema(cls) -> list[dict]:
+        return [
+            {
+                "key": "draft_prompt",
+                "label": "NOA Analysis Prompt",
+                "default": (
+                    "You are an assistant for MC & S, an accounting firm. Analyse this email "
+                    "about a Notice of Assessment (NOA) from the ATO.\n\n"
+                    "Extract: client_name, client_email, outcome (REFUND/PAYABLE/NIL/AMENDED/"
+                    "COMPANY_PAYABLE/DEDUCT_FROM_REFUND), amount, tax_year, entity_name, "
+                    "is_amended, taxable_income, confidence.\n\n"
+                    "Respond ONLY with valid JSON."
+                ),
+                "type": "prompt",
+            },
+            {
+                "key": "email_closing",
+                "label": "Sign-off Text",
+                "default": "If you have any questions, please don't hesitate to get in touch.",
+                "type": "textarea",
+            },
+        ]
 
     @classmethod
     def settings_schema(cls) -> list[dict]:
@@ -300,14 +324,10 @@ class NOAProcessorPlugin(AgentPlugin):
                         client_email, reply_subject, reply_body,
                         attachment_paths=pdf_paths
                     )
-                    log(f"    ↳ Draft created for {client_email} with NOA attached.")
-                    self._send_staff_notification(
-                        context, client_name, client_email, outcome,
-                        amount, tax_year, subject
-                    )
+                    log(f"    ↳ Draft created in Drafts folder.")
                     log_activity(
                         from_email, subject, f"NOA_{outcome}", "draft_created",
-                        draft_created=1, notification_sent=1,
+                        draft_created=1,
                     )
                     result.drafts_created += 1
                 else:
@@ -413,77 +433,3 @@ Respond ONLY with valid JSON. If you cannot determine a field, use a reasonable 
         result = result.replace("{net_refund}", noa_data.get("net_refund", amount))
         return result
 
-    def _send_staff_notification(self, context: PluginContext,
-                                 client_name: str, client_email: str,
-                                 outcome: str, amount: str,
-                                 tax_year: str, original_subject: str):
-        """Notify staff that an NOA draft is ready for review."""
-        staff      = get_staff()
-        notifiable = [s for s in staff if s.get("receives_drafts")]
-
-        if not notifiable:
-            context.log("    ↳ ⚠ No staff configured for NOA notifications.")
-            return
-
-        practice = get_setting("practice_name", "MC & S")
-
-        outcome_labels = {
-            "REFUND": ("Refund", "#2E7D32", "#E8F5E9"),
-            "PAYABLE": ("Amount Owing", "#C62828", "#FFEBEE"),
-            "NIL": ("Nil Result", "#F57F17", "#FFF8E1"),
-            "AMENDED": ("Amended Assessment", "#E65100", "#FFF3E0"),
-            "COMPANY_PAYABLE": ("Company Payable", "#C62828", "#FFEBEE"),
-            "DEDUCT_FROM_REFUND": ("Refund (DFR)", "#1565C0", "#E3F2FD"),
-        }
-        label, color, bg = outcome_labels.get(outcome, ("Unknown", "#555", "#f5f5f5"))
-
-        subject = f"[NOA READY] {client_name} — {label} {amount} ({tax_year})"
-
-        body = f"""
-<div style="font-family:Arial,sans-serif;max-width:600px">
-  <div style="background:#1565C0;color:white;padding:16px 24px;border-radius:8px 8px 0 0">
-    <h2 style="margin:0;font-size:18px">📋 NOA Draft Ready for Review</h2>
-  </div>
-  <div style="background:#f5f5f5;padding:24px;border-radius:0 0 8px 8px;border:1px solid #ddd">
-    <p>A Notice of Assessment email has been drafted and is waiting in your <strong>Drafts folder</strong>.</p>
-    <table style="width:100%;border-collapse:collapse;margin:16px 0">
-      <tr>
-        <td style="padding:8px;color:#555;width:130px"><strong>Client:</strong></td>
-        <td style="padding:8px">{client_name}</td>
-      </tr>
-      <tr style="background:#fff">
-        <td style="padding:8px;color:#555"><strong>Email:</strong></td>
-        <td style="padding:8px">{client_email}</td>
-      </tr>
-      <tr>
-        <td style="padding:8px;color:#555"><strong>Tax Year:</strong></td>
-        <td style="padding:8px">{tax_year}</td>
-      </tr>
-      <tr style="background:#fff">
-        <td style="padding:8px;color:#555"><strong>Outcome:</strong></td>
-        <td style="padding:8px">
-          <span style="background:{bg};color:{color};padding:4px 12px;
-                       border-radius:12px;font-size:13px;font-weight:bold">{label}</span>
-        </td>
-      </tr>
-      <tr>
-        <td style="padding:8px;color:#555"><strong>Amount:</strong></td>
-        <td style="padding:8px;font-size:16px;font-weight:bold">{amount}</td>
-      </tr>
-    </table>
-    <div style="background:#FFF9C4;border-left:4px solid #F9A825;padding:12px 16px;
-                margin:16px 0;border-radius:4px">
-      <strong>Action Required:</strong> Open Outlook → Drafts, review the NOA email and attachment, then send.
-    </div>
-    <p style="color:#888;font-size:12px;margin-top:24px">
-      — {practice} Desktop Agent · NOA Processor Plugin
-    </p>
-  </div>
-</div>"""
-
-        for s in notifiable:
-            try:
-                context.graph.send_email(s["email"], subject, body)
-                context.log(f"    ↳ Notified {s['name']}")
-            except Exception as e:
-                context.log(f"    ↳ ⚠ Could not notify {s['name']}: {e}")

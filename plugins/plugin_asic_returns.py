@@ -44,7 +44,7 @@ from pathlib import Path
 import anthropic
 
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
-from config import get_setting, get_staff, log_activity, get_db, get_style_preferences, get_active_lessons
+from config import get_setting, log_activity, get_db, get_style_preferences, get_active_lessons
 
 
 # ── Database setup for ASIC tracking ────────────────────────────────────────
@@ -232,6 +232,29 @@ class ASICReturnPlugin(AgentPlugin):
         return True
 
     @classmethod
+    def email_templates_schema(cls) -> list[dict]:
+        return [
+            {
+                "key": "draft_prompt",
+                "label": "ASIC Analysis Prompt",
+                "default": (
+                    "You are an assistant for MC & S, an accounting firm. Analyse this email "
+                    "about an ASIC Annual Return from Nowinfinity.\n\n"
+                    "Extract: company_name, acn, client_name, client_email, asic_fee, "
+                    "due_date, confidence.\n\n"
+                    "Respond ONLY with valid JSON."
+                ),
+                "type": "prompt",
+            },
+            {
+                "key": "email_closing",
+                "label": "Sign-off Text",
+                "default": "If you have any questions, please don't hesitate to get in touch.",
+                "type": "textarea",
+            },
+        ]
+
+    @classmethod
     def settings_schema(cls) -> list[dict]:
         return [
             {
@@ -404,14 +427,10 @@ class ASICReturnPlugin(AgentPlugin):
                             client_email, reply_subject, reply_body,
                             attachment_paths=pdf_paths
                         )
-                        log(f"    ↳ Draft created for {client_email} with {len(pdf_paths)} attachment(s).")
-                        self._send_staff_notification(
-                            context, company_name, client_name, client_email,
-                            acn, asic_fee, mcs_fee, due_date
-                        )
+                        log(f"    ↳ Draft created in Drafts folder.")
                         log_activity(
                             from_email, subject, "ASIC_ANNUAL_RETURN", "draft_created",
-                            draft_created=1, notification_sent=1,
+                            draft_created=1,
                         )
                         result.drafts_created += 1
                     else:
@@ -589,77 +608,3 @@ Respond ONLY with valid JSON. If you cannot determine a field, use a reasonable 
         except Exception as e:
             context.log(f"    ↳ ⚠ Error sending reminder: {e}")
 
-    def _send_staff_notification(self, context: PluginContext,
-                                 company_name: str, client_name: str,
-                                 client_email: str, acn: str,
-                                 asic_fee: str, mcs_fee: str, due_date: str):
-        """Notify staff that an ASIC return draft is ready."""
-        staff      = get_staff()
-        notifiable = [s for s in staff if s.get("receives_drafts")]
-
-        if not notifiable:
-            context.log("    ↳ ⚠ No staff configured for ASIC notifications.")
-            return
-
-        practice = get_setting("practice_name", "MC & S")
-
-        subject = f"[ASIC RETURN] {company_name} — Draft Ready for Review"
-
-        body = f"""
-<div style="font-family:Arial,sans-serif;max-width:600px">
-  <div style="background:#1565C0;color:white;padding:16px 24px;border-radius:8px 8px 0 0">
-    <h2 style="margin:0;font-size:18px">🏢 ASIC Annual Return — Draft Ready</h2>
-  </div>
-  <div style="background:#f5f5f5;padding:24px;border-radius:0 0 8px 8px;border:1px solid #ddd">
-    <p>An ASIC Annual Return email has been drafted and is waiting in your <strong>Drafts folder</strong>.</p>
-    <table style="width:100%;border-collapse:collapse;margin:16px 0">
-      <tr>
-        <td style="padding:8px;color:#555;width:130px"><strong>Company:</strong></td>
-        <td style="padding:8px;font-weight:bold">{company_name}</td>
-      </tr>
-      <tr style="background:#fff">
-        <td style="padding:8px;color:#555"><strong>ACN:</strong></td>
-        <td style="padding:8px">{acn}</td>
-      </tr>
-      <tr>
-        <td style="padding:8px;color:#555"><strong>Director:</strong></td>
-        <td style="padding:8px">{client_name}</td>
-      </tr>
-      <tr style="background:#fff">
-        <td style="padding:8px;color:#555"><strong>Client Email:</strong></td>
-        <td style="padding:8px">{client_email}</td>
-      </tr>
-      <tr>
-        <td style="padding:8px;color:#555"><strong>ASIC Fee:</strong></td>
-        <td style="padding:8px">{asic_fee}</td>
-      </tr>
-      <tr style="background:#fff">
-        <td style="padding:8px;color:#555"><strong>MC&S Fee:</strong></td>
-        <td style="padding:8px">{mcs_fee}</td>
-      </tr>
-      <tr>
-        <td style="padding:8px;color:#555"><strong>Due Date:</strong></td>
-        <td style="padding:8px">{due_date or 'See statement'}</td>
-      </tr>
-    </table>
-    <div style="background:#FFF9C4;border-left:4px solid #F9A825;padding:12px 16px;
-                margin:16px 0;border-radius:4px">
-      <strong>Action Required:</strong>
-      <ol style="margin:8px 0;padding-left:20px">
-        <li>Review the draft email in Outlook Drafts</li>
-        <li>Create the MC&S invoice in Xero ({mcs_fee})</li>
-        <li>Send the draft once confirmed</li>
-      </ol>
-    </div>
-    <p style="color:#888;font-size:12px;margin-top:24px">
-      — {practice} Desktop Agent · ASIC Annual Return Plugin
-    </p>
-  </div>
-</div>"""
-
-        for s in notifiable:
-            try:
-                context.graph.send_email(s["email"], subject, body)
-                context.log(f"    ↳ Notified {s['name']}")
-            except Exception as e:
-                context.log(f"    ↳ ⚠ Could not notify {s['name']}: {e}")

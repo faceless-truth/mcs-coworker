@@ -35,7 +35,8 @@ def init_db():
             schedule_seconds INTEGER DEFAULT 0,
             last_run         TEXT,
             last_result      TEXT,
-            last_summary     TEXT
+            last_summary     TEXT,
+            display_name     TEXT
         );
 
         CREATE TABLE IF NOT EXISTS email_rules (
@@ -75,6 +76,16 @@ def init_db():
             enabled   INTEGER DEFAULT 1
         );
 
+        CREATE TABLE IF NOT EXISTS plugin_templates (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            plugin_id       TEXT NOT NULL,
+            template_key    TEXT NOT NULL,
+            template_label  TEXT,
+            template_value  TEXT,
+            template_type   TEXT DEFAULT 'textarea',
+            UNIQUE(plugin_id, template_key)
+        );
+
         CREATE TABLE IF NOT EXISTS memory_style (
             id        INTEGER PRIMARY KEY AUTOINCREMENT,
             content   TEXT NOT NULL,
@@ -96,6 +107,12 @@ def init_db():
             active    INTEGER DEFAULT 1
         );
     """)
+
+    # Add display_name column if upgrading from older schema
+    try:
+        c.execute("ALTER TABLE plugin_registry ADD COLUMN display_name TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
 
     # Seed default settings
     defaults = {
@@ -301,6 +318,7 @@ def get_plugin_state(plugin_id: str) -> dict:
         "last_run":         None,
         "last_result":      None,
         "last_summary":     None,
+        "display_name":     None,
     }
 
 
@@ -469,3 +487,41 @@ def toggle_lesson(lesson_id: int, active: bool):
     )
     conn.commit()
     conn.close()
+
+
+# ── Plugin Templates ────────────────────────────────────────────────────────
+
+def get_plugin_templates(plugin_id: str) -> list[dict]:
+    """Return all templates for a given plugin."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM plugin_templates WHERE plugin_id=? ORDER BY id",
+        (plugin_id,),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def save_plugin_template(plugin_id: str, key: str, value: str):
+    """Upsert a single template value for a plugin."""
+    conn = get_db()
+    conn.execute(
+        """INSERT INTO plugin_templates (plugin_id, template_key, template_value)
+           VALUES (?, ?, ?)
+           ON CONFLICT(plugin_id, template_key)
+           DO UPDATE SET template_value=excluded.template_value""",
+        (plugin_id, key, value),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_plugin_template(plugin_id: str, key: str, default: str = None) -> str:
+    """Return a single template value, or default if not set."""
+    conn = get_db()
+    row = conn.execute(
+        "SELECT template_value FROM plugin_templates WHERE plugin_id=? AND template_key=?",
+        (plugin_id, key),
+    ).fetchone()
+    conn.close()
+    return row["template_value"] if row else default

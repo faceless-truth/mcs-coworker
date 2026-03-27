@@ -157,6 +157,24 @@ class AgentPlugin(ABC):
     # ── Settings schema ───────────────────────────────────────────────────────
 
     @classmethod
+    def email_templates_schema(cls) -> list[dict]:
+        """
+        Declare editable email templates this plugin exposes in the UI.
+
+        Return a list of template definitions. Example:
+            return [
+                {"key": "draft_prompt", "label": "Draft Email Prompt",
+                 "default": "You are a professional assistant...",
+                 "type": "prompt"},
+                {"key": "email_closing", "label": "Sign-off Text",
+                 "default": "Kind regards,", "type": "textarea"},
+            ]
+
+        Supported types: "text", "textarea", "prompt"
+        """
+        return []
+
+    @classmethod
     def settings_schema(cls) -> list[dict]:
         """
         Declare plugin-specific settings that appear in the Plugins tab.
@@ -217,6 +235,19 @@ class AgentPlugin(ABC):
         """Write a plugin-specific setting to the database."""
         from config import set_setting
         set_setting(f"plugin_{self.__class__.__name__}_{key}", value)
+
+    def get_email_template(self, key: str, default: str = "") -> str:
+        """Read an editable email template from the database."""
+        from config import get_plugin_template
+        plugin_id = "plugin_" + self.__class__.__name__.replace("Plugin", "").lower()
+        # Try the class-based ID first, then fall back to module-style
+        result = get_plugin_template(plugin_id, key, None)
+        if result is None:
+            # Also try with the full class name style used by plugin_loader
+            result = get_plugin_template(
+                f"plugin_{self.__class__.__module__}", key, None
+            )
+        return result if result is not None else default
 
     def log_activity(self, source: str, subject: str, category: str,
                      action: str, draft_created: int = 0,

@@ -141,6 +141,15 @@ TOOL: create_plugin
 Plugin code must:
 - Import from plugin_base: AgentPlugin, PluginContext, PluginResult, Schedule
 - Define a class inheriting AgentPlugin
+- Every plugin class MUST have these class attributes set:
+    name = "Descriptive Plugin Name"
+    description = "One sentence describing what this plugin does."
+    detail = "More detailed explanation of the plugin behaviour."
+    version = "1.0.0"
+    icon = "🔧"
+    author = "CoWorker AI"
+  The name should be derived from what the accountant asked for.
+  Never leave name as empty string or use a generic placeholder like "My Plugin".
 - Implement run(self, context: PluginContext) -> PluginResult
 - Use context.graph for all Microsoft Graph operations
 - Use context.claude for Claude AI calls
@@ -173,11 +182,19 @@ graph.send_email() to forward and graph.move_email() to move
 6. For web research — build a plugin using requests.get()
 7. Always produce complete, working plugin code — no TODOs, no placeholders, \
 no stubs
-8. After creating anything, explain in plain English what was built and where \
+8. Never send a notification email after creating a draft. Just create the \
+draft silently. The accountant will see it in their Outlook Drafts folder. \
+The only feedback should be a log line: "Draft created in Drafts folder."
+9. Always define email_templates_schema() returning at least a 'draft_prompt' \
+field so accountants can edit the AI prompt from the Plugins tab UI
+10. In run(), always call self.get_email_template('draft_prompt', default_prompt) \
+to get the prompt instead of hardcoding it — this lets accountants customise \
+the AI behaviour from the UI
+11. After creating anything, explain in plain English what was built and where \
 to find it in the app
-9. Use clarify tool only when genuinely ambiguous — prefer making reasonable \
+12. Use clarify tool only when genuinely ambiguous — prefer making reasonable \
 assumptions and building
-10. If a request is genuinely outside current capabilities — for example \
+13. If a request is genuinely outside current capabilities — for example \
 requiring integration with a third-party system that has no API, requiring \
 local file system access beyond the app, or requiring hardware/OS-level \
 controls — do NOT suggest workarounds or external tools. Instead respond with: \
@@ -910,6 +927,8 @@ class App(ctk.CTk):
                 self._plugin_card(self._plugins_scroll, lp, is_template=True)
 
     def _plugin_card(self, parent, lp, is_template=False):
+        CORE_PLUGIN_IDS = {"plugin_email_triage", "plugin_noa_processor",
+                           "plugin_asic_returns", "plugin_correspondence_logger"}
         card_fg = "#ECECEC" if is_template else CARD_BG
         text_col = TEXT_MUTED if is_template else TEXT_PRIMARY
         card = ctk.CTkFrame(parent, fg_color=card_fg, corner_radius=12)
@@ -923,6 +942,26 @@ class App(ctk.CTk):
                      text_color=text_col).pack(side="left")
         ctk.CTkLabel(row1, text=f"v{lp.version}",
                      font=ctk.CTkFont(size=11), text_color=TEXT_MUTED).pack(side="left", padx=8)
+
+        # Rename button for non-core, non-template plugins
+        base_id = lp.plugin_id.replace("plugins.", "").split(".")[-1]
+        if not is_template and base_id not in CORE_PLUGIN_IDS:
+            def _rename_plugin(pid=lp.plugin_id, loaded_plugin=lp):
+                dlg = ctk.CTkInputDialog(
+                    text="Enter a new name for this plugin:",
+                    title="Rename Plugin")
+                new_name = dlg.get_input()
+                if new_name and new_name.strip():
+                    new_name = new_name.strip()
+                    loaded_plugin.display_name = new_name
+                    config.save_plugin_state(pid, display_name=new_name)
+                    self._refresh_plugins_list()
+            ctk.CTkButton(row1, text="Rename", width=60, height=24,
+                          fg_color="transparent", hover_color="#E3F2FD",
+                          text_color=BRAND_BLUE, border_width=1,
+                          border_color=BRAND_BLUE,
+                          font=ctk.CTkFont(size=11),
+                          command=_rename_plugin).pack(side="left", padx=8)
 
         ctk.CTkLabel(card, text=lp.description,
                      font=ctk.CTkFont(size=12), text_color=TEXT_MUTED,
@@ -984,13 +1023,10 @@ class App(ctk.CTk):
                       command=_run_now).pack(side="right")
 
         # Delete Plugin button
-        CORE_PLUGINS = {"plugin_email_triage", "plugin_noa_processor",
-                        "plugin_asic_returns", "plugin_correspondence_logger"}
-
         def _delete_plugin(pid=lp.plugin_id, pname=lp.name):
             # Block deletion of core plugins
             base_id = pid.replace("plugins.", "").split(".")[-1]
-            if base_id in CORE_PLUGINS:
+            if base_id in CORE_PLUGIN_IDS:
                 dlg = ctk.CTkToplevel(self)
                 dlg.title("Cannot Delete")
                 dlg.geometry("420x160")
@@ -1137,6 +1173,83 @@ class App(ctk.CTk):
             ctk.CTkButton(settings_frame, text="Save Plugin Settings",
                           width=160, height=30, fg_color=ACCENT_GREEN,
                           hover_color="#1B5E20", command=_save_plugin_settings
+                          ).pack(anchor="e", pady=(6, 0))
+
+        # ── Email Templates (if schema exists) ──
+        tmpl_schema = lp.instance.email_templates_schema()
+        if not tmpl_schema:
+            # For chat-created (non-core) plugins, show a default draft_prompt template
+            base_id = lp.plugin_id.replace("plugins.", "").split(".")[-1]
+            if base_id not in {"plugin_email_triage", "plugin_noa_processor",
+                               "plugin_asic_returns", "plugin_correspondence_logger",
+                               "plugin_template"}:
+                tmpl_schema = [
+                    {
+                        "key": "draft_prompt",
+                        "label": "How Claude should structure the draft reply",
+                        "default": "You are a professional accountant's assistant. "
+                                   "Draft a helpful, professional email reply.",
+                        "type": "prompt",
+                    },
+                ]
+
+        if tmpl_schema:
+            from config import get_plugin_template, save_plugin_template
+
+            tmpl_frame = ctk.CTkFrame(card, fg_color="transparent")
+            tmpl_frame.pack(fill="x", padx=16, pady=(4, 10))
+
+            ctk.CTkLabel(tmpl_frame, text="Email Templates",
+                         font=ctk.CTkFont(size=12, weight="bold"),
+                         text_color=TEXT_PRIMARY).pack(anchor="w", pady=(0, 2))
+            ctk.CTkLabel(tmpl_frame,
+                         text="Customise how this plugin structures its draft emails.",
+                         font=ctk.CTkFont(size=10), text_color=TEXT_MUTED
+                         ).pack(anchor="w", pady=(0, 6))
+
+            tmpl_widgets = {}
+            for tdef in tmpl_schema:
+                tkey = tdef["key"]
+                tlabel = tdef.get("label", tkey)
+                tdefault = tdef.get("default", "")
+                ttype = tdef.get("type", "textarea")
+
+                current_val = get_plugin_template(lp.plugin_id, tkey, tdefault)
+
+                trow = ctk.CTkFrame(tmpl_frame, fg_color="transparent")
+                trow.pack(fill="x", pady=2)
+                ctk.CTkLabel(trow, text=tlabel, font=ctk.CTkFont(size=12),
+                             text_color=TEXT_PRIMARY, width=200, anchor="w").pack(side="left")
+
+                if ttype == "text":
+                    ent = ctk.CTkEntry(trow, height=30, font=ctk.CTkFont(size=12), width=400)
+                    ent.insert(0, current_val or "")
+                    ent.pack(side="left", fill="x", expand=True)
+                    tmpl_widgets[tkey] = ("entry", ent)
+                else:
+                    # textarea or prompt
+                    h = 150 if ttype == "prompt" else 100
+                    tb = ctk.CTkTextbox(trow, height=h, font=ctk.CTkFont(size=12), width=400)
+                    tb.insert("1.0", current_val or "")
+                    tb.pack(side="left", fill="x", expand=True)
+                    tmpl_widgets[tkey] = ("textarea", tb)
+
+            def _save_templates(pid=lp.plugin_id, tw=tmpl_widgets, frame=tmpl_frame):
+                for tkey, (tkind, widget) in tw.items():
+                    if tkind == "entry":
+                        save_plugin_template(pid, tkey, widget.get())
+                    else:
+                        save_plugin_template(pid, tkey, widget.get("1.0", "end-1c"))
+                # Show confirmation
+                confirm = ctk.CTkLabel(frame, text="Templates saved",
+                                       font=ctk.CTkFont(size=11, weight="bold"),
+                                       text_color=SUCCESS_FG)
+                confirm.pack(anchor="e")
+                confirm.after(2000, confirm.destroy)
+
+            ctk.CTkButton(tmpl_frame, text="Save Email Templates",
+                          width=160, height=30, fg_color=ACCENT_GREEN,
+                          hover_color="#1B5E20", command=_save_templates
                           ).pack(anchor="e", pady=(6, 0))
 
     # ────────────────────────────────────────────────────────────────────────

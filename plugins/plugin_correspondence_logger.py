@@ -35,7 +35,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
-from config import get_setting, get_staff, log_activity, get_db
+from config import get_setting, log_activity, get_db
 
 
 # ── Database setup for correspondence ────────────────────────────────────────
@@ -207,6 +207,26 @@ class CorrespondenceLoggerPlugin(AgentPlugin):
             context.log("📝 Correspondence Logger: Microsoft 365 not connected.")
             return False
         return True
+
+    @classmethod
+    def email_templates_schema(cls) -> list[dict]:
+        return [
+            {
+                "key": "summary_prompt",
+                "label": "Daily Summary Prompt",
+                "default": (
+                    "Summarise the outstanding correspondence items for today. "
+                    "Group by incoming (needs action) and outgoing (awaiting reply)."
+                ),
+                "type": "prompt",
+            },
+            {
+                "key": "summary_subject",
+                "label": "Daily Summary Subject Line",
+                "default": "[DAILY SUMMARY] Outstanding Correspondence Items",
+                "type": "text",
+            },
+        ]
 
     @classmethod
     def settings_schema(cls) -> list[dict]:
@@ -422,86 +442,15 @@ class CorrespondenceLoggerPlugin(AgentPlugin):
         return name.title()
 
     def _send_daily_summary(self, context: PluginContext):
-        """Send a daily summary of outstanding correspondence items."""
+        """Log a daily summary of outstanding correspondence items."""
         outstanding = get_outstanding_correspondence()
         if not outstanding:
             context.log("  📝 Daily summary: No outstanding items.")
             return
 
-        staff      = get_staff()
-        notifiable = [s for s in staff if s.get("receives_drafts")]
-        if not notifiable:
-            return
-
-        practice = get_setting("practice_name", "MC & S")
-
-        # Build summary table
         incoming = [o for o in outstanding if o["direction"] == "incoming"]
         outgoing = [o for o in outstanding if o["direction"] == "outgoing"]
-
-        def build_rows(items, max_items=15):
-            rows = ""
-            for item in items[:max_items]:
-                status_colors = {
-                    "logged": ("#1565C0", "#E3F2FD"),
-                    "pending": ("#F57F17", "#FFF8E1"),
-                    "awaiting_reply": ("#E65100", "#FFF3E0"),
-                }
-                color, bg = status_colors.get(item["status"], ("#555", "#f5f5f5"))
-                rows += f"""<tr>
-                    <td style="padding:6px 8px;border-bottom:1px solid #eee">{item['timestamp'][:10]}</td>
-                    <td style="padding:6px 8px;border-bottom:1px solid #eee">{item.get('client_name', '')}</td>
-                    <td style="padding:6px 8px;border-bottom:1px solid #eee">{item.get('subject', '')[:50]}</td>
-                    <td style="padding:6px 8px;border-bottom:1px solid #eee">
-                        <span style="background:{bg};color:{color};padding:2px 8px;border-radius:10px;font-size:12px">
-                            {item['status'].replace('_', ' ').title()}
-                        </span>
-                    </td>
-                </tr>"""
-            if len(items) > max_items:
-                rows += f'<tr><td colspan="4" style="padding:8px;color:#888">...and {len(items) - max_items} more</td></tr>'
-            return rows
-
-        subject = f"[DAILY SUMMARY] {len(outstanding)} Outstanding Correspondence Items"
-
-        body = f"""
-<div style="font-family:Arial,sans-serif;max-width:700px">
-  <div style="background:#1565C0;color:white;padding:16px 24px;border-radius:8px 8px 0 0">
-    <h2 style="margin:0;font-size:18px">📝 Daily Correspondence Summary</h2>
-    <p style="margin:4px 0 0;opacity:0.9;font-size:14px">{datetime.now().strftime('%A, %d %B %Y')}</p>
-  </div>
-  <div style="background:#f5f5f5;padding:24px;border-radius:0 0 8px 8px;border:1px solid #ddd">
-    <h3 style="color:#333;margin-top:0">📥 Incoming — Needs Action ({len(incoming)})</h3>
-    <table style="width:100%;border-collapse:collapse;background:white;border-radius:4px">
-      <tr style="background:#E3F2FD">
-        <th style="padding:8px;text-align:left;font-size:13px">Date</th>
-        <th style="padding:8px;text-align:left;font-size:13px">Client</th>
-        <th style="padding:8px;text-align:left;font-size:13px">Subject</th>
-        <th style="padding:8px;text-align:left;font-size:13px">Status</th>
-      </tr>
-      {build_rows(incoming)}
-    </table>
-
-    <h3 style="color:#333;margin-top:24px">📤 Outgoing — Awaiting Reply ({len(outgoing)})</h3>
-    <table style="width:100%;border-collapse:collapse;background:white;border-radius:4px">
-      <tr style="background:#E3F2FD">
-        <th style="padding:8px;text-align:left;font-size:13px">Date</th>
-        <th style="padding:8px;text-align:left;font-size:13px">Client</th>
-        <th style="padding:8px;text-align:left;font-size:13px">Subject</th>
-        <th style="padding:8px;text-align:left;font-size:13px">Status</th>
-      </tr>
-      {build_rows(outgoing)}
-    </table>
-
-    <p style="color:#888;font-size:12px;margin-top:24px">
-      — {practice} Desktop Agent · Correspondence Logger
-    </p>
-  </div>
-</div>"""
-
-        for s in notifiable:
-            try:
-                context.graph.send_email(s["email"], subject, body)
-                context.log(f"  📝 Daily summary sent to {s['name']}")
-            except Exception as e:
-                context.log(f"  ⚠ Could not send summary to {s['name']}: {e}")
+        context.log(
+            f"  📝 Daily summary: {len(outstanding)} outstanding items "
+            f"({len(incoming)} incoming, {len(outgoing)} outgoing awaiting reply)."
+        )
