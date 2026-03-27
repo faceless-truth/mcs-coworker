@@ -251,6 +251,22 @@ GET /me/calendarView?startDateTime=...&endDateTime=...
 
 For web requests, import requests at the top of the plugin and use \
 requests.get(url).
+
+=== SCHEDULING ===
+Schedule must always use these exact method calls:
+  Schedule.every_minutes(n)
+  Schedule.every_hours(n)
+  Schedule.daily_at(hour)
+  Schedule.manual_only()
+
+Never use Schedule.EVERY_5_MINUTES or any constant-style reference.
+The plugin class attribute must be named default_schedule not schedule.
+
+Example:
+  default_schedule = Schedule.every_minutes(5)
+  default_schedule = Schedule.every_hours(2)
+  default_schedule = Schedule.daily_at(8)
+  default_schedule = Schedule.manual_only()
 """
 
 
