@@ -1069,8 +1069,8 @@ class App(ctk.CTk):
                 except Exception as e:
                     self._log(f"Error deleting plugin file: {e}")
                 self._loader.reload_plugins()
-                self._refresh_plugins_list()
                 self._log(f"Plugin {pname} deleted.")
+                self.after(300, self._refresh_plugins_list)
 
             ctk.CTkButton(btn_row, text="Delete", width=100, height=34,
                           fg_color="#C62828", hover_color="#7F0000",
@@ -1176,22 +1176,28 @@ class App(ctk.CTk):
                           ).pack(anchor="e", pady=(6, 0))
 
         # ── Email Templates (if schema exists) ──
-        tmpl_schema = lp.instance.email_templates_schema()
+        try:
+            tmpl_schema = lp.instance.email_templates_schema()
+        except Exception as _tmpl_err:
+            self._log(f"⚠ email_templates_schema() failed for {lp.name}: {_tmpl_err}")
+            tmpl_schema = []
+        tmpl_base_id = lp.plugin_id.replace("plugins.", "").split(".")[-1]
+        self._log(f"[Templates] {lp.name} ({tmpl_base_id}): email_templates_schema() returned {len(tmpl_schema)} field(s)")
         if not tmpl_schema:
             # For chat-created (non-core) plugins, show a default draft_prompt template
-            base_id = lp.plugin_id.replace("plugins.", "").split(".")[-1]
-            if base_id not in {"plugin_email_triage", "plugin_noa_processor",
+            if tmpl_base_id not in {"plugin_email_triage", "plugin_noa_processor",
                                "plugin_asic_returns", "plugin_correspondence_logger",
                                "plugin_template"}:
                 tmpl_schema = [
                     {
                         "key": "draft_prompt",
-                        "label": "How Claude should structure the draft reply",
+                        "label": "Draft Email Prompt",
                         "default": "You are a professional accountant's assistant. "
                                    "Draft a helpful, professional email reply.",
                         "type": "prompt",
                     },
                 ]
+                self._log(f"[Templates] {lp.name}: injected default Draft Email Prompt template")
 
         if tmpl_schema:
             from config import get_plugin_template, save_plugin_template
@@ -1201,9 +1207,9 @@ class App(ctk.CTk):
 
             ctk.CTkLabel(tmpl_frame, text="Email Templates",
                          font=ctk.CTkFont(size=12, weight="bold"),
-                         text_color=TEXT_PRIMARY).pack(anchor="w", pady=(0, 2))
+                         text_color=BRAND_BLUE).pack(anchor="w", pady=(0, 2))
             ctk.CTkLabel(tmpl_frame,
-                         text="Customise how this plugin structures its draft emails.",
+                         text="Customise how this plugin structures its emails",
                          font=ctk.CTkFont(size=10), text_color=TEXT_MUTED
                          ).pack(anchor="w", pady=(0, 6))
 

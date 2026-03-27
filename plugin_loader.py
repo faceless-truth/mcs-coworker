@@ -405,7 +405,24 @@ class PluginLoader:
                 lp.is_ready = False
 
     def reload_plugins(self) -> list[str]:
-        """Re-scan plugins/ directory and load any newly added plugins."""
+        """Re-scan plugins/ directory and load any newly added plugins.
+        Also removes plugins whose files have been deleted from disk."""
+        # Remove plugins whose source files no longer exist
+        existing_files = set()
+        if PLUGINS_DIR.exists():
+            existing_files = {p.stem for p in PLUGINS_DIR.glob("plugin_*.py")}
+
+        removed_ids = [
+            pid for pid in list(self._plugins.keys())
+            if pid not in existing_files
+        ]
+        for pid in removed_ids:
+            lp = self._plugins.pop(pid)
+            self._log(f"  Unregistered deleted plugin: {lp.name} ({pid})")
+            # Also remove from sys.modules so it can be cleanly re-imported if re-added
+            if pid in sys.modules:
+                del sys.modules[pid]
+
         new_ids = self.discover()
         ctx = self._make_context(draft_mode=True)
         for pid in new_ids:
