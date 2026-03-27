@@ -249,6 +249,11 @@ class AgentPlugin(ABC):
             )
         return result if result is not None else default
 
+    def get_claude_model(self) -> str:
+        """Return the current Claude model string from settings."""
+        from config import get_claude_model
+        return get_claude_model()
+
     def log_activity(self, source: str, subject: str, category: str,
                      action: str, draft_created: int = 0,
                      notification_sent: int = 0):

@@ -116,6 +116,7 @@ def init_db():
 
     # Seed default settings
     defaults = {
+        "claude_model":           "claude-haiku-4-5-20251001",
         "draft_mode":             "1",
         "business_hours_enabled": "1",
         "business_hours_start":   "8",
@@ -173,6 +174,46 @@ def set_setting(key, value):
     )
     conn.commit()
     conn.close()
+
+
+def get_claude_model() -> str:
+    """Return the current Claude model string from settings."""
+    return get_setting("claude_model", "claude-haiku-4-5-20251001")
+
+
+def update_claude_model(api_key: str) -> str:
+    """
+    Query the Anthropic models API and update the stored model to the
+    newest available Haiku model.  Returns the model ID that was selected.
+    Falls back to the currently stored value on any error.
+    """
+    import urllib.request
+    current = get_claude_model()
+    try:
+        req = urllib.request.Request(
+            "https://api.anthropic.com/v1/models",
+            headers={
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            },
+        )
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            data = json.loads(resp.read().decode())
+
+        models = [
+            m for m in data.get("data", [])
+            if "haiku" in m.get("id", "") and m.get("type") == "model"
+        ]
+        if not models:
+            return current
+
+        # Sort by created_at descending — pick the newest
+        models.sort(key=lambda m: m.get("created_at", ""), reverse=True)
+        newest = models[0]["id"]
+        set_setting("claude_model", newest)
+        return newest
+    except Exception:
+        return current
 
 
 def get_all_settings():

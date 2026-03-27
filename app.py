@@ -31,6 +31,7 @@ from config import (
     get_recent_activity,
     get_links, save_link, delete_link,
     get_staff, save_staff, delete_staff,
+    update_claude_model,
 )
 from graph_client import GraphClient, MCS_TENANT_ID, MCS_CLIENT_ID
 from plugin_loader import PluginLoader
@@ -443,6 +444,12 @@ GET /me/calendarView?startDateTime=...&endDateTime=...
 
 For web requests, import requests at the top of the plugin and use \
 requests.get(url).
+
+CLAUDE API MODEL:
+Never hardcode a model string. Always use:
+    model=self.get_claude_model()
+
+This automatically uses the latest available Haiku model.
 """
 
 
@@ -497,6 +504,12 @@ class App(ctk.CTk):
 
         # Auto-start scheduler after a short delay to allow plugin init
         self.after(1500, self._auto_start_scheduler)
+
+        # Auto-detect latest Claude model in background
+        self.after(3000, lambda: threading.Thread(
+            target=self._auto_update_claude_model,
+            daemon=True).start()
+        )
 
         # Override window close to minimise to tray instead of quitting
         self.protocol("WM_DELETE_WINDOW", self._on_close_requested)
@@ -899,6 +912,19 @@ class App(ctk.CTk):
         self._stat_labels["scheduler"].configure(text="Running")
         self.scheduler_label.configure(text="Running", text_color="#A5D6A7")
         self._log("Scheduler started. Email triage running automatically.")
+
+    def _auto_update_claude_model(self):
+        """Query Anthropic API for the latest Haiku model and cache it."""
+        api_key = get_setting("anthropic_api_key")
+        if not api_key:
+            return
+        try:
+            model = update_claude_model(api_key)
+            self.after(0, lambda: self._log(
+                f"[Claude] Using model: {model}"
+            ))
+        except Exception:
+            pass
 
     # ────────────────────────────────────────────────────────────────────────
     # Email Rules page
@@ -1983,8 +2009,9 @@ class App(ctk.CTk):
         def do_call():
             try:
                 client = anthropic_lib.Anthropic(api_key=api_key)
+                from config import get_claude_model
                 response = client.messages.create(
-                    model="claude-haiku-4-5-20251001",
+                    model=get_claude_model(),
                     max_tokens=4096,
                     system=CHAT_SYSTEM_PROMPT,
                     messages=self._chat_messages,
@@ -2142,6 +2169,19 @@ class App(ctk.CTk):
                     "include signature image check. Consider adding "
                     "get_signature_image_path() logic."
                 )
+
+        # Fix 8: hardcoded model string — replace with get_claude_model()
+        model_pattern = r'model\s*=\s*["\']claude-[^"\']+["\']'
+        if re.search(model_pattern, fixed):
+            fixed = re.sub(
+                model_pattern,
+                'model=self.get_claude_model()',
+                fixed
+            )
+            issues.append(
+                "Fixed: replaced hardcoded model string with "
+                "self.get_claude_model()"
+            )
 
         if issues:
             summary = (

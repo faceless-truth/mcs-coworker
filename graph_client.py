@@ -279,17 +279,38 @@ class GraphClient:
         )
         r.raise_for_status()
 
-    # ── Signature Extraction ─────────────────────────────────────────────────
+    # ── Signature ─────────────────────────────────────────────────────────────
 
     _cached_signature: str = ""
 
-    def get_signature_html(self) -> str:
-        """Extract the user's email signature from a recent sent email.
+    def get_signature_image_path(self) -> str | None:
+        """Return the path to the uploaded signature image if it exists."""
+        try:
+            from config import get_setting
+            path = get_setting("signature_image_path", "")
+            if path and os.path.isfile(path):
+                return path
+        except Exception:
+            pass
+        return None
 
-        The Graph API does not expose signatures directly, so we look at
-        the most recent sent email and extract everything after the last
-        occurrence of common signature delimiters.
+    def get_signature_html(self) -> str:
+        """Return an HTML signature block.
+
+        If the user has uploaded a signature image, return an <img> tag
+        referencing it via cid (Content-ID) for inline embedding.
+        Otherwise fall back to extracting the signature from recent
+        sent emails.
         """
+        # Check for uploaded signature image first
+        sig_path = self.get_signature_image_path()
+        if sig_path:
+            return (
+                '<br><br>'
+                '<img src="cid:signature_image" '
+                'style="max-width:400px;">'
+            )
+
         if self._cached_signature:
             return self._cached_signature
 
@@ -535,6 +556,92 @@ class GraphClient:
                 r.raise_for_status()
 
         return draft_id
+
+    # ── Email with Inline Images ─────────────────────────────────────────────
+
+    def _add_inline_image_to_draft(self, draft_id: str, image_path: str,
+                                    content_id: str = "signature_image"):
+        """Attach an image as an inline (CID) attachment to an existing draft."""
+        import base64
+        filename = os.path.basename(image_path)
+        ext = os.path.splitext(filename)[1].lower()
+        content_type_map = {
+            ".png": "image/png", ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg", ".gif": "image/gif",
+        }
+        content_type = content_type_map.get(ext, "image/png")
+
+        with open(image_path, "rb") as f:
+            content_bytes = base64.b64encode(f.read()).decode("utf-8")
+
+        att_url = f"{GRAPH_BASE}/me/messages/{draft_id}/attachments"
+        att_payload = {
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": filename,
+            "contentType": content_type,
+            "contentBytes": content_bytes,
+            "contentId": content_id,
+            "isInline": True,
+        }
+        r = requests.post(att_url, headers=self._headers(), json=att_payload)
+        r.raise_for_status()
+
+    def create_draft_with_inline_image(self, to_address: str, subject: str,
+                                        body_html: str,
+                                        image_path: str,
+                                        content_id: str = "signature_image",
+                                        reply_to_id: str = None) -> str:
+        """Create a draft email with an inline image attachment. Returns draft ID."""
+        # Create the draft first (reuse existing method)
+        draft_id = self.create_draft(to_address, subject, body_html, reply_to_id)
+        # Add the inline image
+        self._add_inline_image_to_draft(draft_id, image_path, content_id)
+        return draft_id
+
+    def send_email_with_inline_image(self, to_address: str, subject: str,
+                                      body_html: str,
+                                      image_path: str,
+                                      content_id: str = "signature_image",
+                                      reply_to_id: str = None):
+        """Send an email with an inline image. Creates draft, attaches, then sends."""
+        import base64
+        filename = os.path.basename(image_path)
+        ext = os.path.splitext(filename)[1].lower()
+        content_type_map = {
+            ".png": "image/png", ".jpg": "image/jpeg",
+            ".jpeg": "image/jpeg", ".gif": "image/gif",
+        }
+        content_type = content_type_map.get(ext, "image/png")
+
+        with open(image_path, "rb") as f:
+            content_bytes = base64.b64encode(f.read()).decode("utf-8")
+
+        message = {
+            "subject": subject,
+            "body": {"contentType": "HTML", "content": body_html},
+            "toRecipients": [{"emailAddress": {"address": to_address}}],
+            "attachments": [{
+                "@odata.type": "#microsoft.graph.fileAttachment",
+                "name": filename,
+                "contentType": content_type,
+                "contentBytes": content_bytes,
+                "contentId": content_id,
+                "isInline": True,
+            }],
+        }
+
+        if reply_to_id:
+            url = f"{GRAPH_BASE}/me/messages/{reply_to_id}/reply"
+            r = requests.post(
+                url, headers=self._headers(), json={"message": message}
+            )
+        else:
+            url = f"{GRAPH_BASE}/me/sendMail"
+            r = requests.post(
+                url, headers=self._headers(),
+                json={"message": message, "saveToSentItems": True},
+            )
+        r.raise_for_status()
 
     # ── Folder Operations ────────────────────────────────────────────────────
 

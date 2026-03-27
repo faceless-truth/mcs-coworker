@@ -529,7 +529,7 @@ Respond ONLY with valid JSON. If you cannot determine a field, use a reasonable 
 
         try:
             response = claude_client.messages.create(
-                model="claude-haiku-4-5-20251001",
+                model=self.get_claude_model(),
                 max_tokens=400,
                 messages=[{"role": "user", "content": prompt}],
             )

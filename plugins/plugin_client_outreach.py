@@ -375,7 +375,7 @@ class ClientOutreachPlugin(AgentPlugin):
         )
 
         response = claude_client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model=self.get_claude_model(),
             max_tokens=800,
             system=OUTREACH_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": prompt}],
