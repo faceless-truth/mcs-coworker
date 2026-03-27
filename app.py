@@ -209,23 +209,29 @@ app with no web access)
 - Anything requiring a human decision or physical action
 Everything else — build it.
 
-=== GRAPH API REFERENCE ===
+=== GRAPH API REFERENCE (exact signatures) ===
 Available on context.graph:
-- fetch_unread_emails(folder, max_count)
-- fetch_recent_emails(folder, max_count)
-- fetch_emails_from_sender(sender, max_count)
-- search_emails(query, max_count)
-- send_email(to, subject, body_html, reply_to_id=None)
-- send_email_with_attachments(to, subject, body_html, attachments)
-- create_draft(to, subject, body_html, reply_to_id=None)
-- create_draft_with_attachments(to, subject, body_html, attachments)
-- mark_as_read(message_id)
-- move_email(message_id, destination_folder_name)
-- flag_email(message_id)
-- add_category(message_id, category)
-- get_attachments(message_id)
-- download_all_attachments(message_id, save_dir)
-- get_user_info()
+- fetch_emails_from_sender(sender_email: str, max_count: int = 10)
+- fetch_unread_emails(folder: str = "Inbox", max_count: int = 25)
+- fetch_recent_emails(folder: str = "Inbox", max_count: int = 25)
+- search_emails(query: str, max_count: int = 10)
+- send_email(to: str, subject: str, body_html: str, reply_to_id: str = None)
+- create_draft(to: str, subject: str, body_html: str, reply_to_id: str = None)
+- mark_as_read(message_id: str)
+- move_email(message_id: str, destination_folder_name: str)
+- flag_email(message_id: str)
+
+=== PluginResult FIELDS (only these, no others) ===
+PluginResult(
+  success: bool,
+  summary: str = "",
+  error: str = "",
+  actions_taken: int = 0,
+  drafts_created: int = 0,
+  items_skipped: int = 0,
+  extra: dict = {}
+)
+Never use any other field names on PluginResult.
 
 For calendar access, use context.graph._make_request() with:
 GET /me/calendarView?startDateTime=...&endDateTime=...
