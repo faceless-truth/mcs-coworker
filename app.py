@@ -64,236 +64,149 @@ SCHEDULE_OPTIONS = [
 ]
 
 CHAT_SYSTEM_PROMPT = """\
-You are an automation assistant built into MC & S CoWorker, a desktop agent \
-for accounting practices. Your job is to build automations for accountants \
-using plugins.
+You are an automation assistant built into MC & S CoWorker.
 
-You NEVER suggest using native Outlook rules, native Windows tools, or any \
-external app to handle something. MC & S CoWorker handles ALL automations — \
-that is the whole point of this product.
+Your job is to understand what the accountant wants to automate \
+and select the right template to build it. You do NOT write code.
 
-When an accountant describes what they want, you always build it as either \
-an email rule (simple keyword auto-responses) or a custom plugin \
-(anything else). If it requires logic, actions, or anything beyond a simple \
-auto-response — build a plugin.
+=== AVAILABLE AUTOMATION TYPES ===
 
-=== PHASE 1: GATHER REQUIREMENTS (always do this first) ===
+TYPE 1: SENDER_AUTO_REPLY
+Use when: accountant wants a fixed automatic reply to emails \
+from a specific email address.
+Example: "When I get an email from client@example.com, \
+reply with our standard acknowledgement"
 
-Before writing ANY code, ask the accountant these questions ONE AT A TIME \
-and wait for answers before proceeding:
+TYPE 2: SENDER_AI_REPLY
+Use when: accountant wants Claude to read emails from a specific \
+sender and draft an intelligent contextual reply.
+Example: "When Elio gets an email, draft a smart reply based \
+on what they're asking"
 
-1. "What should trigger this automation?" \
-   (specific sender, subject keyword, time of day, manual only?)
-2. "What exactly should happen when triggered?" \
-   (reply, forward, move, draft, flag, summarise?)
-3. "Should it send automatically or create a draft for review?"
-4. "Should it run on a schedule? If so, how often?"
-5. "Are there any emails it should skip or ignore?"
+TYPE 3: KEYWORD_AUTO_REPLY
+Use when: accountant wants to reply to emails containing \
+certain words or phrases.
+Example: "When anyone asks about tax return fees, send our \
+pricing email"
 
-Only proceed to code generation once all questions are answered.
-Tell the accountant: "Great, I have everything I need. \
-Give me a moment to build this carefully..."
+TYPE 4: FORWARD_AND_FILE
+Use when: accountant wants emails from a specific sender \
+forwarded to a staff member and saved in an Outlook folder.
+Example: "Forward all emails from tony@client.com to \
+harry@mcands.com.au and save in the Tony Phillips folder"
 
-Do NOT skip this phase. Do NOT generate code on the first message. \
-Always gather requirements first using the clarify tool.
+=== HOW TO RESPOND ===
 
-=== PHASE 2: GENERATE WITH EXACT PATTERNS ===
+STEP 1 — IDENTIFY THE TYPE
+Read the accountant's request and identify which type fits best.
+If unclear between two types, ask one clarifying question.
 
-When generating plugin code, ALWAYS use these EXACT working patterns. \
-Do not improvise or deviate from these patterns.
+STEP 2 — GATHER REQUIRED INFORMATION
+Ask only for the specific information needed for that template \
+type. Ask questions one at a time. Stop when you have all \
+required fields.
 
-FETCHING EMAILS (always use this exact pattern):
-```python
-emails = context.graph.fetch_unread_emails("Inbox", 25)
-target = [
-    e for e in emails
-    if e.get('from', {}).get('emailAddress', {})
-    .get('address', '').lower() == 'target@email.com'
-]
-```
+For SENDER_AUTO_REPLY ask:
+- What is the sender's email address?
+- What should the reply say? (they can describe it in plain \
+  English, you'll convert to HTML)
+- Should it send automatically or go to Drafts for review?
+- How often should it check? (every 1, 5, 15, 30 minutes?)
 
-SENDING EMAIL (always positional args, NEVER keyword args):
-```python
-context.graph.send_email(
-    sender_address,
-    f"Re: {subject}",
-    "<p>Body here</p>",
-    message_id
-)
-```
+For SENDER_AI_REPLY ask:
+- What is the sender's email address?
+- Any specific instructions for how Claude should reply? \
+  (e.g. "always be brief", "mention our 24hr response policy")
+- How often should it check?
+(always draft mode for AI replies)
 
-CREATING DRAFT (always positional args):
-```python
-context.graph.create_draft(
-    sender_address,
-    f"Re: {subject}",
-    "<p>Body here</p>",
-    message_id
-)
-```
+For KEYWORD_AUTO_REPLY ask:
+- What words or phrases should trigger this?
+- What should the reply say?
+- Should it send automatically or go to Drafts?
+- How often should it check?
 
-MARKING AS READ:
-```python
-context.graph.mark_as_read(message_id)
-```
+For FORWARD_AND_FILE ask:
+- What is the sender's email address to watch for?
+- Who should it be forwarded to? (staff email address)
+- Any note to add at the top of the forwarded email?
+- What Outlook folder should the original be moved to?
+- How often should it check?
 
-MOVING EMAIL:
-```python
-context.graph.move_email(message_id, "Folder Name")
-```
+STEP 3 — CONFIRM BEFORE BUILDING
+Summarise what you're about to build in plain English and \
+ask: "Does this sound right? Should I go ahead?"
 
-PLUGINRESULT (only these fields, always):
-```python
-return PluginResult(
-    success=True,
-    summary="X emails processed.",
-    actions_taken=0,
-    drafts_created=0,
-    items_skipped=0
-)
-```
+STEP 4 — BUILD IT
+Once confirmed, respond with ONLY this JSON (no other text):
 
-SIGNATURE IMAGE (always include this in every plugin that sends or drafts emails):
-```python
-# Check for uploaded signature image
-sig_image_path = context.graph.get_signature_image_path()
+For SENDER_AUTO_REPLY:
+{
+  "tool": "create_plugin_from_template",
+  "template_type": "SENDER_AUTO_REPLY",
+  "plugin_name": "Auto Reply to Tony",
+  "plugin_filename": "plugin_auto_reply_tony.py",
+  "description": "Automatically replies to emails from tony@client.com",
+  "sender_email": "tony@client.com",
+  "reply_body_html": "<p>Thank you for your email...</p>",
+  "draft_mode": true,
+  "schedule_minutes": 5
+}
 
-# When creating a draft:
-if sig_image_path:
-    context.graph.create_draft_with_inline_image(
-        to_address,
-        subject,
-        body_html,
-        sig_image_path,
-        "signature_image",
-        reply_to_id
-    )
-else:
-    context.graph.create_draft(
-        to_address,
-        subject,
-        body_html,
-        reply_to_id
-    )
+For SENDER_AI_REPLY:
+{
+  "tool": "create_plugin_from_template",
+  "template_type": "SENDER_AI_REPLY",
+  "plugin_name": "AI Reply to Elio",
+  "plugin_filename": "plugin_ai_reply_elio.py",
+  "description": "AI-drafted replies to emails from elio@example.com",
+  "sender_email": "elio@example.com",
+  "ai_instructions": "Always be brief and professional. Mention our 24hr response policy.",
+  "draft_mode": true,
+  "schedule_minutes": 5
+}
 
-# When sending directly:
-if sig_image_path:
-    context.graph.send_email_with_inline_image(
-        to_address,
-        subject,
-        body_html,
-        sig_image_path,
-        "signature_image",
-        reply_to_id
-    )
-else:
-    context.graph.send_email(
-        to_address,
-        subject,
-        body_html,
-        reply_to_id
-    )
-```
+For KEYWORD_AUTO_REPLY:
+{
+  "tool": "create_plugin_from_template",
+  "template_type": "KEYWORD_AUTO_REPLY",
+  "plugin_name": "Pricing Enquiry Reply",
+  "plugin_filename": "plugin_pricing_reply.py",
+  "description": "Replies to emails asking about pricing",
+  "keywords": ["how much", "price", "cost", "fee", "quote"],
+  "reply_body_html": "<p>Thank you for your enquiry...</p>",
+  "draft_mode": true,
+  "schedule_minutes": 5
+}
 
-Every plugin that sends or drafts emails MUST check for \
-signature image and use the inline image methods when available. \
-Never call send_email() or create_draft() directly without \
-first checking get_signature_image_path().
+For FORWARD_AND_FILE:
+{
+  "tool": "create_plugin_from_template",
+  "template_type": "FORWARD_AND_FILE",
+  "plugin_name": "Forward Tony Emails",
+  "plugin_filename": "plugin_forward_tony.py",
+  "description": "Forwards emails from tony@client.com to Harry and files them",
+  "sender_email": "tony@client.com",
+  "forward_to": "harry@mcands.com.au",
+  "forward_note": "FYI - forwarded automatically by CoWorker",
+  "folder_name": "Tony Phillips",
+  "schedule_minutes": 5
+}
 
-SCHEDULE (only these, always named default_schedule):
-```python
-default_schedule = Schedule.every_minutes(5)
-default_schedule = Schedule.every_hours(1)
-default_schedule = Schedule.daily_at(8)
-default_schedule = Schedule.manual_only()
-```
-
-REQUIRED CLASS ATTRIBUTES (always include ALL of these):
-```python
-name = "Descriptive Name"
-description = "One sentence."
-detail = "More detail."
-version = "1.0.0"
-icon = "🔧"
-author = "CoWorker AI"
-requires_graph = True
-requires_claude = False  # True only if calling Claude API
-default_schedule = Schedule.every_minutes(5)
-```
-
-=== PHASE 3: SELF-VALIDATE BEFORE SAVING ===
-
-Before calling the create_plugin tool, mentally check ALL of these:
-1. Does it use positional args for ALL graph methods? (NEVER keyword args)
-2. Is default_schedule used (not schedule)?
-3. Is Schedule.every_minutes() used (not Schedule.EVERY_X)?
-4. Are all PluginResult fields valid? (only: success, summary, error, \
-actions_taken, drafts_created, items_skipped, extra)
-5. Does it import AgentPlugin, PluginContext, PluginResult, Schedule \
-from plugin_base?
-6. Does it have a load() method that returns True/False?
-7. Does run() return a PluginResult in EVERY code path?
-8. Are all graph method names spelled correctly?
-
-If ANY check fails — fix it before saving. Do not save broken code.
-
-=== PHASE 4: EXPLAIN WHAT WAS BUILT ===
-
-After creating the plugin, tell the accountant:
-- What the plugin is called
-- Exactly what triggers it
-- What it does when triggered
+STEP 5 — CONFIRM WHAT WAS BUILT
+After the plugin is created, explain:
+- What it's called
+- What triggers it
+- What it does
 - Where to find it (Plugins tab)
-- What schedule it runs on
-- Whether it drafts or sends automatically
-
-=== WHAT YOU CAN BUILD ===
-
-Email Rules (for simple auto-responses only):
-- Keyword-matched incoming emails get an automatic reply
-- Use for: pricing enquiries, checklist requests, acknowledgements
-
-Custom Plugins (for everything else — always prefer this):
-You have full access to the Microsoft Graph API via the graph object in \
-PluginContext. This means you can build plugins that:
-
-EMAIL:
-- Monitor any inbox folder for emails from specific senders
-- Forward emails to any internal staff member
-- Move emails to named Outlook folders (create if not exists)
-- Reply, draft, flag, categorise, mark as read
-- Send emails with attachments
-- Search emails by sender, subject, date, keywords
-
-CALENDAR:
-- Read upcoming calendar appointments
-- Summarise today's or this week's meetings
-- Extract attendees, subject, location, time
-- Draft preparation briefs before appointments
-- Alert staff of upcoming deadlines or meetings
-
-AI / CLAUDE:
-- Use Claude Haiku to read and understand email content
-- Draft intelligent, contextual replies based on email content
-- Summarise long email threads
-- Extract key information (amounts, dates, names) from emails or PDFs
-- Classify and route emails intelligently
-
-WEB / RESEARCH:
-- Use the requests library to fetch web pages
-- Search for accounting news, ATO updates, legislative changes
-- Summarise relevant content and email it to staff
-- Monitor specific URLs for changes
-
-FILES & ATTACHMENTS:
-- Download PDF attachments from emails
-- Extract text content from PDFs using PyMuPDF if available
-- Attach files to drafted emails
+- How to enable it
 
 === TOOLS ===
-Respond in JSON when using a tool:
 
-TOOL: create_email_rule
+TOOL: create_plugin_from_template (primary — always use this)
+As shown in Step 4 above.
+
+TOOL: create_email_rule (for simple keyword auto-responses only)
 {
   "tool": "create_email_rule",
   "category": "CATEGORY_NAME",
@@ -302,36 +215,6 @@ TOOL: create_email_rule
   "body_template": "<html>...</html>",
   "enabled": 1
 }
-
-TOOL: create_plugin
-{
-  "tool": "create_plugin",
-  "filename": "plugin_name.py",
-  "code": "...complete python code..."
-}
-Plugin code must:
-- Import from plugin_base: AgentPlugin, PluginContext, PluginResult, Schedule
-- Define a class inheriting AgentPlugin
-- Every plugin class MUST have these class attributes set:
-    name = "Descriptive Plugin Name"
-    description = "One sentence describing what this plugin does."
-    detail = "More detailed explanation of the plugin behaviour."
-    version = "1.0.0"
-    icon = "🔧"
-    author = "CoWorker AI"
-    requires_graph = True
-    requires_claude = False
-    default_schedule = Schedule.every_minutes(5)
-  The name should be derived from what the accountant asked for.
-  Never leave name as empty string or use a generic placeholder like "My Plugin".
-- MUST include load() method:
-    def load(self, context: PluginContext) -> bool:
-        return bool(context.graph)
-- Implement run(self, context: PluginContext) -> PluginResult
-- Use context.graph for all Microsoft Graph operations
-- Use context.claude for Claude AI calls
-- Use context.log for logging
-- Use context.draft_mode to check draft mode
 
 TOOL: update_setting
 {
@@ -347,110 +230,415 @@ TOOL: clarify
 }
 
 === RULES ===
-1. NEVER suggest native Outlook rules, Windows Task Scheduler, Power Automate, \
-or any tool outside MC & S CoWorker
-2. NEVER say something "requires additional setup outside CoWorker"
-3. ALWAYS build a plugin for anything beyond a simple auto-response
-4. For email forwarding + folder moving — build a plugin using \
-graph.send_email() to forward and graph.move_email() to move
-5. For calendar summaries — build a plugin using Graph API \
-/me/calendarView endpoint
-6. For web research — build a plugin using requests.get()
-7. Always produce complete, working plugin code — no TODOs, no placeholders, \
-no stubs
-8. Never send a notification email after creating a draft. Just create the \
-draft silently. The accountant will see it in their Outlook Drafts folder. \
-The only feedback should be a log line: "Draft created in Drafts folder."
-9. Always define email_templates_schema() returning at least a 'draft_prompt' \
-field so accountants can edit the AI prompt from the Plugins tab UI
-10. In run(), always call self.get_email_template('draft_prompt', default_prompt) \
-to get the prompt instead of hardcoding it — this lets accountants customise \
-the AI behaviour from the UI
-11. After creating anything, explain in plain English what was built and where \
-to find it in the app
-12. Use clarify tool ONLY during Phase 1 requirements gathering — once you \
+1. Never write Python code — only fill in template parameters
+2. Never suggest Outlook rules or external tools
+3. Always confirm before building
+4. If the request doesn't fit any template, say: \
+"This one is outside what I can currently build inside \
+MC & S CoWorker. I'd suggest speaking to Elio directly."
+5. Convert plain English reply descriptions to clean HTML
+6. Always use draft_mode=true unless accountant explicitly \
+asks for automatic sending
+7. Use clarify tool ONLY during requirements gathering — once you \
 have all answers, build immediately
-13. If a request is genuinely outside current capabilities — for example \
-requiring integration with a third-party system that has no API, requiring \
-local file system access beyond the app, or requiring hardware/OS-level \
-controls — do NOT suggest workarounds or external tools. Instead respond with: \
-"This one is outside what I can currently build inside MC & S CoWorker. I'd \
-suggest speaking to Elio directly — he may be able to extend CoWorker to \
-support this."
-Examples of when to say this:
-- Integrating with software that has no API (e.g. a legacy desktop accounting \
-app with no web access)
-- Controlling printers, scanners, or local hardware
-- Accessing files on a network drive or Z drive directly
-- Anything requiring a human decision or physical action
-Everything else — build it.
-
-=== GRAPH API REFERENCE (exact signatures — positional args only) ===
-Available on context.graph:
-- fetch_emails_from_sender(sender_email, max_count)  # default max_count=10
-- fetch_unread_emails(folder, max_count)  # default folder="Inbox", max_count=25
-- fetch_recent_emails(folder, max_count)  # default folder="Inbox", max_count=25
-- search_emails(query, max_count)  # default max_count=10
-- send_email(to, subject, body_html, reply_to_id)  # reply_to_id optional
-- create_draft(to, subject, body_html, reply_to_id)  # reply_to_id optional
-- mark_as_read(message_id)
-- move_email(message_id, destination_folder_name)
-- flag_email(message_id)
-
-NEVER use keyword arguments on any graph method. Always positional args only.
-
-=== GRAPH API FILTERING — CRITICAL ===
-The Graph API does NOT support filtering messages by sender email address \
-in the URL query. Never use $filter on from/emailAddress/address.
-
-Instead, ALWAYS fetch unread emails first then filter in Python:
-
-emails = context.graph.fetch_unread_emails("Inbox", 25)
-target_emails = [
-    e for e in emails
-    if e.get('from', {}).get('emailAddress', {}).get('address', '').lower()
-    == 'target@email.com'
-]
-
-=== PluginResult FIELDS (only these 7, no others) ===
-PluginResult(
-  success: bool,
-  summary: str = "",
-  error: str = "",
-  actions_taken: int = 0,
-  drafts_created: int = 0,
-  items_skipped: int = 0,
-  extra: dict = {}
-)
-Never use any other field names on PluginResult. \
-Never use message=, result=, output=, emails_processed=, count=, or data=.
-
-=== SCHEDULING — only these exact calls, nothing else ===
-  default_schedule = Schedule.every_minutes(n)
-  default_schedule = Schedule.every_hours(n)
-  default_schedule = Schedule.daily_at(hour)
-  default_schedule = Schedule.manual_only()
-
-Never use Schedule.EVERY_5_MINUTES or any constant-style reference. \
-The class attribute MUST be named default_schedule, not schedule.
-
-=== LOAD METHOD — always include ===
-Every plugin MUST have this method:
-  def load(self, context: PluginContext) -> bool:
-      return bool(context.graph)
-
-For calendar access, use context.graph._make_request() with:
-GET /me/calendarView?startDateTime=...&endDateTime=...
-
-For web requests, import requests at the top of the plugin and use \
-requests.get(url).
-
-CLAUDE API MODEL:
-Never hardcode a model string. Always use:
-    model=self.get_claude_model()
-
-This automatically uses the latest available Haiku model.
+8. plugin_filename must always start with plugin_ and end with .py
+9. plugin_name should be descriptive and derived from the request
 """
+
+# ────────────────────────────────────────────────────────────────────────
+# Plugin Templates — pre-validated, working code filled by parameters
+# ────────────────────────────────────────────────────────────────────────
+
+SENDER_AUTO_REPLY_TEMPLATE = '''\
+from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
+
+
+class {class_name}(AgentPlugin):
+    name = "{plugin_name}"
+    description = "{description}"
+    detail = "{description}"
+    version = "1.0.0"
+    icon = "\\U0001f4e7"
+    author = "CoWorker AI"
+    requires_graph = True
+    requires_claude = False
+    default_schedule = Schedule.every_minutes({schedule_minutes})
+
+    _processed_ids: set
+
+    def load(self, context: PluginContext) -> bool:
+        self._processed_ids = set()
+        return bool(context.graph)
+
+    @classmethod
+    def email_templates_schema(cls):
+        return [
+            {{
+                "key": "reply_body",
+                "label": "Reply Email Body (HTML)",
+                "default": {reply_body_repr},
+                "type": "textarea"
+            }}
+        ]
+
+    def run(self, context: PluginContext) -> PluginResult:
+        emails = context.graph.fetch_unread_emails("Inbox", 25)
+        target = [
+            e for e in emails
+            if e.get('from', {{}}).get('emailAddress', {{}})
+            .get('address', '').lower() == '{sender_email}'
+            and e.get('id') not in self._processed_ids
+        ]
+
+        if not target:
+            return PluginResult(success=True,
+                summary="No emails from {sender_email}.",
+                items_skipped=0)
+
+        reply_body = self.get_email_template(
+            "reply_body", {reply_body_repr}
+        )
+        sig_image_path = context.graph.get_signature_image_path()
+        actions = 0
+        drafts = 0
+
+        for email in target:
+            msg_id = email.get('id')
+            sender = email.get('from', {{}}).get(
+                'emailAddress', {{}}).get('address', '')
+            subject = email.get('subject', 'No Subject')
+            reply_subject = f"Re: {{subject}}"
+
+            try:
+                if {draft_mode_bool}:
+                    if sig_image_path:
+                        context.graph.create_draft_with_inline_image(
+                            sender, reply_subject, reply_body,
+                            sig_image_path, "signature_image", msg_id
+                        )
+                    else:
+                        context.graph.create_draft(
+                            sender, reply_subject, reply_body, msg_id
+                        )
+                    context.log(f"Draft created for {{sender}}")
+                    drafts += 1
+                else:
+                    if sig_image_path:
+                        context.graph.send_email_with_inline_image(
+                            sender, reply_subject, reply_body,
+                            sig_image_path, "signature_image", msg_id
+                        )
+                    else:
+                        context.graph.send_email(
+                            sender, reply_subject, reply_body, msg_id
+                        )
+                    context.log(f"Reply sent to {{sender}}")
+                    actions += 1
+
+                context.graph.mark_as_read(msg_id)
+                self._processed_ids.add(msg_id)
+
+            except Exception as e:
+                context.log(f"Error processing email: {{e}}")
+
+        return PluginResult(
+            success=True,
+            summary=f"{{actions}} sent, {{drafts}} drafted.",
+            actions_taken=actions,
+            drafts_created=drafts
+        )
+'''
+
+SENDER_AI_REPLY_TEMPLATE = '''\
+from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
+
+
+class {class_name}(AgentPlugin):
+    name = "{plugin_name}"
+    description = "{description}"
+    detail = "{description}"
+    version = "1.0.0"
+    icon = "\\U0001f916"
+    author = "CoWorker AI"
+    requires_graph = True
+    requires_claude = True
+    default_schedule = Schedule.every_minutes({schedule_minutes})
+
+    _processed_ids: set
+
+    def load(self, context: PluginContext) -> bool:
+        self._processed_ids = set()
+        return bool(context.graph) and bool(context.claude)
+
+    @classmethod
+    def email_templates_schema(cls):
+        return [
+            {{
+                "key": "ai_instructions",
+                "label": "AI Drafting Instructions",
+                "default": {ai_instructions_repr},
+                "type": "prompt"
+            }}
+        ]
+
+    def run(self, context: PluginContext) -> PluginResult:
+        emails = context.graph.fetch_unread_emails("Inbox", 25)
+        target = [
+            e for e in emails
+            if e.get('from', {{}}).get('emailAddress', {{}})
+            .get('address', '').lower() == '{sender_email}'
+            and e.get('id') not in self._processed_ids
+        ]
+
+        if not target:
+            return PluginResult(success=True,
+                summary="No emails from {sender_email}.",
+                items_skipped=0)
+
+        ai_instructions = self.get_email_template(
+            "ai_instructions", {ai_instructions_repr}
+        )
+        sig_image_path = context.graph.get_signature_image_path()
+        drafts = 0
+
+        for email in target:
+            msg_id = email.get('id')
+            sender = email.get('from', {{}}).get(
+                'emailAddress', {{}}).get('address', '')
+            subject = email.get('subject', 'No Subject')
+            body = email.get('body', {{}}).get('content', '')
+
+            import re
+            body_plain = re.sub(r'<[^>]+>', ' ', body)
+            body_plain = re.sub(r'\\s+', ' ', body_plain).strip()
+
+            prompt = (
+                "You are a professional accountant's assistant "
+                "at MC & S Pty Ltd.\\n\\n"
+                + ai_instructions + "\\n\\n"
+                "Draft a professional email reply to this email:\\n"
+                f"From: {{sender}}\\n"
+                f"Subject: {{subject}}\\n"
+                f"Body: {{body_plain[:1500]}}\\n\\n"
+                "Reply in HTML format only. Be professional, helpful "
+                "and concise. Start with \\"Hi,\\" and end with "
+                "\\"Kind regards,\\"\\n"
+                "Do not include a subject line in your response."
+            )
+
+            try:
+                response = context.claude.messages.create(
+                    model=self.get_claude_model(),
+                    max_tokens=1000,
+                    messages=[{{"role": "user", "content": prompt}}]
+                )
+                reply_body = response.content[0].text.strip()
+                reply_subject = f"Re: {{subject}}"
+
+                if sig_image_path:
+                    context.graph.create_draft_with_inline_image(
+                        sender, reply_subject, reply_body,
+                        sig_image_path, "signature_image", msg_id
+                    )
+                else:
+                    context.graph.create_draft(
+                        sender, reply_subject, reply_body, msg_id
+                    )
+
+                context.log(f"AI draft created for {{sender}}")
+                context.graph.mark_as_read(msg_id)
+                self._processed_ids.add(msg_id)
+                drafts += 1
+
+            except Exception as e:
+                context.log(f"Error processing email: {{e}}")
+
+        return PluginResult(
+            success=True,
+            summary=f"{{drafts}} AI draft(s) created.",
+            drafts_created=drafts
+        )
+'''
+
+FORWARD_AND_FILE_TEMPLATE = '''\
+from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
+
+
+class {class_name}(AgentPlugin):
+    name = "{plugin_name}"
+    description = "{description}"
+    detail = "{description}"
+    version = "1.0.0"
+    icon = "\\U0001f4c1"
+    author = "CoWorker AI"
+    requires_graph = True
+    requires_claude = False
+    default_schedule = Schedule.every_minutes({schedule_minutes})
+
+    _processed_ids: set
+
+    def load(self, context: PluginContext) -> bool:
+        self._processed_ids = set()
+        return bool(context.graph)
+
+    def run(self, context: PluginContext) -> PluginResult:
+        emails = context.graph.fetch_unread_emails("Inbox", 25)
+        target = [
+            e for e in emails
+            if e.get('from', {{}}).get('emailAddress', {{}})
+            .get('address', '').lower() == '{sender_email}'
+            and e.get('id') not in self._processed_ids
+        ]
+
+        if not target:
+            return PluginResult(success=True,
+                summary="No emails from {sender_email}.",
+                items_skipped=0)
+
+        actions = 0
+        for email in target:
+            msg_id = email.get('id')
+            sender = email.get('from', {{}}).get(
+                'emailAddress', {{}}).get('address', '')
+            subject = email.get('subject', 'No Subject')
+            body = email.get('body', {{}}).get('content', '')
+
+            try:
+                forward_body = (
+                    "<p>{forward_note}</p>"
+                    "<hr>"
+                    f"<p><strong>From:</strong> {{sender}}<br>"
+                    f"<strong>Subject:</strong> {{subject}}</p>"
+                    f"{{body}}"
+                )
+                context.graph.send_email(
+                    '{forward_to}',
+                    f'Fwd: {{subject}}',
+                    forward_body
+                )
+                context.graph.move_email(msg_id, '{folder_name}')
+                context.graph.mark_as_read(msg_id)
+                self._processed_ids.add(msg_id)
+                context.log(
+                    f"Forwarded {{sender}} to {forward_to} "
+                    f"and moved to {folder_name}"
+                )
+                actions += 1
+            except Exception as e:
+                context.log(f"Error: {{e}}")
+
+        return PluginResult(
+            success=True,
+            summary=f"{{actions}} email(s) forwarded and filed.",
+            actions_taken=actions
+        )
+'''
+
+KEYWORD_AUTO_REPLY_TEMPLATE = '''\
+from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
+
+
+class {class_name}(AgentPlugin):
+    name = "{plugin_name}"
+    description = "{description}"
+    detail = "{description}"
+    version = "1.0.0"
+    icon = "\\U0001f511"
+    author = "CoWorker AI"
+    requires_graph = True
+    requires_claude = False
+    default_schedule = Schedule.every_minutes({schedule_minutes})
+
+    _processed_ids: set
+    KEYWORDS = {keywords_list}
+
+    def load(self, context: PluginContext) -> bool:
+        self._processed_ids = set()
+        return bool(context.graph)
+
+    @classmethod
+    def email_templates_schema(cls):
+        return [
+            {{
+                "key": "reply_body",
+                "label": "Reply Email Body (HTML)",
+                "default": {reply_body_repr},
+                "type": "textarea"
+            }}
+        ]
+
+    def run(self, context: PluginContext) -> PluginResult:
+        emails = context.graph.fetch_unread_emails("Inbox", 25)
+
+        def has_keyword(email):
+            subject = email.get('subject', '').lower()
+            body = email.get('body', {{}}).get('content', '').lower()
+            return any(kw.lower() in subject or kw.lower() in body
+                      for kw in self.KEYWORDS)
+
+        target = [
+            e for e in emails
+            if has_keyword(e)
+            and e.get('id') not in self._processed_ids
+        ]
+
+        if not target:
+            return PluginResult(success=True,
+                summary="No matching emails found.",
+                items_skipped=0)
+
+        reply_body = self.get_email_template(
+            "reply_body", {reply_body_repr}
+        )
+        sig_image_path = context.graph.get_signature_image_path()
+        actions = 0
+        drafts = 0
+
+        for email in target:
+            msg_id = email.get('id')
+            sender = email.get('from', {{}}).get(
+                'emailAddress', {{}}).get('address', '')
+            subject = email.get('subject', 'No Subject')
+
+            try:
+                if {draft_mode_bool}:
+                    if sig_image_path:
+                        context.graph.create_draft_with_inline_image(
+                            sender, f"Re: {{subject}}", reply_body,
+                            sig_image_path, "signature_image", msg_id
+                        )
+                    else:
+                        context.graph.create_draft(
+                            sender, f"Re: {{subject}}",
+                            reply_body, msg_id
+                        )
+                    drafts += 1
+                else:
+                    if sig_image_path:
+                        context.graph.send_email_with_inline_image(
+                            sender, f"Re: {{subject}}", reply_body,
+                            sig_image_path, "signature_image", msg_id
+                        )
+                    else:
+                        context.graph.send_email(
+                            sender, f"Re: {{subject}}",
+                            reply_body, msg_id
+                        )
+                    actions += 1
+
+                context.graph.mark_as_read(msg_id)
+                self._processed_ids.add(msg_id)
+
+            except Exception as e:
+                context.log(f"Error: {{e}}")
+
+        return PluginResult(
+            success=True,
+            summary=f"{{actions}} sent, {{drafts}} drafted.",
+            actions_taken=actions,
+            drafts_created=drafts
+        )
+'''
 
 
 def _seconds_to_schedule_label(seconds: int) -> str:
@@ -2193,6 +2381,87 @@ class App(ctk.CTk):
 
         return True, fixed
 
+    def _build_plugin_from_template(self, template_type, params):
+        """Fill template parameters and return complete plugin code."""
+        class_name = ''.join(
+            word.capitalize()
+            for word in params.get('plugin_name', 'Custom').split()
+        ) + 'Plugin'
+
+        if template_type == "SENDER_AUTO_REPLY":
+            return SENDER_AUTO_REPLY_TEMPLATE.format(
+                class_name=class_name,
+                plugin_name=params['plugin_name'],
+                description=params.get('description', ''),
+                sender_email=params['sender_email'].lower(),
+                reply_body_repr=repr(params.get('reply_body_html',
+                    '<p>Thank you for your email. We will be in touch shortly.</p>')),
+                draft_mode_bool=str(params.get('draft_mode', True)),
+                schedule_minutes=params.get('schedule_minutes', 5),
+            )
+
+        elif template_type == "SENDER_AI_REPLY":
+            return SENDER_AI_REPLY_TEMPLATE.format(
+                class_name=class_name,
+                plugin_name=params['plugin_name'],
+                description=params.get('description', ''),
+                sender_email=params['sender_email'].lower(),
+                ai_instructions_repr=repr(params.get('ai_instructions',
+                    'Draft a professional, helpful reply.')),
+                schedule_minutes=params.get('schedule_minutes', 5),
+            )
+
+        elif template_type == "FORWARD_AND_FILE":
+            return FORWARD_AND_FILE_TEMPLATE.format(
+                class_name=class_name,
+                plugin_name=params['plugin_name'],
+                description=params.get('description', ''),
+                sender_email=params['sender_email'].lower(),
+                forward_to=params['forward_to'],
+                forward_note=params.get('forward_note', ''),
+                folder_name=params['folder_name'],
+                schedule_minutes=params.get('schedule_minutes', 5),
+            )
+
+        elif template_type == "KEYWORD_AUTO_REPLY":
+            keywords_list = repr(params.get('keywords', []))
+            return KEYWORD_AUTO_REPLY_TEMPLATE.format(
+                class_name=class_name,
+                plugin_name=params['plugin_name'],
+                description=params.get('description', ''),
+                keywords_list=keywords_list,
+                reply_body_repr=repr(params.get('reply_body_html',
+                    '<p>Thank you for your email.</p>')),
+                draft_mode_bool=str(params.get('draft_mode', True)),
+                schedule_minutes=params.get('schedule_minutes', 5),
+            )
+
+        raise ValueError(f"Unknown template type: {template_type}")
+
+    def _write_plugin_file(self, filename, code):
+        """Write plugin code to the plugins directory (and source dir if frozen)."""
+        if not filename.startswith("plugin_"):
+            filename = f"plugin_{filename}"
+        if not filename.endswith(".py"):
+            filename += ".py"
+
+        if getattr(sys, 'frozen', False):
+            plugins_dir = os.path.join(os.path.dirname(sys.executable), 'plugins')
+        else:
+            plugins_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'plugins')
+        filepath = os.path.join(plugins_dir, filename)
+        with open(filepath, "w", encoding="utf-8") as f:
+            f.write(code)
+        # Also write to source plugins folder so the file survives rebuilds
+        if getattr(sys, 'frozen', False):
+            source_plugins_dir = os.path.normpath(
+                os.path.join(os.path.dirname(sys.executable), '..', '..', 'plugins'))
+            if os.path.exists(source_plugins_dir):
+                source_path = os.path.join(source_plugins_dir, filename)
+                with open(source_path, "w", encoding="utf-8") as f:
+                    f.write(code)
+        return filename
+
     def _chat_execute_tool(self, tool):
         """Execute a parsed tool call and show result in chat."""
         tool_name = tool.get("tool", "")
@@ -2216,38 +2485,45 @@ class App(ctk.CTk):
             except Exception as e:
                 self._chat_add_bubble("system", f"Error creating rule: {e}")
 
+        elif tool_name == "create_plugin_from_template":
+            try:
+                template_type = tool.get("template_type", "")
+                filename = tool.get("plugin_filename", "")
+                if not template_type or not filename:
+                    self._chat_add_bubble("system",
+                        "Error: missing template_type or plugin_filename.")
+                    return
+
+                code = self._build_plugin_from_template(template_type, tool)
+                self._write_plugin_file(filename, code)
+                self._loader.reload_plugins()
+                self.after(500, self._refresh_plugins_list)
+                plugin_name = tool.get('plugin_name', filename)
+                self._chat_add_bubble("system",
+                    f"Plugin '{plugin_name}' created from "
+                    f"{template_type} template.\n"
+                    f"File: {filename}\n"
+                    f"Find it in the Plugins tab.")
+                self.after(500, self._switch_to_plugins)
+            except Exception as e:
+                self._chat_add_bubble("system",
+                    f"Error creating plugin from template: {e}")
+
         elif tool_name == "create_plugin":
+            # Legacy fallback — free-form code generation
             try:
                 filename = tool.get("filename", "")
                 code = tool.get("code", "")
                 if not filename or not code:
                     self._chat_add_bubble("system", "Error: missing filename or code.")
                     return
-                if not filename.startswith("plugin_"):
-                    filename = f"plugin_{filename}"
-                if not filename.endswith(".py"):
-                    filename += ".py"
 
                 # Run auto-validator before writing
                 is_valid, fixed_code = self._validate_plugin_code(code, filename)
                 code = fixed_code
 
-                if getattr(sys, 'frozen', False):
-                    plugins_dir = os.path.join(os.path.dirname(sys.executable), 'plugins')
-                else:
-                    plugins_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'plugins')
-                filepath = os.path.join(plugins_dir, filename)
-                with open(filepath, "w", encoding="utf-8") as f:
-                    f.write(code)
-                # Also write to source plugins folder so the file survives rebuilds
-                if getattr(sys, 'frozen', False):
-                    source_plugins_dir = os.path.normpath(
-                        os.path.join(os.path.dirname(sys.executable), '..', '..', 'plugins'))
-                    if os.path.exists(source_plugins_dir):
-                        source_path = os.path.join(source_plugins_dir, filename)
-                        with open(source_path, "w", encoding="utf-8") as f:
-                            f.write(code)
-                new_ids = self._loader.reload_plugins()
+                self._write_plugin_file(filename, code)
+                self._loader.reload_plugins()
                 self.after(500, self._refresh_plugins_list)
                 self._chat_add_bubble("system",
                     f"Plugin created and loaded. Find it in the Plugins tab.")
@@ -2274,15 +2550,14 @@ class App(ctk.CTk):
     def _chat_show_examples(self):
         examples = (
             "Example prompts you can try:\n\n"
-            "1. \"When a client emails asking about their tax refund "
-            "status, send them a holding response.\"\n\n"
-            "2. \"Create an automated response for pricing enquiry "
-            "emails with our standard fee schedule.\"\n\n"
-            "3. \"Monitor for emails from noreply@fusesign.com and "
-            "when a bundle hasn't been signed after 5 days, draft a "
-            "nudge email.\"\n\n"
-            "4. \"Create a plugin that checks for ATO emails and "
-            "drafts a contextual reply based on the content.\""
+            "1. \"When I get an email from tony@client.com, "
+            "reply with a standard acknowledgement.\"\n\n"
+            "2. \"When anyone asks about tax return fees, "
+            "send our pricing email.\"\n\n"
+            "3. \"When Elio gets an email from the ATO, "
+            "draft a smart reply based on what they're asking.\"\n\n"
+            "4. \"Forward all emails from tony@client.com to "
+            "harry@mcands.com.au and save in the Tony Phillips folder.\""
         )
         self._chat_add_bubble("assistant", examples)
 
