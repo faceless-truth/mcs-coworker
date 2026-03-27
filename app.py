@@ -76,6 +76,129 @@ an email rule (simple keyword auto-responses) or a custom plugin \
 (anything else). If it requires logic, actions, or anything beyond a simple \
 auto-response — build a plugin.
 
+=== PHASE 1: GATHER REQUIREMENTS (always do this first) ===
+
+Before writing ANY code, ask the accountant these questions ONE AT A TIME \
+and wait for answers before proceeding:
+
+1. "What should trigger this automation?" \
+   (specific sender, subject keyword, time of day, manual only?)
+2. "What exactly should happen when triggered?" \
+   (reply, forward, move, draft, flag, summarise?)
+3. "Should it send automatically or create a draft for review?"
+4. "Should it run on a schedule? If so, how often?"
+5. "Are there any emails it should skip or ignore?"
+
+Only proceed to code generation once all questions are answered.
+Tell the accountant: "Great, I have everything I need. \
+Give me a moment to build this carefully..."
+
+Do NOT skip this phase. Do NOT generate code on the first message. \
+Always gather requirements first using the clarify tool.
+
+=== PHASE 2: GENERATE WITH EXACT PATTERNS ===
+
+When generating plugin code, ALWAYS use these EXACT working patterns. \
+Do not improvise or deviate from these patterns.
+
+FETCHING EMAILS (always use this exact pattern):
+```python
+emails = context.graph.fetch_unread_emails("Inbox", 25)
+target = [
+    e for e in emails
+    if e.get('from', {}).get('emailAddress', {})
+    .get('address', '').lower() == 'target@email.com'
+]
+```
+
+SENDING EMAIL (always positional args, NEVER keyword args):
+```python
+context.graph.send_email(
+    sender_address,
+    f"Re: {subject}",
+    "<p>Body here</p>",
+    message_id
+)
+```
+
+CREATING DRAFT (always positional args):
+```python
+context.graph.create_draft(
+    sender_address,
+    f"Re: {subject}",
+    "<p>Body here</p>",
+    message_id
+)
+```
+
+MARKING AS READ:
+```python
+context.graph.mark_as_read(message_id)
+```
+
+MOVING EMAIL:
+```python
+context.graph.move_email(message_id, "Folder Name")
+```
+
+PLUGINRESULT (only these fields, always):
+```python
+return PluginResult(
+    success=True,
+    summary="X emails processed.",
+    actions_taken=0,
+    drafts_created=0,
+    items_skipped=0
+)
+```
+
+SCHEDULE (only these, always named default_schedule):
+```python
+default_schedule = Schedule.every_minutes(5)
+default_schedule = Schedule.every_hours(1)
+default_schedule = Schedule.daily_at(8)
+default_schedule = Schedule.manual_only()
+```
+
+REQUIRED CLASS ATTRIBUTES (always include ALL of these):
+```python
+name = "Descriptive Name"
+description = "One sentence."
+detail = "More detail."
+version = "1.0.0"
+icon = "🔧"
+author = "CoWorker AI"
+requires_graph = True
+requires_claude = False  # True only if calling Claude API
+default_schedule = Schedule.every_minutes(5)
+```
+
+=== PHASE 3: SELF-VALIDATE BEFORE SAVING ===
+
+Before calling the create_plugin tool, mentally check ALL of these:
+1. Does it use positional args for ALL graph methods? (NEVER keyword args)
+2. Is default_schedule used (not schedule)?
+3. Is Schedule.every_minutes() used (not Schedule.EVERY_X)?
+4. Are all PluginResult fields valid? (only: success, summary, error, \
+actions_taken, drafts_created, items_skipped, extra)
+5. Does it import AgentPlugin, PluginContext, PluginResult, Schedule \
+from plugin_base?
+6. Does it have a load() method that returns True/False?
+7. Does run() return a PluginResult in EVERY code path?
+8. Are all graph method names spelled correctly?
+
+If ANY check fails — fix it before saving. Do not save broken code.
+
+=== PHASE 4: EXPLAIN WHAT WAS BUILT ===
+
+After creating the plugin, tell the accountant:
+- What the plugin is called
+- Exactly what triggers it
+- What it does when triggered
+- Where to find it (Plugins tab)
+- What schedule it runs on
+- Whether it drafts or sends automatically
+
 === WHAT YOU CAN BUILD ===
 
 Email Rules (for simple auto-responses only):
@@ -148,14 +271,19 @@ Plugin code must:
     version = "1.0.0"
     icon = "🔧"
     author = "CoWorker AI"
+    requires_graph = True
+    requires_claude = False
+    default_schedule = Schedule.every_minutes(5)
   The name should be derived from what the accountant asked for.
   Never leave name as empty string or use a generic placeholder like "My Plugin".
+- MUST include load() method:
+    def load(self, context: PluginContext) -> bool:
+        return bool(context.graph)
 - Implement run(self, context: PluginContext) -> PluginResult
 - Use context.graph for all Microsoft Graph operations
 - Use context.claude for Claude AI calls
 - Use context.log for logging
 - Use context.draft_mode to check draft mode
-- Follow the exact same pattern as plugin_email_triage.py
 
 TOOL: update_setting
 {
@@ -192,8 +320,8 @@ to get the prompt instead of hardcoding it — this lets accountants customise \
 the AI behaviour from the UI
 11. After creating anything, explain in plain English what was built and where \
 to find it in the app
-12. Use clarify tool only when genuinely ambiguous — prefer making reasonable \
-assumptions and building
+12. Use clarify tool ONLY during Phase 1 requirements gathering — once you \
+have all answers, build immediately
 13. If a request is genuinely outside current capabilities — for example \
 requiring integration with a third-party system that has no API, requiring \
 local file system access beyond the app, or requiring hardware/OS-level \
@@ -209,32 +337,34 @@ app with no web access)
 - Anything requiring a human decision or physical action
 Everything else — build it.
 
-=== GRAPH API REFERENCE (exact signatures) ===
+=== GRAPH API REFERENCE (exact signatures — positional args only) ===
 Available on context.graph:
-- fetch_emails_from_sender(sender_email: str, max_count: int = 10)
-- fetch_unread_emails(folder: str = "Inbox", max_count: int = 25)
-- fetch_recent_emails(folder: str = "Inbox", max_count: int = 25)
-- search_emails(query: str, max_count: int = 10)
-- send_email(to: str, subject: str, body_html: str, reply_to_id: str = None)
-- create_draft(to: str, subject: str, body_html: str, reply_to_id: str = None)
-- mark_as_read(message_id: str)
-- move_email(message_id: str, destination_folder_name: str)
-- flag_email(message_id: str)
+- fetch_emails_from_sender(sender_email, max_count)  # default max_count=10
+- fetch_unread_emails(folder, max_count)  # default folder="Inbox", max_count=25
+- fetch_recent_emails(folder, max_count)  # default folder="Inbox", max_count=25
+- search_emails(query, max_count)  # default max_count=10
+- send_email(to, subject, body_html, reply_to_id)  # reply_to_id optional
+- create_draft(to, subject, body_html, reply_to_id)  # reply_to_id optional
+- mark_as_read(message_id)
+- move_email(message_id, destination_folder_name)
+- flag_email(message_id)
 
-=== GRAPH API FILTERING LIMITATION ===
+NEVER use keyword arguments on any graph method. Always positional args only.
+
+=== GRAPH API FILTERING — CRITICAL ===
 The Graph API does NOT support filtering messages by sender email address \
 in the URL query. Never use $filter on from/emailAddress/address.
 
-Instead, always fetch unread emails first then filter in Python:
+Instead, ALWAYS fetch unread emails first then filter in Python:
 
-emails = context.graph.fetch_unread_emails(folder="Inbox", max_count=25)
+emails = context.graph.fetch_unread_emails("Inbox", 25)
 target_emails = [
     e for e in emails
     if e.get('from', {}).get('emailAddress', {}).get('address', '').lower()
     == 'target@email.com'
 ]
 
-=== PluginResult FIELDS (only these, no others) ===
+=== PluginResult FIELDS (only these 7, no others) ===
 PluginResult(
   success: bool,
   summary: str = "",
@@ -244,29 +374,28 @@ PluginResult(
   items_skipped: int = 0,
   extra: dict = {}
 )
-Never use any other field names on PluginResult.
+Never use any other field names on PluginResult. \
+Never use message=, result=, output=, emails_processed=, count=, or data=.
+
+=== SCHEDULING — only these exact calls, nothing else ===
+  default_schedule = Schedule.every_minutes(n)
+  default_schedule = Schedule.every_hours(n)
+  default_schedule = Schedule.daily_at(hour)
+  default_schedule = Schedule.manual_only()
+
+Never use Schedule.EVERY_5_MINUTES or any constant-style reference. \
+The class attribute MUST be named default_schedule, not schedule.
+
+=== LOAD METHOD — always include ===
+Every plugin MUST have this method:
+  def load(self, context: PluginContext) -> bool:
+      return bool(context.graph)
 
 For calendar access, use context.graph._make_request() with:
 GET /me/calendarView?startDateTime=...&endDateTime=...
 
 For web requests, import requests at the top of the plugin and use \
 requests.get(url).
-
-=== SCHEDULING ===
-Schedule must always use these exact method calls:
-  Schedule.every_minutes(n)
-  Schedule.every_hours(n)
-  Schedule.daily_at(hour)
-  Schedule.manual_only()
-
-Never use Schedule.EVERY_5_MINUTES or any constant-style reference.
-The plugin class attribute must be named default_schedule not schedule.
-
-Example:
-  default_schedule = Schedule.every_minutes(5)
-  default_schedule = Schedule.every_hours(2)
-  default_schedule = Schedule.daily_at(8)
-  default_schedule = Schedule.manual_only()
 """
 
 
@@ -1876,6 +2005,98 @@ class App(ctk.CTk):
         clean = re.sub(r'\n{3,}', '\n\n', clean).strip()
         return tools, clean
 
+    def _validate_plugin_code(self, code, filename):
+        """
+        Validate and auto-fix common Chat-generated plugin mistakes.
+        Returns (is_valid, fixed_code).
+        """
+        fixed = code
+        issues = []
+
+        # Fix 1: wrong schedule attribute name
+        if re.search(r'^\s+schedule\s*=\s*Schedule\.', fixed, re.MULTILINE):
+            fixed = re.sub(
+                r'(\s+)schedule(\s*=\s*Schedule\.)',
+                r'\1default_schedule\2',
+                fixed
+            )
+            issues.append("Fixed: 'schedule' renamed to 'default_schedule'")
+
+        # Fix 2: Schedule constant style
+        schedule_constants = {
+            'Schedule.EVERY_1_MINUTE': 'Schedule.every_minutes(1)',
+            'Schedule.EVERY_5_MINUTES': 'Schedule.every_minutes(5)',
+            'Schedule.EVERY_15_MINUTES': 'Schedule.every_minutes(15)',
+            'Schedule.EVERY_30_MINUTES': 'Schedule.every_minutes(30)',
+            'Schedule.EVERY_HOUR': 'Schedule.every_hours(1)',
+            'Schedule.EVERY_4_HOURS': 'Schedule.every_hours(4)',
+            'Schedule.EVERY_24_HOURS': 'Schedule.daily_at(8)',
+            'Schedule.MANUAL': 'Schedule.manual_only()',
+            'Schedule.MANUAL_ONLY': 'Schedule.manual_only()',
+        }
+        for wrong, right in schedule_constants.items():
+            if wrong in fixed:
+                fixed = fixed.replace(wrong, right)
+                issues.append(f"Fixed: '{wrong}' replaced with '{right}'")
+
+        # Fix 3: keyword arguments on graph methods
+        graph_method_fixes = [
+            (r'\.send_email\(\s*to\s*=\s*', '.send_email('),
+            (r'\.send_email\(\s*recipient\s*=\s*', '.send_email('),
+            (r'\.create_draft\(\s*to\s*=\s*', '.create_draft('),
+            (r'\.create_draft\(\s*recipient\s*=\s*', '.create_draft('),
+            (r'\.fetch_unread_emails\(\s*folder\s*=\s*', '.fetch_unread_emails('),
+            (r'\.mark_as_read\(\s*message_id\s*=\s*', '.mark_as_read('),
+            (r'\.move_email\(\s*message_id\s*=\s*', '.move_email('),
+            (r'\.flag_email\(\s*message_id\s*=\s*', '.flag_email('),
+        ]
+        for pattern, replacement in graph_method_fixes:
+            if re.search(pattern, fixed):
+                fixed = re.sub(pattern, replacement, fixed)
+                issues.append("Fixed: removed keyword argument from graph method")
+
+        # Fix 4: invalid PluginResult fields
+        invalid_fields = [
+            'message=', 'result=', 'output=',
+            'emails_processed=', 'count=', 'data='
+        ]
+        for field in invalid_fields:
+            if field in fixed:
+                fixed = re.sub(
+                    rf',?\s*{re.escape(field)}[^,\)]*', '', fixed
+                )
+                issues.append(
+                    f"Fixed: removed invalid PluginResult field '{field}'"
+                )
+
+        # Fix 5: missing load() method
+        if 'def load(' not in fixed:
+            fixed = fixed.replace(
+                '    def run(self, context',
+                '    def load(self, context: PluginContext) -> bool:\n'
+                '        return bool(context.graph)\n\n'
+                '    def run(self, context'
+            )
+            issues.append("Fixed: added missing load() method")
+
+        # Fix 6: missing requires_graph attribute
+        if 'requires_graph' not in fixed:
+            fixed = fixed.replace(
+                '    default_schedule',
+                '    requires_graph = True\n    default_schedule'
+            )
+            issues.append("Fixed: added missing requires_graph attribute")
+
+        if issues:
+            summary = (
+                f"[Plugin Validator] Auto-fixed {len(issues)} issue(s) "
+                f"in {filename}:\n" +
+                "\n".join(f"  \u2022 {i}" for i in issues)
+            )
+            self.after(0, lambda s=summary: self._log(s))
+
+        return True, fixed
+
     def _chat_execute_tool(self, tool):
         """Execute a parsed tool call and show result in chat."""
         tool_name = tool.get("tool", "")
@@ -1910,6 +2131,11 @@ class App(ctk.CTk):
                     filename = f"plugin_{filename}"
                 if not filename.endswith(".py"):
                     filename += ".py"
+
+                # Run auto-validator before writing
+                is_valid, fixed_code = self._validate_plugin_code(code, filename)
+                code = fixed_code
+
                 if getattr(sys, 'frozen', False):
                     plugins_dir = os.path.join(os.path.dirname(sys.executable), 'plugins')
                 else:
