@@ -152,6 +152,53 @@ return PluginResult(
 )
 ```
 
+SIGNATURE IMAGE (always include this in every plugin that sends or drafts emails):
+```python
+# Check for uploaded signature image
+sig_image_path = context.graph.get_signature_image_path()
+
+# When creating a draft:
+if sig_image_path:
+    context.graph.create_draft_with_inline_image(
+        to_address,
+        subject,
+        body_html,
+        sig_image_path,
+        "signature_image",
+        reply_to_id
+    )
+else:
+    context.graph.create_draft(
+        to_address,
+        subject,
+        body_html,
+        reply_to_id
+    )
+
+# When sending directly:
+if sig_image_path:
+    context.graph.send_email_with_inline_image(
+        to_address,
+        subject,
+        body_html,
+        sig_image_path,
+        "signature_image",
+        reply_to_id
+    )
+else:
+    context.graph.send_email(
+        to_address,
+        subject,
+        body_html,
+        reply_to_id
+    )
+```
+
+Every plugin that sends or drafts emails MUST check for \
+signature image and use the inline image methods when available. \
+Never call send_email() or create_draft() directly without \
+first checking get_signature_image_path().
+
 SCHEDULE (only these, always named default_schedule):
 ```python
 default_schedule = Schedule.every_minutes(5)
@@ -2086,6 +2133,15 @@ class App(ctk.CTk):
                 '    requires_graph = True\n    default_schedule'
             )
             issues.append("Fixed: added missing requires_graph attribute")
+
+        # Fix 7: missing signature image check
+        if ('send_email(' in fixed or 'create_draft(' in fixed):
+            if 'get_signature_image_path' not in fixed:
+                issues.append(
+                    "Warning: plugin sends/drafts emails but does not "
+                    "include signature image check. Consider adding "
+                    "get_signature_image_path() logic."
+                )
 
         if issues:
             summary = (
