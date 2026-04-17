@@ -436,6 +436,17 @@ class ApprovalQueue:
                 self._mark_execution_failed(action_id, str(e))
                 return False
 
+        # Fix 17: store reviewer notes as lessons so AI learns from approvals
+        if reviewer_note and reviewer_note not in ("Manually approved",):
+            try:
+                from memory_store import MemoryStore
+                MemoryStore.store_lesson(
+                    lesson=reviewer_note,
+                    source=f"approval_queue:approved:{action_id}",
+                )
+            except Exception:
+                pass  # Lesson storage is best-effort
+
         if self._event_bus:
             self._event_bus.publish(
                 "approval.approved",
@@ -470,6 +481,17 @@ class ApprovalQueue:
             )
             conn.commit()
             conn.close()
+
+        # Fix 17: store rejection reason as a lesson so AI learns from rejections
+        if reviewer_note and reviewer_note not in ("Manually rejected",):
+            try:
+                from memory_store import MemoryStore
+                MemoryStore.store_lesson(
+                    lesson=reviewer_note,
+                    source=f"approval_queue:rejected:{action_id}",
+                )
+            except Exception:
+                pass  # Lesson storage is best-effort
 
         if self._event_bus:
             self._event_bus.publish(

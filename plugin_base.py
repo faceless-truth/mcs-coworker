@@ -299,6 +299,43 @@ class AgentPlugin(ABC):
         from config import get_claude_model_reasoning
         return get_claude_model_reasoning()
 
+    def call_claude_with_retry(
+        self,
+        claude,
+        max_retries: int = 3,
+        base_delay: float = 5.0,
+        **kwargs,
+    ):
+        """
+        Call claude.messages.create(**kwargs) with exponential backoff retry
+        on Anthropic rate-limit (429) and overloaded (529) errors.
+        Fix 12: prevents plugins crashing when Anthropic is temporarily overloaded.
+        """
+        import time
+        import anthropic as _anthropic
+        delay = base_delay
+        for attempt in range(1, max_retries + 1):
+            try:
+                return claude.messages.create(**kwargs)
+            except _anthropic.RateLimitError as e:
+                if attempt == max_retries:
+                    raise
+                wait = delay * (2 ** (attempt - 1))
+                import logging; logging.getLogger(__name__).warning(
+                    f"Anthropic rate limit (attempt {attempt}/{max_retries}) — retrying in {wait:.0f}s"
+                )
+                time.sleep(wait)
+            except _anthropic.APIStatusError as e:
+                # 529 = Anthropic overloaded
+                if getattr(e, 'status_code', 0) == 529 and attempt < max_retries:
+                    wait = delay * (2 ** (attempt - 1))
+                    import logging; logging.getLogger(__name__).warning(
+                        f"Anthropic overloaded (attempt {attempt}/{max_retries}) — retrying in {wait:.0f}s"
+                    )
+                    time.sleep(wait)
+                else:
+                    raise
+
     def log_activity(self, source: str, subject: str, category: str,
                      action: str, draft_created: int = 0,
                      notification_sent: int = 0):

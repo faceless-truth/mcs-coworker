@@ -15,6 +15,7 @@ class AutoReplyRoss(AgentPlugin):
         return bool(context.graph)
 
     def run(self, context: PluginContext) -> PluginResult:
+        draft_mode = context.draft_mode
         try:
             # Fetch unread emails
             emails = context.graph.fetch_unread_emails("Inbox", 25)
@@ -34,23 +35,27 @@ class AutoReplyRoss(AgentPlugin):
                 message_id = email.get('id')
                 sender_address = email.get('from', {}).get('emailAddress', {}).get('address', '')
                 
-                # Send automatic reply
-                context.graph.send_email(
-                    sender_address,
-                    f"Re: {subject}",
-                    "<p>Thank you for your email. I will get back to you shortly.</p>",
-                    message_id
-                )
+                # Send automatic reply — or create draft if draft_mode is enabled
+                reply_body = "<p>Thank you for your email. I will get back to you shortly.</p>"
+                if draft_mode:
+                    context.graph.create_draft(
+                        sender_address, f"Re: {subject}", reply_body, message_id
+                    )
+                    context.log(f"Draft created (draft_mode=True) for: {subject}")
+                else:
+                    context.graph.send_email(
+                        sender_address, f"Re: {subject}", reply_body, message_id
+                    )
+                    context.log(f"Auto-reply sent to Ross for: {subject}")
                 
                 # Mark as read
                 context.graph.mark_as_read(message_id)
                 
                 actions_taken += 1
-                context.log(f"Auto-reply sent to Ross for: {subject}")
             
             return PluginResult(
                 success=True,
-                summary=f"{actions_taken} auto-reply email(s) sent to Ross.",
+                summary=f"{actions_taken} auto-reply/draft(s) created for Ross.",
                 actions_taken=actions_taken
             )
         

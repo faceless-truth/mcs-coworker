@@ -26,6 +26,7 @@ from datetime import datetime
 import anthropic
 import requests
 
+from config import get_setting
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
 
 
@@ -67,6 +68,14 @@ CLIENT HISTORY: {client_history}
 
 Extract the relationship and emotional signals.
 """
+
+def _outreach_system_prompt() -> str:
+    practice = get_setting("practice_name", "MC & S Accountants")
+    return (
+        f"You are a professional email drafting assistant for {practice}, "
+        "a Melbourne-based accounting firm. You draft client outreach emails on "
+        "behalf of the assigned accountant."
+    )
 
 OUTREACH_SYSTEM_PROMPT = """\
 You are a professional email drafting assistant for MC & S Accountants, \
@@ -111,6 +120,18 @@ Use <p> tags for paragraphs. Keep it professional and concise.
 Apply the tone guidance and personalisation hook from the empathy signals above.
 """
 
+def _subject_templates() -> dict:
+    p = get_setting("practice_name", "MC & S Accounting")
+    return {
+        "stale_financial_year": f"Checking in on your {{fy}} — {p}",
+        "documents_needed": f"Documents needed for {{fy}} — {p}",
+        "asic_overdue": "Urgent: ASIC {return_type} overdue — {entity_name}",
+        "asic_upcoming": "Reminder: ASIC {return_type} due soon — {entity_name}",
+        "debtor_followup": f"Outstanding account — {p}",
+        "debtor_escalation": f"Urgent: Outstanding account requires attention — {p}",
+        "general_checkin": f"Checking in — {p}",
+    }
+
 SUBJECT_TEMPLATES = {
     "stale_financial_year": "Checking in on your {fy} — MC & S Accounting",
     "documents_needed": "Documents needed for {fy} — MC & S Accounting",
@@ -140,7 +161,7 @@ class ClientOutreachPlugin(AgentPlugin):
     )
     version = "1.0.0"
     icon    = "📬"
-    author  = "MC & S"
+    author  = get_setting("practice_name", "MC & S")
 
     # ── Requirements ──────────────────────────────────────────────────────────
 
@@ -479,7 +500,7 @@ class ClientOutreachPlugin(AgentPlugin):
             entity_name=item.get("entity_name", "Client"),
             entity_type=item.get("entity_type", "entity"),
             contact_email=item.get("contact_email", ""),
-            accountant_name=item.get("assigned_accountant_name", "the team at MC & S"),
+            accountant_name=item.get("assigned_accountant_name", f"the team at {get_setting('practice_name', 'MC & S')}"),
             outreach_reason=item.get("outreach_reason", ""),
             reason_detail=item.get("reason_detail", ""),
             priority=item.get("priority", "medium"),
@@ -491,7 +512,7 @@ class ClientOutreachPlugin(AgentPlugin):
         response = claude_client.messages.create(
             model=self.get_claude_model(),
             max_tokens=800,
-            system=OUTREACH_SYSTEM_PROMPT,
+            system=_outreach_system_prompt(),
             messages=[{"role": "user", "content": prompt}],
         )
 
@@ -500,7 +521,8 @@ class ClientOutreachPlugin(AgentPlugin):
     def _generate_subject(self, item: dict) -> str:
         """Generate a subject line from the template, with fallback."""
         reason = item.get("outreach_reason", "general_checkin")
-        template = SUBJECT_TEMPLATES.get(reason, "Following up — MC & S Accounting")
+        p = get_setting("practice_name", "MC & S Accounting")
+        template = _subject_templates().get(reason, f"Following up — {p}")
 
         ctx = item.get("context", {})
         try:

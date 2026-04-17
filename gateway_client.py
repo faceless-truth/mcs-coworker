@@ -171,6 +171,35 @@ class XPMClient:
         result = self._request("GET", "/clients", params=params)
         return result.get("items", result) if isinstance(result, dict) else result
 
+    def list_all_clients(
+        self,
+        search: str = "",
+        page_size: int = 50,
+        staff_uuid: str = "",
+    ) -> list:
+        """
+        Fetch ALL clients across all pages (Fix 13: XPM pagination).
+        Optionally filter to clients assigned to a specific staff member
+        (Fix 14: per-accountant filtering) by passing staff_uuid.
+        """
+        all_items: list = []
+        page = 1
+        while True:
+            batch = self.list_clients(search=search, page=page, page_size=page_size)
+            if not batch:
+                break
+            all_items.extend(batch)
+            if len(batch) < page_size:
+                break  # Last page
+            page += 1
+        if staff_uuid:
+            all_items = [
+                c for c in all_items
+                if c.get("AccountManager", {}).get("UUID", "") == staff_uuid
+                or c.get("account_manager_uuid", "") == staff_uuid
+            ]
+        return all_items
+
     def get_client(self, client_id: str) -> dict:
         """Return a single client by ID."""
         return self._request("GET", f"/clients/{client_id}")
@@ -207,6 +236,31 @@ class XPMClient:
             params["jobType"] = job_type
         result = self._request("GET", "/jobs", params=params)
         return result.get("items", result) if isinstance(result, dict) else result
+
+    def list_all_jobs(
+        self,
+        client_id: str = "",
+        status: str = "",
+        job_type: str = "",
+        page_size: int = 50,
+    ) -> list:
+        """
+        Fetch ALL jobs across all pages (Fix 13: XPM pagination).
+        """
+        all_items: list = []
+        page = 1
+        while True:
+            batch = self.list_jobs(
+                client_id=client_id, status=status,
+                job_type=job_type, page=page, page_size=page_size
+            )
+            if not batch:
+                break
+            all_items.extend(batch)
+            if len(batch) < page_size:
+                break
+            page += 1
+        return all_items
 
     def get_job(self, job_id: str) -> dict:
         """Return a single job by ID."""

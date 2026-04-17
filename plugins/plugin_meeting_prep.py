@@ -30,7 +30,7 @@ Default: daily at 08:00 — scans for today's meetings each morning.
 import re
 from datetime import datetime
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
-from config import get_setting, log_activity
+from config import get_setting, log_activity, get_active_lessons
 
 
 # Keywords that indicate a meeting-related email
@@ -214,11 +214,16 @@ class MeetingPrepPlugin(AgentPlugin):
                     f"Subject: {meeting_subject}\n\n"
                     f"{xpm_context}\n\n{memory_context}")
         try:
+            lessons = get_active_lessons()
+            lessons_block = ""
+            if lessons:
+                lessons_block = "\nLEARNED PREFERENCES:\n" + "\n".join(f"- {l['lesson']}" for l in lessons) + "\n"
             prompt = (f"You are the AI assistant for {practice}.\n"
                       f"Prepare a concise meeting brief for a meeting with {client_name}.\n"
                       f"Meeting subject: {meeting_subject}\n\n"
                       f"XPM DATA:\n{xpm_context}\n\n"
-                      f"RECENT HISTORY:\n{memory_context}\n\n"
+                      f"RECENT HISTORY:\n{memory_context}\n"
+                      f"{lessons_block}\n"
                       "Write a 3-section brief:\n"
                       "1. Client snapshot (2-3 sentences)\n"
                       "2. Current work & outstanding items\n"

@@ -35,7 +35,7 @@ Default: once daily at 8:00 AM (business days only).
 import json
 from datetime import datetime, date
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
-from config import get_setting, log_activity
+from config import get_setting, log_activity, get_active_lessons
 
 
 class MorningBriefingPlugin(AgentPlugin):
@@ -246,6 +246,10 @@ class MorningBriefingPlugin(AgentPlugin):
             return "\n".join(parts)
 
         practice_name = get_setting("practice_name", "MC & S Accounting")
+        lessons = get_active_lessons()
+        lessons_section = ""
+        if lessons:
+            lessons_section = "\n--- LEARNED PREFERENCES ---\n" + "\n".join(f"- {l['lesson']}" for l in lessons) + "\n"
         prompt = f"""You are the AI assistant for {practice_name}.
 Today is {today}. Compile a concise, professional morning briefing for the team.
 
@@ -266,7 +270,7 @@ Keep it under 400 words. Use plain text (no markdown).
 
 --- RECENT CLIENT ACTIVITY ---
 {memory_section}
-"""
+{lessons_section}"""
         try:
             response = context.claude_reason.messages.create(
                 model=self.get_claude_model_reasoning(),

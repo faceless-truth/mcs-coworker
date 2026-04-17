@@ -205,7 +205,7 @@ class ASICReturnPlugin(AgentPlugin):
     )
     version = "1.0.0"
     icon    = "🏢"
-    author  = "MC & S"
+    author  = get_setting("practice_name", "MC & S")
 
     requires_graph  = True
     requires_claude = True
@@ -238,7 +238,7 @@ class ASICReturnPlugin(AgentPlugin):
                 "key": "draft_prompt",
                 "label": "ASIC Analysis Prompt",
                 "default": (
-                    "You are an assistant for MC & S, an accounting firm. Analyse this email "
+                    f"You are an assistant for {get_setting('practice_name', 'MC & S')}, an accounting firm. Analyse this email "
                     "about an ASIC Annual Return from Nowinfinity.\n\n"
                     "Extract: company_name, acn, client_name, client_email, asic_fee, "
                     "due_date, confidence.\n\n"
@@ -273,10 +273,10 @@ class ASICReturnPlugin(AgentPlugin):
             },
             {
                 "key": "default_mcs_fee",
-                "label": "MC & S Admin Fee (inc. GST)",
+                "label": "Practice Admin Fee (inc. GST)",
                 "default": "$66.00",
                 "type": "text",
-                "help": "Default MC & S administration fee for ASIC annual returns.",
+                "help": "Default practice administration fee for ASIC annual returns.",
             },
             {
                 "key": "reminder_days",
@@ -407,7 +407,7 @@ class ASICReturnPlugin(AgentPlugin):
 
                 # Step 4: Draft email to client (if we have their email)
                 if client_email:
-                    reply_subject = f"ASIC Annual Return — {company_name} — MC & S Accounting"
+                    reply_subject = f"ASIC Annual Return — {company_name} — {get_setting('practice_name', 'MC & S Accounting')}"
                     reply_body = ASIC_EMAIL_TEMPLATE.format(
                         client_name=client_name,
                         company_name=company_name,
@@ -508,7 +508,7 @@ class ASICReturnPlugin(AgentPlugin):
             f"- {os.path.basename(p)}" for p in pdf_paths
         )
 
-        prompt = f"""You are an assistant for MC & S, an accounting firm. Analyse this email about an ASIC Annual Return from Nowinfinity.
+        prompt = f"""You are an assistant for {get_setting('practice_name', 'MC & S')}, an accounting firm. Analyse this email about an ASIC Annual Return from Nowinfinity.
 
 Extract the following details:
 - company_name: The company's registered name

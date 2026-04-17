@@ -174,7 +174,7 @@ class GraphClient:
 
     def get_user_info(self):
         """Return the signed-in user's display name and email."""
-        r = requests.get(f"{GRAPH_BASE}/me", headers=self._headers())
+        r = requests.get(f"{GRAPH_BASE}/me", headers=self._headers(), timeout=30)
         r.raise_for_status()
         return r.json()
 
@@ -187,14 +187,14 @@ class GraphClient:
             "$select": "id,subject,from,receivedDateTime,body,bodyPreview,hasAttachments,toRecipients",
         }
         url = f"{GRAPH_BASE}/me/mailFolders/{folder}/messages"
-        r = requests.get(url, headers=self._headers(), params=params)
+        r = requests.get(url, headers=self._headers(), timeout=30, params=params)
         r.raise_for_status()
         return r.json().get("value", [])
 
     def mark_as_read(self, message_id: str):
         """Mark a message as read."""
         url = f"{GRAPH_BASE}/me/messages/{message_id}"
-        r = requests.patch(url, headers=self._headers(), json={"isRead": True})
+        r = requests.patch(url, headers=self._headers(), timeout=30, json={"isRead": True})
         r.raise_for_status()
 
     def send_email(self, to_address: str, subject: str, body_html: str,
@@ -209,13 +209,13 @@ class GraphClient:
         if reply_to_id:
             url = f"{GRAPH_BASE}/me/messages/{reply_to_id}/reply"
             r = requests.post(
-                url, headers=self._headers(), json={"message": message}
+                url, headers=self._headers(), timeout=30, json={"message": message}
             )
         else:
             url = f"{GRAPH_BASE}/me/sendMail"
             r = requests.post(
                 url,
-                headers=self._headers(),
+                headers=self._headers(), timeout=30,
                 json={"message": message, "saveToSentItems": True},
             )
 
@@ -227,7 +227,7 @@ class GraphClient:
         if reply_to_id:
             # Create a reply draft
             url = f"{GRAPH_BASE}/me/messages/{reply_to_id}/createReply"
-            r = requests.post(url, headers=self._headers(), json={})
+            r = requests.post(url, headers=self._headers(), timeout=30, json={})
             r.raise_for_status()
             draft = r.json()
             draft_id = draft["id"]
@@ -236,7 +236,7 @@ class GraphClient:
             update_url = f"{GRAPH_BASE}/me/messages/{draft_id}"
             r2 = requests.patch(
                 update_url,
-                headers=self._headers(),
+                headers=self._headers(), timeout=30,
                 json={
                     "subject": subject,
                     "body": {"contentType": "HTML", "content": body_html},
@@ -253,7 +253,7 @@ class GraphClient:
                 "toRecipients": [{"emailAddress": {"address": to_address}}],
                 "isDraft": True,
             }
-            r = requests.post(url, headers=self._headers(), json=payload)
+            r = requests.post(url, headers=self._headers(), timeout=30, json=payload)
             r.raise_for_status()
             return r.json()["id"]
 
@@ -266,7 +266,7 @@ class GraphClient:
         url = f"{GRAPH_BASE}/me/messages/{message_id}"
         r = requests.patch(
             url,
-            headers=self._headers(),
+            headers=self._headers(), timeout=30,
             json={"flag": {"flagStatus": "flagged"}},
         )
         r.raise_for_status()
@@ -275,7 +275,7 @@ class GraphClient:
         """Add an Outlook category/label to a message."""
         url = f"{GRAPH_BASE}/me/messages/{message_id}"
         r = requests.patch(
-            url, headers=self._headers(), json={"categories": [category]}
+            url, headers=self._headers(), timeout=30, json={"categories": [category]}
         )
         r.raise_for_status()
 
@@ -284,14 +284,14 @@ class GraphClient:
         # Fetch current categories first, then patch with the tag removed
         url = f"{GRAPH_BASE}/me/messages/{message_id}"
         r = requests.get(
-            url, headers=self._headers(),
+            url, headers=self._headers(), timeout=30,
             params={"$select": "categories"}
         )
         r.raise_for_status()
         current = r.json().get("categories", [])
         updated = [c for c in current if c != category]
         r2 = requests.patch(
-            url, headers=self._headers(), json={"categories": updated}
+            url, headers=self._headers(), timeout=30, json={"categories": updated}
         )
         r2.raise_for_status()
 
@@ -337,7 +337,7 @@ class GraphClient:
                 "$orderby": "sentDateTime desc",
                 "$select": "body",
             }
-            r = requests.get(url, headers=self._headers(), params=params)
+            r = requests.get(url, headers=self._headers(), timeout=30, params=params)
             r.raise_for_status()
             messages = r.json().get("value", [])
 
@@ -392,7 +392,7 @@ class GraphClient:
         Each dict has: id, name, contentType, size, contentBytes (base64).
         """
         url = f"{GRAPH_BASE}/me/messages/{message_id}/attachments"
-        r = requests.get(url, headers=self._headers())
+        r = requests.get(url, headers=self._headers(), timeout=30)
         r.raise_for_status()
         return r.json().get("value", [])
 
@@ -403,7 +403,7 @@ class GraphClient:
         """
         import base64
         url = f"{GRAPH_BASE}/me/messages/{message_id}/attachments/{attachment_id}"
-        r = requests.get(url, headers=self._headers())
+        r = requests.get(url, headers=self._headers(), timeout=30)
         r.raise_for_status()
         att = r.json()
         filename = att.get("name", "attachment")
@@ -444,7 +444,7 @@ class GraphClient:
             "$top": max_count,
             "$select": "id,subject,from,receivedDateTime,body,bodyPreview,hasAttachments,toRecipients",
         }
-        r = requests.get(url, headers=self._headers(), params=params)
+        r = requests.get(url, headers=self._headers(), timeout=30, params=params)
         r.raise_for_status()
         return r.json().get("value", [])
 
@@ -463,7 +463,7 @@ class GraphClient:
             "$orderby": "receivedDateTime desc",
             "$select": "id,subject,from,receivedDateTime,body,bodyPreview,hasAttachments,toRecipients",
         }
-        r = requests.get(url, headers=self._headers(), params=params)
+        r = requests.get(url, headers=self._headers(), timeout=30, params=params)
         r.raise_for_status()
         return r.json().get("value", [])
 
@@ -484,7 +484,7 @@ class GraphClient:
         }
         if filter_str:
             params["$filter"] = filter_str
-        r = requests.get(url, headers=self._headers(), params=params)
+        r = requests.get(url, headers=self._headers(), timeout=30, params=params)
         r.raise_for_status()
         return r.json().get("value", [])
 
@@ -516,7 +516,7 @@ class GraphClient:
 
         url = f"{GRAPH_BASE}/me/sendMail"
         r = requests.post(
-            url, headers=self._headers(),
+            url, headers=self._headers(), timeout=30,
             json={"message": message, "saveToSentItems": True},
         )
         r.raise_for_status()
@@ -531,13 +531,13 @@ class GraphClient:
         # Create the draft first
         if reply_to_id:
             url = f"{GRAPH_BASE}/me/messages/{reply_to_id}/createReply"
-            r = requests.post(url, headers=self._headers(), json={})
+            r = requests.post(url, headers=self._headers(), timeout=30, json={})
             r.raise_for_status()
             draft = r.json()
             draft_id = draft["id"]
             update_url = f"{GRAPH_BASE}/me/messages/{draft_id}"
             r2 = requests.patch(
-                update_url, headers=self._headers(),
+                update_url, headers=self._headers(), timeout=30,
                 json={
                     "subject": subject,
                     "body": {"contentType": "HTML", "content": body_html},
@@ -552,7 +552,7 @@ class GraphClient:
                 "toRecipients": [{"emailAddress": {"address": to_address}}],
                 "isDraft": True,
             }
-            r = requests.post(url, headers=self._headers(), json=payload)
+            r = requests.post(url, headers=self._headers(), timeout=30, json=payload)
             r.raise_for_status()
             draft_id = r.json()["id"]
 
@@ -568,7 +568,7 @@ class GraphClient:
                     "name": filename,
                     "contentBytes": content,
                 }
-                r = requests.post(att_url, headers=self._headers(), json=att_payload)
+                r = requests.post(att_url, headers=self._headers(), timeout=30, json=att_payload)
                 r.raise_for_status()
 
         return draft_id
@@ -599,7 +599,7 @@ class GraphClient:
             "contentId": content_id,
             "isInline": True,
         }
-        r = requests.post(att_url, headers=self._headers(), json=att_payload)
+        r = requests.post(att_url, headers=self._headers(), timeout=30, json=att_payload)
         r.raise_for_status()
 
     def create_draft_with_inline_image(self, to_address: str, subject: str,
@@ -649,12 +649,12 @@ class GraphClient:
         if reply_to_id:
             url = f"{GRAPH_BASE}/me/messages/{reply_to_id}/reply"
             r = requests.post(
-                url, headers=self._headers(), json={"message": message}
+                url, headers=self._headers(), timeout=30, json={"message": message}
             )
         else:
             url = f"{GRAPH_BASE}/me/sendMail"
             r = requests.post(
-                url, headers=self._headers(),
+                url, headers=self._headers(), timeout=30,
                 json={"message": message, "saveToSentItems": True},
             )
         r.raise_for_status()
@@ -667,7 +667,7 @@ class GraphClient:
         folder_id = self._resolve_folder_id(destination_folder)
         url = f"{GRAPH_BASE}/me/messages/{message_id}/move"
         r = requests.post(
-            url, headers=self._headers(),
+            url, headers=self._headers(), timeout=30,
             json={"destinationId": folder_id},
         )
         r.raise_for_status()
@@ -685,14 +685,14 @@ class GraphClient:
         # Otherwise search for the folder
         url = f"{GRAPH_BASE}/me/mailFolders"
         params = {"$filter": f"displayName eq '{folder_name}'"}
-        r = requests.get(url, headers=self._headers(), params=params)
+        r = requests.get(url, headers=self._headers(), timeout=30, params=params)
         r.raise_for_status()
         folders = r.json().get("value", [])
         if folders:
             return folders[0]["id"]
         # If not found, create it
         r = requests.post(
-            url, headers=self._headers(),
+            url, headers=self._headers(), timeout=30,
             json={"displayName": folder_name},
         )
         r.raise_for_status()
@@ -702,3 +702,32 @@ class GraphClient:
         """Create a mail folder if it doesn't exist. Returns folder ID."""
         return self._resolve_folder_id(folder_name)
 
+
+    # ── Calendar ──────────────────────────────────────────────────────────────
+
+    def get_calendar_events(self, days_ahead: int = 1) -> list[dict]:
+        """
+        Fetch calendar events for the next days_ahead days using the
+        Microsoft Graph /me/calendarView endpoint.
+        Fix 16: enables meeting_prep to pull real calendar data instead of
+        relying solely on email keyword detection.
+
+        Returns a list of event dicts with keys:
+          id, subject, start, end, location, organizer, attendees, bodyPreview
+        """
+        from datetime import timezone, timedelta
+        now = datetime.utcnow().replace(tzinfo=timezone.utc)
+        end = now + timedelta(days=days_ahead)
+        start_str = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        end_str   = end.strftime("%Y-%m-%dT%H:%M:%SZ")
+        params = {
+            "startDateTime": start_str,
+            "endDateTime":   end_str,
+            "$select": "id,subject,start,end,location,organizer,attendees,bodyPreview",
+            "$orderby": "start/dateTime asc",
+            "$top": 50,
+        }
+        url = f"{GRAPH_BASE}/me/calendarView"
+        r = requests.get(url, headers=self._headers(), params=params, timeout=30)
+        r.raise_for_status()
+        return r.json().get("value", [])
