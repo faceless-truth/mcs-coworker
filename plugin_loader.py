@@ -31,6 +31,7 @@ from config import (
     get_setting, get_plugin_state, save_plugin_state, get_all_plugin_states
 )
 from event_bus import EventBus, HeartbeatPlugin
+from event_wiring import wire_all, apply_all_patches, Events
 
 if getattr(sys, 'frozen', False):
     # Running as PyInstaller bundle — plugins sit next to the .exe
@@ -357,8 +358,14 @@ class PluginLoader:
         # Start the heartbeat — fires every 60 s by default
         heartbeat_interval = int(get_setting("heartbeat_interval_seconds", "60"))
         HeartbeatPlugin.start(interval_seconds=heartbeat_interval)
+        # Wire cross-plugin event handlers (Tier 3A — APEX multi-agent wiring)
+        plugin_instances = {
+            pid: lp.instance for pid, lp in self._plugins.items()
+            if lp.instance is not None}
+        wire_all(EventBus, plugin_instances)
+        apply_all_patches(plugin_instances, EventBus)
         EventBus.emit("app.started", source="PluginLoader")
-        self._log("⏱ Scheduler started.")
+        self._log("⏱ Scheduler started with event wiring.")
 
     def stop_scheduler(self):
         """Stop the background scheduler and heartbeat."""
@@ -533,7 +540,7 @@ class PluginLoader:
         except Exception as e:
             self._log(f"⚠ ApprovalQueue unavailable: {e}")
 
-        return PluginContext(
+        ctx = PluginContext(
             graph=self._graph,
             claude=self._claude,           # legacy alias — same as claude_fast
             claude_fast=self._claude_fast,
@@ -547,3 +554,10 @@ class PluginLoader:
             settings=get_all_settings(),
             draft_mode=draft_mode,
         )
+        # Wrap Claude clients with token metering (Tier 3B)
+        try:
+            from token_meter import wrap_context_claude
+            wrap_context_claude(ctx, plugin_id="plugin_loader")
+        except Exception as e:
+            self._log(f"⚠ TokenMeter unavailable: {e}")
+        return ctx

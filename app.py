@@ -1128,6 +1128,7 @@ class App(ctk.CTk):
             ("settings",  "  Settings"),
             ("chat",      "  Chat"),
             ("activity",  "  Activity Log"),
+            ("usage",     "  AI Usage"),
         ]
         ctk.CTkLabel(nav, text="", height=10).pack()
         for key, label in pages:
@@ -1154,6 +1155,7 @@ class App(ctk.CTk):
         self._build_settings_page()
         self._build_chat_page()
         self._build_activity_page()
+        self._build_usage_page()
 
     # ────────────────────────────────────────────────────────────────────────
     # Dashboard
@@ -1779,6 +1781,163 @@ class App(ctk.CTk):
             self._log("Event log cleared.")
         except Exception as e:
             self._log(f"Error clearing event log: {e}")
+
+    # ────────────────────────────────────────────────────────────────────────
+    # AI Usage page (Token Metering — Tier 3B)
+    # ────────────────────────────────────────────────────────────────────────
+
+    def _build_usage_page(self):
+        page = ctk.CTkFrame(self.content, fg_color=BG_LIGHT, corner_radius=0)
+        self._pages["usage"] = page
+
+        top = ctk.CTkFrame(page, fg_color=BG_LIGHT)
+        top.pack(fill="x", padx=28, pady=(24, 0))
+        ctk.CTkLabel(top, text="AI Usage & Cost",
+                     font=ctk.CTkFont(size=22, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(side="left")
+        ctk.CTkButton(top, text="Refresh", width=90,
+                      command=self._refresh_usage_page).pack(side="right")
+
+        ctk.CTkLabel(page,
+                     text="Tracks every Claude API call — tokens used and estimated AUD cost.",
+                     font=ctk.CTkFont(size=12), text_color=TEXT_SECONDARY
+                     ).pack(anchor="w", padx=28, pady=(4, 12))
+
+        # Summary cards row
+        cards_frame = ctk.CTkFrame(page, fg_color=BG_LIGHT)
+        cards_frame.pack(fill="x", padx=28, pady=(0, 12))
+        self._usage_today_lbl    = ctk.CTkLabel(cards_frame, text="Today: $0.00",
+                                                font=ctk.CTkFont(size=14, weight="bold"),
+                                                text_color="#4CAF50")
+        self._usage_today_lbl.pack(side="left", padx=(0, 24))
+        self._usage_month_lbl   = ctk.CTkLabel(cards_frame, text="This Month: $0.00",
+                                                font=ctk.CTkFont(size=14, weight="bold"),
+                                                text_color="#2196F3")
+        self._usage_month_lbl.pack(side="left", padx=(0, 24))
+        self._usage_total_lbl   = ctk.CTkLabel(cards_frame, text="30-Day Total: $0.00",
+                                                font=ctk.CTkFont(size=14, weight="bold"),
+                                                text_color=TEXT_PRIMARY)
+        self._usage_total_lbl.pack(side="left", padx=(0, 24))
+        self._usage_calls_lbl   = ctk.CTkLabel(cards_frame, text="Calls: 0",
+                                                font=ctk.CTkFont(size=14),
+                                                text_color=TEXT_SECONDARY)
+        self._usage_calls_lbl.pack(side="left")
+
+        # Breakdown table
+        ctk.CTkLabel(page, text="By Plugin (last 30 days)",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(anchor="w", padx=28, pady=(8, 4))
+
+        tbl_frame = ctk.CTkFrame(page, fg_color=BG_CARD, corner_radius=8)
+        tbl_frame.pack(fill="x", padx=28, pady=(0, 12))
+        self._usage_table_frame = tbl_frame
+
+        # By model breakdown
+        ctk.CTkLabel(page, text="By Model",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(anchor="w", padx=28, pady=(8, 4))
+        model_frame = ctk.CTkFrame(page, fg_color=BG_CARD, corner_radius=8)
+        model_frame.pack(fill="x", padx=28, pady=(0, 12))
+        self._usage_model_frame = model_frame
+
+        # Daily log
+        ctk.CTkLabel(page, text="Daily Log (last 30 days)",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(anchor="w", padx=28, pady=(8, 4))
+        log_frame = ctk.CTkScrollableFrame(page, fg_color=BG_CARD,
+                                           corner_radius=8, height=180)
+        log_frame.pack(fill="x", padx=28, pady=(0, 16))
+        self._usage_log_frame = log_frame
+
+        self._refresh_usage_page()
+
+    def _refresh_usage_page(self):
+        """Reload token usage data from the meter DB and update the UI."""
+        try:
+            from token_meter import get_usage_summary
+            summary = get_usage_summary(days=30)
+        except Exception:
+            summary = {"total_calls": 0, "total_tokens": 0,
+                       "total_cost_aud": 0.0, "today_cost_aud": 0.0,
+                       "this_month_cost_aud": 0.0,
+                       "by_plugin": [], "by_model": [], "by_day": []}
+
+        # Update summary cards
+        self._usage_today_lbl.configure(
+            text=f"Today: A${summary['today_cost_aud']:.4f}")
+        self._usage_month_lbl.configure(
+            text=f"This Month: A${summary['this_month_cost_aud']:.4f}")
+        self._usage_total_lbl.configure(
+            text=f"30-Day Total: A${summary['total_cost_aud']:.4f}")
+        self._usage_calls_lbl.configure(
+            text=f"Calls: {summary['total_calls']:,}  •  "
+                 f"Tokens: {summary['total_tokens']:,}")
+
+        # Rebuild plugin table
+        for w in self._usage_table_frame.winfo_children():
+            w.destroy()
+        headers = ["Plugin", "Calls", "Tokens", "Cost (AUD)"]
+        for col, h in enumerate(headers):
+            ctk.CTkLabel(self._usage_table_frame, text=h,
+                         font=ctk.CTkFont(size=11, weight="bold"),
+                         text_color=TEXT_SECONDARY
+                         ).grid(row=0, column=col, padx=12, pady=6, sticky="w")
+        for row_i, row in enumerate(summary["by_plugin"], start=1):
+            vals = [row["plugin_id"].replace("plugin_", ""),
+                    str(row["calls"]),
+                    f"{row['tokens']:,}",
+                    f"A${row['cost_aud']:.4f}"]
+            for col, v in enumerate(vals):
+                ctk.CTkLabel(self._usage_table_frame, text=v,
+                             font=ctk.CTkFont(size=11),
+                             text_color=TEXT_PRIMARY
+                             ).grid(row=row_i, column=col, padx=12, pady=3, sticky="w")
+        if not summary["by_plugin"]:
+            ctk.CTkLabel(self._usage_table_frame,
+                         text="No usage recorded yet. Usage appears here after the first Claude API call.",
+                         font=ctk.CTkFont(size=11), text_color=TEXT_SECONDARY
+                         ).grid(row=1, column=0, columnspan=4, padx=12, pady=8, sticky="w")
+
+        # Rebuild model table
+        for w in self._usage_model_frame.winfo_children():
+            w.destroy()
+        for col, h in enumerate(["Model", "Tier", "Calls", "Tokens", "Cost (AUD)"]):
+            ctk.CTkLabel(self._usage_model_frame, text=h,
+                         font=ctk.CTkFont(size=11, weight="bold"),
+                         text_color=TEXT_SECONDARY
+                         ).grid(row=0, column=col, padx=12, pady=6, sticky="w")
+        for row_i, row in enumerate(summary["by_model"], start=1):
+            vals = [row["model"], row.get("tier", ""),
+                    str(row["calls"]),
+                    f"{row['tokens']:,}",
+                    f"A${row['cost_aud']:.4f}"]
+            for col, v in enumerate(vals):
+                ctk.CTkLabel(self._usage_model_frame, text=v,
+                             font=ctk.CTkFont(size=11),
+                             text_color=TEXT_PRIMARY
+                             ).grid(row=row_i, column=col, padx=12, pady=3, sticky="w")
+        if not summary["by_model"]:
+            ctk.CTkLabel(self._usage_model_frame,
+                         text="No model data yet.",
+                         font=ctk.CTkFont(size=11), text_color=TEXT_SECONDARY
+                         ).grid(row=1, column=0, columnspan=5, padx=12, pady=8, sticky="w")
+
+        # Rebuild daily log
+        for w in self._usage_log_frame.winfo_children():
+            w.destroy()
+        for row in summary["by_day"]:
+            line = (f"{row['date']}   "
+                    f"{row['calls']} calls   "
+                    f"{row['tokens']:,} tokens   "
+                    f"A${row['cost_aud']:.4f}")
+            ctk.CTkLabel(self._usage_log_frame, text=line,
+                         font=ctk.CTkFont(size=11), text_color=TEXT_PRIMARY,
+                         anchor="w").pack(fill="x", padx=8, pady=1)
+        if not summary["by_day"]:
+            ctk.CTkLabel(self._usage_log_frame,
+                         text="No daily data yet.",
+                         font=ctk.CTkFont(size=11), text_color=TEXT_SECONDARY
+                         ).pack(padx=8, pady=8)
 
     # ────────────────────────────────────────────────────────────────────────
     # Plugins page

@@ -85,8 +85,10 @@ class _EventBus:
     """
 
     def __init__(self):
-        # { event_type: [(handler, async_dispatch), ...] }
-        self._handlers: dict[str, list[tuple[Callable, bool]]] = {}
+        # { event_type: [(handler, async_dispatch, subscriber_id), ...] }
+        self._handlers: dict[str, list[tuple[Callable, bool, str]]] = {}
+        # { subscriber_id: [(event_type, handler), ...] } for ID-based unsubscribe
+        self._subscriber_ids: dict[str, list[tuple[str, Callable]]] = {}
         self._lock = threading.Lock()
         self._history: list[Event] = []
         self._history_max = 200  # keep last N events for diagnostics
@@ -98,6 +100,7 @@ class _EventBus:
         event_type: str,
         handler: Callable[[Event], None],
         async_dispatch: bool = False,
+        subscriber_id: str = "",
     ) -> None:
         """
         Register a handler for an event type.
@@ -109,33 +112,54 @@ class _EventBus:
         handler        : Callable that accepts a single Event argument.
         async_dispatch : If True, the handler is called in a daemon thread
                          so it doesn't block the publisher.
+        subscriber_id  : Optional string ID for this subscription.
+                         Allows unsubscribing by ID without holding a
+                         reference to the handler function.
         """
         with self._lock:
             self._handlers.setdefault(event_type, [])
-            # Avoid duplicate subscriptions
-            existing = [h for h, _ in self._handlers[event_type]]
-            if handler not in existing:
-                self._handlers[event_type].append((handler, async_dispatch))
+            # Avoid duplicate subscriptions (by handler or subscriber_id)
+            existing_handlers = [h for h, _, _ in self._handlers[event_type]]
+            existing_ids = [sid for _, _, sid in self._handlers[event_type] if sid]
+            if handler in existing_handlers:
+                return
+            if subscriber_id and subscriber_id in existing_ids:
+                return
+            self._handlers[event_type].append((handler, async_dispatch, subscriber_id))
+            # Track by subscriber_id for ID-based unsubscribe
+            if subscriber_id:
+                self._subscriber_ids.setdefault(subscriber_id, [])
+                self._subscriber_ids[subscriber_id].append((event_type, handler))
 
     def unsubscribe(
         self,
-        event_type: str,
-        handler: Callable[[Event], None],
+        event_type: str = "",
+        handler: Callable[[Event], None] = None,
+        subscriber_id: str = "",
     ) -> None:
-        """Remove a handler for an event type."""
+        """Remove a handler for an event type, or all handlers for a subscriber_id."""
         with self._lock:
-            if event_type in self._handlers:
-                self._handlers[event_type] = [
-                    (h, a) for h, a in self._handlers[event_type]
-                    if h is not handler
-                ]
+            if subscriber_id:
+                # Unsubscribe all registrations for this subscriber_id
+                for et, h in self._subscriber_ids.pop(subscriber_id, []):
+                    if et in self._handlers:
+                        self._handlers[et] = [
+                            (hh, a, sid) for hh, a, sid in self._handlers[et]
+                            if hh is not h
+                        ]
+            elif event_type and handler is not None:
+                if event_type in self._handlers:
+                    self._handlers[event_type] = [
+                        (h, a, sid) for h, a, sid in self._handlers[event_type]
+                        if h is not handler
+                    ]
 
-    def unsubscribe_all(self, handler: Callable[[Event], None]) -> None:
+    def unsubscribe_all(self, handler: Callable[[Event], None] = None) -> None:
         """Remove a handler from ALL event types it is subscribed to."""
         with self._lock:
             for event_type in list(self._handlers.keys()):
                 self._handlers[event_type] = [
-                    (h, a) for h, a in self._handlers[event_type]
+                    (h, a, sid) for h, a, sid in self._handlers[event_type]
                     if h is not handler
                 ]
 
@@ -157,7 +181,7 @@ class _EventBus:
                 self._history = self._history[-self._history_max:]
 
         all_handlers = specific + wildcard
-        for handler, async_dispatch in all_handlers:
+        for handler, async_dispatch, *_ in all_handlers:
             if async_dispatch:
                 t = threading.Thread(
                     target=self._safe_call, args=(handler, event), daemon=True

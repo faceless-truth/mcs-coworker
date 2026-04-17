@@ -283,8 +283,13 @@ class TestPluginLoaderDualModel(unittest.TestCase):
         self.assertIsNotNone(ctx.claude)
         self.assertIsNotNone(ctx.claude_fast)
         self.assertIsNotNone(ctx.claude_reason)
-        # Legacy alias matches fast
-        self.assertIs(ctx.claude, ctx.claude_fast)
+        # After Tier 3B token metering, claude and claude_fast are both
+        # ClaudeUsageWrapper instances wrapping the same underlying client.
+        # They may be separate wrapper objects but both must be non-None.
+        from token_meter import ClaudeUsageWrapper
+        self.assertIsInstance(ctx.claude, ClaudeUsageWrapper)
+        self.assertIsInstance(ctx.claude_fast, ClaudeUsageWrapper)
+        self.assertIsInstance(ctx.claude_reason, ClaudeUsageWrapper)
 
     def test_make_context_claude_none_when_no_key(self):
         """_make_context() returns None claude fields when no API key."""
