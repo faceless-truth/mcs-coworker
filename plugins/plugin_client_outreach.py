@@ -31,6 +31,43 @@ from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
 
 # ── Prompt templates for Claude ──────────────────────────────────────────────
 
+# Fix 4: Two-step empathy extraction pipeline
+# Step 1 — Extract emotional/relationship context before drafting the email.
+# This ensures the email writer has a clear picture of the client relationship
+# and can write with genuine empathy rather than generic warmth.
+EMPATHY_EXTRACTION_SYSTEM = """\
+You are a client relationship analyst for an accounting firm.
+Your job is to read the available data about a client situation and extract
+the key emotional and relational signals that should inform how the accountant
+communicates with them.
+
+Return a JSON object with these keys:
+{
+  "relationship_warmth": "cold|neutral|warm|very_warm",
+  "client_stress_level": "low|medium|high",
+  "communication_style": "formal|professional|friendly|casual",
+  "key_concern": "one sentence describing the client's likely primary concern",
+  "tone_guidance": "one sentence on how the email should feel to the reader",
+  "avoid": "one sentence on what NOT to say or imply in this email",
+  "personalisation_hook": "a specific detail from the data that can make the email feel personal (or empty string if none)"
+}
+
+Base your analysis ONLY on the data provided. Do not invent details.
+"""
+
+EMPATHY_EXTRACTION_USER_TEMPLATE = """\
+Client situation data:
+
+ENTITY: {entity_name} ({entity_type})
+OUTREACH REASON: {outreach_reason}
+REASON DETAIL: {reason_detail}
+PRIORITY: {priority}
+CONTEXT: {context_json}
+CLIENT HISTORY: {client_history}
+
+Extract the relationship and emotional signals.
+"""
+
 OUTREACH_SYSTEM_PROMPT = """\
 You are a professional email drafting assistant for MC & S Accountants, \
 a Melbourne-based accounting firm. You draft client outreach emails on \
@@ -66,8 +103,12 @@ ADDITIONAL CONTEXT:
 
 {memory_instructions}
 
+RELATIONSHIP & EMPATHY SIGNALS (use these to guide tone and personalisation):
+{empathy_signals}
+
 Write ONLY the email body in HTML format (no subject line, no signature). \
 Use <p> tags for paragraphs. Keep it professional and concise.
+Apply the tone guidance and personalisation hook from the empathy signals above.
 """
 
 SUBJECT_TEMPLATES = {
@@ -303,9 +344,10 @@ class ClientOutreachPlugin(AgentPlugin):
                 if client_context:
                     enriched_memory += f"\n{client_context}\n"
 
-                # Generate email body with Claude
+                # Generate email body with Claude (two-step empathy pipeline)
                 body_html = self._generate_email_body(
-                    context.claude, item, enriched_memory
+                    context.claude, item, enriched_memory,
+                    client_history=client_context,
                 )
 
                 # Generate subject line
@@ -371,13 +413,68 @@ class ClientOutreachPlugin(AgentPlugin):
 
     # ── Private helpers ──────────────────────────────────────────────────────
 
+    def _extract_empathy_signals(
+        self,
+        claude_client: anthropic.Anthropic,
+        item: dict,
+        client_history: str,
+    ) -> str:
+        """
+        Fix 4 — Step 1: Extract emotional and relationship signals from client data.
+        Returns a formatted string of empathy guidance for the email writer.
+        """
+        try:
+            import re
+            extraction_prompt = EMPATHY_EXTRACTION_USER_TEMPLATE.format(
+                entity_name=item.get("entity_name", "Client"),
+                entity_type=item.get("entity_type", "entity"),
+                outreach_reason=item.get("outreach_reason", ""),
+                reason_detail=item.get("reason_detail", ""),
+                priority=item.get("priority", "medium"),
+                context_json=json.dumps(item.get("context", {}), indent=2),
+                client_history=client_history or "No prior history available.",
+            )
+            response = claude_client.messages.create(
+                model=self.get_claude_model(),
+                max_tokens=300,
+                system=EMPATHY_EXTRACTION_SYSTEM,
+                messages=[{"role": "user", "content": extraction_prompt}],
+            )
+            raw = response.content[0].text.strip()
+            raw = re.sub(r"^```(?:json)?\s*", "", raw)
+            raw = re.sub(r"\s*```$", "", raw)
+            signals = json.loads(raw)
+            return (
+                f"Relationship warmth: {signals.get('relationship_warmth', 'neutral')}\n"
+                f"Client stress level: {signals.get('client_stress_level', 'medium')}\n"
+                f"Communication style: {signals.get('communication_style', 'professional')}\n"
+                f"Key concern: {signals.get('key_concern', '')}\n"
+                f"Tone guidance: {signals.get('tone_guidance', '')}\n"
+                f"Avoid: {signals.get('avoid', '')}\n"
+                f"Personalisation hook: {signals.get('personalisation_hook', '')}"
+            )
+        except Exception:
+            return "No empathy signals extracted — use standard professional tone."
+
     def _generate_email_body(
         self,
         claude_client: anthropic.Anthropic,
         item: dict,
         memory_instructions: str,
+        client_history: str = "",
     ) -> str:
-        """Use Claude to draft a personalised outreach email."""
+        """
+        Fix 4 — Two-step pipeline:
+        Step 1: Extract empathy/relationship signals from client data.
+        Step 2: Draft the email using those signals as tone guidance.
+        This produces emails that feel genuinely personal, not templated.
+        """
+        # Step 1: Extract empathy signals
+        empathy_signals = self._extract_empathy_signals(
+            claude_client, item, client_history
+        )
+
+        # Step 2: Draft the email with empathy context
         prompt = OUTREACH_USER_TEMPLATE.format(
             entity_name=item.get("entity_name", "Client"),
             entity_type=item.get("entity_type", "entity"),
@@ -388,6 +485,7 @@ class ClientOutreachPlugin(AgentPlugin):
             priority=item.get("priority", "medium"),
             context_json=json.dumps(item.get("context", {}), indent=2),
             memory_instructions=memory_instructions,
+            empathy_signals=empathy_signals,
         )
 
         response = claude_client.messages.create(

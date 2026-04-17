@@ -89,6 +89,10 @@ class EmailTriagePlugin(AgentPlugin):
             },
         ]
 
+    # Tier 1 categories that get a high confidence score and can auto-send
+    TIER_1_CATEGORIES = {"CHECKLIST_REQUEST", "PRICING_ENQUIRY"}
+    EVA_CATEGORY_TAG  = "EVA Processing"
+
     def run(self, context: PluginContext) -> PluginResult:
         graph      = context.graph
         log        = context.log
@@ -130,6 +134,13 @@ class EmailTriagePlugin(AgentPlugin):
 
             log(f'  Classifying: "{subject}" from {from_email}')
 
+            # Apply "EVA Processing" category tag immediately so the accountant
+            # can see that EVA is handling this email (Fix 1: Inbox Ghost)
+            try:
+                graph.add_category(msg_id, self.EVA_CATEGORY_TAG)
+            except Exception:
+                pass  # Non-critical — continue even if tagging fails
+
             try:
                 classification = self._classify(
                     subject, body_plain, enabled_rules
@@ -142,6 +153,11 @@ class EmailTriagePlugin(AgentPlugin):
 
                 if category == "OTHER":
                     log("    ↳ Left in inbox — no rule matched.")
+                    # Remove EVA Processing tag — we're not handling this one
+                    try:
+                        graph.remove_category(msg_id, self.EVA_CATEGORY_TAG)
+                    except Exception:
+                        pass
                     log_activity(from_email, subject, category, "no_action")
                     self._processed_ids.add(msg_id)
                     result.items_skipped += 1
@@ -168,7 +184,21 @@ class EmailTriagePlugin(AgentPlugin):
                 # Check if a signature image is uploaded for inline embedding
                 sig_image_path = graph.get_signature_image_path()
 
-                if draft_mode:
+                # Fix 2: Confidence-based auto-send for Tier 1 rules
+                # Tier 1 categories (CHECKLIST_REQUEST, PRICING_ENQUIRY) are
+                # highly predictable template responses — assign 0.95 confidence
+                # so they bypass draft mode when the auto-threshold allows it.
+                tier1_auto_send = (
+                    not draft_mode
+                    or (
+                        category in self.TIER_1_CATEGORIES
+                        and context.approval_queue is not None
+                        and context.approval_queue.get_threshold() <= 0.95
+                    )
+                )
+
+                if not tier1_auto_send:
+                    # Draft mode — create draft for human review
                     if sig_image_path:
                         graph.create_draft_with_inline_image(
                             from_email, reply_subject, reply_body,
@@ -185,6 +215,7 @@ class EmailTriagePlugin(AgentPlugin):
                     )
                     result.drafts_created += 1
                 else:
+                    # Auto-send (either draft_mode=False, or Tier 1 confidence bypass)
                     if sig_image_path:
                         graph.send_email_with_inline_image(
                             from_email, reply_subject, reply_body,
@@ -194,12 +225,22 @@ class EmailTriagePlugin(AgentPlugin):
                         graph.send_email(
                             from_email, reply_subject, reply_body, msg_id
                         )
-                    log("    ↳ Reply sent.")
+                    if category in self.TIER_1_CATEGORIES and draft_mode:
+                        log("    ↳ Tier 1 rule — auto-sent (confidence 0.95 ≥ threshold).")
+                    else:
+                        log("    ↳ Reply sent.")
                     log_activity(from_email, subject, category, "auto_sent")
 
                 if category == "DOCUMENTS_RECEIVED":
                     graph.flag_email(msg_id)
                     log("    ↳ Flagged for follow-up.")
+
+                # Remove EVA Processing tag and apply the final category tag
+                try:
+                    graph.remove_category(msg_id, self.EVA_CATEGORY_TAG)
+                    graph.add_category(msg_id, category.replace("_", " ").title())
+                except Exception:
+                    pass
 
                 graph.mark_as_read(msg_id)
                 self._processed_ids.add(msg_id)

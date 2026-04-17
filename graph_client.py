@@ -279,6 +279,22 @@ class GraphClient:
         )
         r.raise_for_status()
 
+    def remove_category(self, message_id: str, category: str):
+        """Remove a specific Outlook category tag from a message."""
+        # Fetch current categories first, then patch with the tag removed
+        url = f"{GRAPH_BASE}/me/messages/{message_id}"
+        r = requests.get(
+            url, headers=self._headers(),
+            params={"$select": "categories"}
+        )
+        r.raise_for_status()
+        current = r.json().get("categories", [])
+        updated = [c for c in current if c != category]
+        r2 = requests.patch(
+            url, headers=self._headers(), json={"categories": updated}
+        )
+        r2.raise_for_status()
+
     # ── Signature ─────────────────────────────────────────────────────────────
 
     _cached_signature: str = ""
