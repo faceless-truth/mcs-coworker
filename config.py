@@ -149,6 +149,11 @@ def init_db():
         "fusesign_base_url":      "https://api.fusesign.com/v1",
         "teams_webhook_url":      "",
         "teams_graph_token":      "",
+        "statementhub_api_key":   "",
+        "statementhub_base_url":  "https://api.statementhub.com.au/v1",
+        # Business hours
+        "skip_public_holidays":   "1",
+        "public_holiday_state":   "VIC",
         # Stream 3 — Heartbeat interval
         "heartbeat_interval_seconds": "60",
         # Stream 6 — Approval queue

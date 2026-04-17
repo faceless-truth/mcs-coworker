@@ -38,6 +38,7 @@ Default: every 5 minutes during business hours.
 import json
 import re
 import os
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 
@@ -48,6 +49,35 @@ from config import (
     get_setting, log_activity,
     get_style_preferences, get_active_lessons,
 )
+
+_NOA_DB_PATH = str(Path.home() / ".mcs_email_automation" / "noa_processed.db")
+
+
+def _noa_db() -> sqlite3.Connection:
+    os.makedirs(os.path.dirname(_NOA_DB_PATH), exist_ok=True)
+    conn = sqlite3.connect(_NOA_DB_PATH)
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS processed_emails "
+        "(msg_id TEXT PRIMARY KEY, processed_at TEXT DEFAULT (datetime('now','localtime')))"
+    )
+    conn.commit()
+    return conn
+
+
+def _noa_is_processed(msg_id: str) -> bool:
+    conn = _noa_db()
+    row = conn.execute("SELECT 1 FROM processed_emails WHERE msg_id=?", (msg_id,)).fetchone()
+    conn.close()
+    return row is not None
+
+
+def _noa_mark_processed(msg_id: str) -> None:
+    conn = _noa_db()
+    conn.execute(
+        "INSERT OR IGNORE INTO processed_emails (msg_id) VALUES (?)", (msg_id,)
+    )
+    conn.commit()
+    conn.close()
 
 
 # ── Default NOA email templates ─────────────────────────────────────────────
@@ -122,15 +152,15 @@ class NOAProcessorPlugin(AgentPlugin):
 
     default_schedule = Schedule.every_minutes(5)
 
-    _processed_ids: set
     _download_dir: str
 
     def load(self, context: PluginContext) -> bool:
-        self._processed_ids = set()
         self._download_dir = str(
             Path.home() / ".mcs_email_automation" / "noa_downloads"
         )
         os.makedirs(self._download_dir, exist_ok=True)
+        # Ensure SQLite persistence DB is initialised
+        _noa_db().close()
 
         if not context.graph:
             context.log("📋 NOA Processor: Microsoft 365 not connected.")
@@ -252,7 +282,7 @@ class NOAProcessorPlugin(AgentPlugin):
 
         for email in noa_emails:
             msg_id = email["id"]
-            if msg_id in self._processed_ids:
+            if _noa_is_processed(msg_id):
                 continue
 
             subject    = email.get("subject", "(No Subject)")
@@ -276,7 +306,7 @@ class NOAProcessorPlugin(AgentPlugin):
                 pdf_paths = [p for p in attachment_paths if p.lower().endswith(".pdf")]
                 if not pdf_paths:
                     log("    ↳ No PDF attachments found — skipping.")
-                    self._processed_ids.add(msg_id)
+                    _noa_mark_processed(msg_id)
                     result.items_skipped += 1
                     continue
 
@@ -288,7 +318,7 @@ class NOAProcessorPlugin(AgentPlugin):
                     graph.flag_email(msg_id)
                     graph.add_category(msg_id, "NOA - Review Needed")
                     log_activity(from_email, subject, "NOA", "flagged_for_review")
-                    self._processed_ids.add(msg_id)
+                    _noa_mark_processed(msg_id)
                     result.items_skipped += 1
                     continue
 
@@ -296,12 +326,37 @@ class NOAProcessorPlugin(AgentPlugin):
                 outcome      = noa_data.get("outcome", "REFUND").upper()
                 amount       = noa_data.get("amount", "$0.00")
                 tax_year     = noa_data.get("tax_year", "2024-25")
-                client_email = noa_data.get("client_email", from_email)
+                client_email = noa_data.get("client_email", "").strip()
                 entity_name  = noa_data.get("entity_name", "")
                 is_amended   = noa_data.get("is_amended", False)
 
                 if is_amended:
                     outcome = "AMENDED"
+
+                # If Claude could not extract the email, try XPM lookup by client name
+                if not client_email and client_name and client_name != "Client":
+                    try:
+                        if context.gateway and context.gateway.is_available("xpm"):
+                            xpm_client = context.gateway.xpm.get_client_by_name(client_name)
+                            if xpm_client:
+                                client_email = (
+                                    xpm_client.get("Email") or
+                                    xpm_client.get("email") or ""
+                                ).strip()
+                                if client_email:
+                                    log(f"    ↳ Resolved client email from XPM: {client_email}")
+                    except Exception as _xpm_err:
+                        log(f"    ↳ XPM email lookup failed: {_xpm_err}")
+
+                # Final fallback: flag for manual handling if still no email
+                if not client_email:
+                    log(f"    ↳ ⚠ No client email for {client_name} — flagging for manual handling.")
+                    graph.flag_email(msg_id)
+                    graph.add_category(msg_id, "NOA - No Client Email")
+                    log_activity(from_email, subject, f"NOA_{outcome}", "flagged_no_email")
+                    _noa_mark_processed(msg_id)
+                    result.items_skipped += 1
+                    continue
 
                 log(f"    ↳ Client: {client_name} | Outcome: {outcome} | Amount: {amount}")
 
@@ -370,7 +425,7 @@ class NOAProcessorPlugin(AgentPlugin):
                     except Exception:
                         pass  # memory failure must never break the main workflow
 
-                self._processed_ids.add(msg_id)
+                _noa_mark_processed(msg_id)
                 result.actions_taken += 1
 
             except Exception as e:

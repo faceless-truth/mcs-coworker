@@ -212,6 +212,28 @@ class XPMClient:
                 return c
         return None
 
+    def get_client_by_name(self, name: str) -> dict | None:
+        """
+        Find a client by name (case-insensitive, partial match).
+        Tries exact match first, then falls back to first partial match.
+        Returns None if not found.
+        """
+        if not name:
+            return None
+        clients = self.list_clients(search=name, page_size=20)
+        name_lower = name.lower()
+        # Prefer exact match
+        for c in clients:
+            full_name = (c.get("Name") or c.get("name") or "").lower()
+            if full_name == name_lower:
+                return c
+        # Fall back to first partial match
+        for c in clients:
+            full_name = (c.get("Name") or c.get("name") or "").lower()
+            if name_lower in full_name or full_name in name_lower:
+                return c
+        return None
+
     # ── Jobs ──────────────────────────────────────────────────────────────────
 
     def list_jobs(
@@ -296,6 +318,83 @@ class XPMClient:
         """Add a note to a job."""
         return self._request("POST", f"/jobs/{job_id}/notes",
                              body={"content": note})
+
+    # ── Invoices ────────────────────────────────────────────────────────────────────────────
+
+    def list_invoices(
+        self,
+        client_id: str = "",
+        status: str = "",
+        page: int = 1,
+        page_size: int = 50,
+    ) -> list:
+        """
+        List XPM invoices, optionally filtered by client or status.
+        status options: 'Draft', 'Approved', 'Sent', 'Paid', 'Voided'
+        """
+        params: dict = {"page": page, "pageSize": page_size}
+        if client_id:
+            params["clientId"] = client_id
+        if status:
+            params["status"] = status
+        result = self._request("GET", "/invoices", params=params)
+        return result.get("items", result) if isinstance(result, dict) else result
+
+    def list_all_invoices(
+        self,
+        client_id: str = "",
+        status: str = "",
+        page_size: int = 50,
+    ) -> list:
+        """Fetch ALL invoices across all pages."""
+        all_items: list = []
+        page = 1
+        while True:
+            batch = self.list_invoices(
+                client_id=client_id, status=status,
+                page=page, page_size=page_size
+            )
+            if not batch:
+                break
+            all_items.extend(batch)
+            if len(batch) < page_size:
+                break
+            page += 1
+        return all_items
+
+    def get_debtor_summary(self) -> dict:
+        """
+        Return a summary of outstanding invoices grouped by ageing bucket.
+        Returns: {"total_outstanding": float, "0_30": float, "31_60": float,
+                  "61_90": float, "90_plus": float, "invoice_count": int}
+        """
+        from datetime import date
+        today = date.today()
+        invoices = self.list_all_invoices(status="Approved")  # Approved = sent but unpaid in XPM
+        buckets = {"0_30": 0.0, "31_60": 0.0, "61_90": 0.0, "90_plus": 0.0}
+        total = 0.0
+        count = 0
+        for inv in invoices:
+            amount = float(inv.get("AmountDue") or inv.get("amount_due") or 0)
+            if amount <= 0:
+                continue
+            due_str = inv.get("DueDate") or inv.get("due_date") or ""
+            try:
+                due_date = date.fromisoformat(due_str[:10])
+                days_overdue = (today - due_date).days
+            except Exception:
+                days_overdue = 0
+            total += amount
+            count += 1
+            if days_overdue <= 30:
+                buckets["0_30"] += amount
+            elif days_overdue <= 60:
+                buckets["31_60"] += amount
+            elif days_overdue <= 90:
+                buckets["61_90"] += amount
+            else:
+                buckets["90_plus"] += amount
+        return {"total_outstanding": round(total, 2), "invoice_count": count, **buckets}
 
 
 class XPMError(Exception):

@@ -58,30 +58,53 @@ class DebtorFollowUpPlugin(AgentPlugin):
             result.summary = "XPM not configured — debtor follow-up skipped."
             return result
 
-        context.log("[DebtorFollowUp] Fetching overdue clients from XPM...")
+        context.log("[DebtorFollowUp] Fetching overdue invoices from XPM...")
 
         overdue_days = int(self.get_plugin_setting("overdue_threshold_days", "14"))
         escalate_days = int(self.get_plugin_setting("escalate_days", "60"))
         max_followups = int(self.get_plugin_setting("max_follow_ups", "3"))
         confidence = float(self.get_plugin_setting("confidence_threshold", "0.7"))
 
-        # ── Fetch overdue clients ─────────────────────────────────────────────
+        # ── Fetch overdue invoices from XPM (accurate debtor data) ──────────────────────────────
         try:
-            clients = context.gateway.xpm.list_clients(search="", limit=200)
+            invoices = context.gateway.xpm.list_all_invoices(status="Approved")
         except Exception as e:
-            result.summary = f"XPM client fetch failed: {e}"
+            result.summary = f"XPM invoice fetch failed: {e}"
             return result
+
+        # Group invoices by client, summing outstanding amounts and tracking max days overdue
+        today = date.today()
+        client_debts: dict = {}
+        for inv in invoices:
+            amount = float(inv.get("AmountDue") or inv.get("amount_due") or 0)
+            if amount <= 0:
+                continue
+            cid    = str(inv.get("ClientId") or inv.get("client_id") or "")
+            cname  = inv.get("ClientName") or inv.get("client_name") or "Unknown"
+            cemail = inv.get("ClientEmail") or inv.get("client_email") or ""
+            due_str = inv.get("DueDate") or inv.get("due_date") or ""
+            try:
+                due_date = date.fromisoformat(due_str[:10])
+                days_ov = max(0, (today - due_date).days)
+            except Exception:
+                days_ov = 0
+            if cid not in client_debts:
+                client_debts[cid] = {"name": cname, "email": cemail,
+                                     "balance": 0.0, "days_overdue": 0}
+            client_debts[cid]["balance"] += amount
+            client_debts[cid]["days_overdue"] = max(client_debts[cid]["days_overdue"], days_ov)
+            if cemail and not client_debts[cid]["email"]:
+                client_debts[cid]["email"] = cemail
 
         drafted = 0
         escalated = 0
         skipped = 0
 
-        for client in clients:
-            client_name  = client.get("name", client.get("client_name", "Unknown"))
-            client_email = client.get("email", "")
-            balance      = float(client.get("outstanding_balance",
-                                            client.get("balance", 0)) or 0)
-            days_overdue = int(client.get("days_overdue", 0) or 0)
+        for cid, client in client_debts.items():
+            client_name  = client["name"]
+            client_email = client["email"]
+            balance      = client["balance"]
+            days_overdue = client["days_overdue"]
 
             if balance <= 0 or days_overdue < overdue_days:
                 continue

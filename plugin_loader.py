@@ -434,6 +434,11 @@ class PluginLoader:
             if now.isoweekday() not in business_days:
                 return False
 
+            # Check Australian public holidays (skip if disabled in settings)
+            if get_setting("skip_public_holidays", "1") == "1":
+                if self._is_australian_public_holiday(now.date()):
+                    return False
+
             start_hour = int(get_setting("business_hours_start", "8"))
             end_hour = int(get_setting("business_hours_end", "18"))
             if not (start_hour <= now.hour < end_hour):
@@ -442,6 +447,70 @@ class PluginLoader:
             return True
         except Exception:
             return True  # on error, allow execution
+
+    @staticmethod
+    def _is_australian_public_holiday(check_date) -> bool:
+        """
+        Returns True if check_date is an Australian national or Victorian public holiday.
+        Covers: New Year's Day, Australia Day, Good Friday, Easter Saturday/Monday,
+        ANZAC Day, King's Birthday (VIC), AFL Grand Final Friday (VIC),
+        Melbourne Cup (VIC), Christmas Day, Boxing Day.
+        State can be overridden via settings key 'public_holiday_state' (default: VIC).
+        """
+        from datetime import date, timedelta
+        y = check_date.year
+        state = get_setting("public_holiday_state", "VIC").upper()
+
+        # ── Fixed national holidays ───────────────────────────────────────────
+        fixed = [
+            date(y, 1, 1),   # New Year's Day
+            date(y, 1, 26),  # Australia Day (observed)
+            date(y, 4, 25),  # ANZAC Day
+            date(y, 12, 25), # Christmas Day
+            date(y, 12, 26), # Boxing Day
+        ]
+        # Substitute rule: if fixed holiday falls on weekend, observed on Monday
+        observed = set()
+        for h in fixed:
+            if h.weekday() == 5:   # Saturday → Monday
+                observed.add(h + timedelta(days=2))
+            elif h.weekday() == 6: # Sunday → Monday
+                observed.add(h + timedelta(days=1))
+            else:
+                observed.add(h)
+
+        # ── Easter (Good Friday, Easter Saturday, Easter Monday) ──────────────
+        # Gauss algorithm for Easter Sunday
+        a = y % 19
+        b, c = divmod(y, 100)
+        d, e = divmod(b, 4)
+        f = (b + 8) // 25
+        g = (b - f + 1) // 3
+        h = (19 * a + b - d - g + 15) % 30
+        i, k = divmod(c, 4)
+        l = (32 + 2 * e + 2 * i - h - k) % 7
+        m = (a + 11 * h + 22 * l) // 451
+        month = (h + l - 7 * m + 114) // 31
+        day   = ((h + l - 7 * m + 114) % 31) + 1
+        easter_sunday = date(y, month, day)
+        observed.add(easter_sunday - timedelta(days=2))  # Good Friday
+        observed.add(easter_sunday - timedelta(days=1))  # Easter Saturday
+        observed.add(easter_sunday + timedelta(days=1))  # Easter Monday
+
+        # ── Victorian-specific holidays ───────────────────────────────────────
+        if state == "VIC":
+            # King's Birthday: 2nd Monday of June
+            first_monday_june = date(y, 6, 1)
+            while first_monday_june.weekday() != 0:
+                first_monday_june += timedelta(days=1)
+            observed.add(first_monday_june + timedelta(weeks=1))
+            # Melbourne Cup: 1st Tuesday of November
+            first_tue_nov = date(y, 11, 1)
+            while first_tue_nov.weekday() != 1:
+                first_tue_nov += timedelta(days=1)
+            observed.add(first_tue_nov)
+
+        return check_date in observed
 
     def _scheduler_loop(self):
         _outside_hours_logged = False

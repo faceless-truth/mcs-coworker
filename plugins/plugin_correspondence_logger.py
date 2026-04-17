@@ -51,6 +51,7 @@ def _ensure_correspondence_table():
             type            TEXT DEFAULT 'email',
             client_name     TEXT,
             client_email    TEXT,
+            xpm_client_id   TEXT,
             subject         TEXT,
             description     TEXT,
             status          TEXT DEFAULT 'logged',
@@ -84,15 +85,40 @@ def log_correspondence(direction: str, client_name: str = "",
                        description: str = "", type_: str = "email",
                        status: str = "logged", tracking_number: str = "",
                        source_plugin: str = "", message_id: str = "",
-                       notes: str = ""):
-    """Add an entry to the correspondence log."""
+                       notes: str = "", xpm_client_id: str = ""):
+    """
+    Add an entry to the correspondence log.
+    xpm_client_id: XPM client UUID, resolved from XPM by email/name if not provided.
+    """
+    # Auto-resolve XPM client ID if not provided but email or name is known
+    if not xpm_client_id and (client_email or client_name):
+        try:
+            from gateway_client import XPMClient
+            xpm = XPMClient()
+            if xpm.is_available():
+                if client_email:
+                    client = xpm.get_client_by_email(client_email)
+                    if client:
+                        xpm_client_id = str(client.get("ClientId") or client.get("client_id") or "")
+                if not xpm_client_id and client_name:
+                    client = xpm.get_client_by_name(client_name)
+                    if client:
+                        xpm_client_id = str(client.get("ClientId") or client.get("client_id") or "")
+        except Exception:
+            pass
+    # Migrate schema if xpm_client_id column doesn't exist yet (upgrade path)
     conn = get_db()
+    try:
+        conn.execute("ALTER TABLE correspondence_log ADD COLUMN xpm_client_id TEXT")
+        conn.commit()
+    except Exception:
+        pass  # column already exists
     conn.execute(
         """INSERT INTO correspondence_log
-           (direction, type, client_name, client_email, subject,
+           (direction, type, client_name, client_email, xpm_client_id, subject,
             description, status, tracking_number, source_plugin, message_id, notes)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (direction, type_, client_name, client_email, subject,
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (direction, type_, client_name, client_email, xpm_client_id, subject,
          description, status, tracking_number, source_plugin, message_id, notes),
     )
     conn.commit()

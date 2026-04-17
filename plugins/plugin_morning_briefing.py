@@ -60,6 +60,9 @@ class MorningBriefingPlugin(AgentPlugin):
         "max_jobs_shown":        "10",
         "include_inbox_summary": "1",
         "include_memory_context":"1",
+        # Suppress the briefing on genuinely quiet days to avoid noise
+        "suppress_if_quiet":     "1",     # 1 = skip if nothing actionable
+        "quiet_threshold":       "3",     # min actionable items to send
     }
 
     def __init__(self):
@@ -105,11 +108,38 @@ class MorningBriefingPlugin(AgentPlugin):
         if self.get_plugin_setting("include_memory_context", "1") == "1":
             memory_section = self._gather_memory_context(context, today_str)
 
-        # ── 4. Synthesise with Claude Sonnet ──────────────────────────────────
+        # ── 4. Synthesise with Claude Sonnet ─────────────────────────────────────────────────────────────────────────────
         briefing_text = self._synthesise_briefing(
             context, today_str, xpm_section, inbox_section, memory_section)
 
-        # ── 5. Deliver ────────────────────────────────────────────────────────
+        # ── 4b. Quiet-day suppression ─────────────────────────────────────────────────────────────────────────────
+        if self.get_plugin_setting("suppress_if_quiet", "1") == "1":
+            quiet_threshold = int(self.get_plugin_setting("quiet_threshold", "3"))
+            # Count actionable items: pending approvals + open ASIC + overdue jobs
+            actionable = 0
+            try:
+                if context.approval_queue:
+                    actionable += context.approval_queue.count_pending()
+            except Exception:
+                pass
+            try:
+                from plugins.plugin_asic_returns import get_asic_returns
+                actionable += len([r for r in get_asic_returns(limit=100)
+                                   if r.get("status") not in ("completed", "cancelled")])
+            except Exception:
+                pass
+            # Count overdue jobs from XPM section text as a rough proxy
+            if xpm_section:
+                actionable += xpm_section.lower().count("overdue")
+                actionable += xpm_section.lower().count("due today")
+            if actionable < quiet_threshold:
+                self._last_run_date = today_str  # mark as run so we don't retry
+                result.summary = (f"Morning briefing suppressed — only {actionable} actionable "
+                                  f"items (threshold: {quiet_threshold}). Quiet day.")
+                context.log(f"[MorningBriefing] Quiet day suppression: {actionable} items < {quiet_threshold}.")
+                return result
+
+        # ── 5. Deliver ─────────────────────────────────────────────────────────────────────────────
         delivered = []
 
         if self.get_plugin_setting("send_to_teams", "1") == "1":

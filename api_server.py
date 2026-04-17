@@ -264,7 +264,9 @@ def list_approvals():
 def approve_action(action_id):
     if _approval_queue is None:
         return err("Approval queue not initialised", 503)
-    _approval_queue.approve(action_id)
+    body = request.get_json(silent=True) or {}
+    reviewer_note = body.get("reviewer_note", "")
+    _approval_queue.approve(int(action_id), reviewer_note=reviewer_note)
     return ok({"action_id": action_id, "approved": True})
 
 
@@ -272,8 +274,25 @@ def approve_action(action_id):
 def reject_action(action_id):
     if _approval_queue is None:
         return err("Approval queue not initialised", 503)
-    _approval_queue.reject(action_id)
+    body = request.get_json(silent=True) or {}
+    reviewer_note = body.get("reviewer_note", "")
+    _approval_queue.reject(int(action_id), reviewer_note=reviewer_note)
     return ok({"action_id": action_id, "rejected": True})
+
+
+@app.route("/api/approvals/<action_id>/edit", methods=["POST"])
+def edit_approval(action_id):
+    """Edit the payload of a pending action before approving (edit-before-approve)."""
+    if _approval_queue is None:
+        return err("Approval queue not initialised", 503)
+    body = request.get_json(silent=True) or {}
+    updated_payload = body.get("payload")
+    if updated_payload is None:
+        return err("'payload' field is required")
+    success = _approval_queue.edit_payload(int(action_id), updated_payload)
+    if not success:
+        return err("Action not found or not pending", 404)
+    return ok({"action_id": action_id, "updated": True})
 
 
 # ── Memory ─────────────────────────────────────────────────────────────────────
@@ -365,6 +384,7 @@ def get_settings():
     s = get_all_settings()
     # Mask sensitive keys
     for key in ("anthropic_api_key", "fusesign_api_key", "teams_webhook_url",
+                "statementhub_api_key",
                 "xero_client_secret", "xero_access_token", "xero_refresh_token"):
         if s.get(key):
             s[key] = s[key][:4] + "••••••••••••••••••••"
@@ -388,10 +408,12 @@ def save_settings():
     safe_keys = {
         "anthropic_api_key", "outlook_email",
         "fusesign_api_key", "teams_webhook_url",
+        "statementhub_api_key", "statementhub_base_url",
         "confidence_threshold", "heartbeat_interval_seconds",
         "draft_mode", "auto_update_enabled",
         "fast_model", "reasoning_model",
         "monthly_ai_budget_aud",
+        "skip_public_holidays", "public_holiday_state",
         # Xero OAuth credentials
         "xero_client_id", "xero_client_secret",
     }
@@ -667,9 +689,81 @@ def _schedule_label(lp) -> str:
 
 def _build_chat_system_prompt() -> str:
     style = config.get_style_preferences() if hasattr(config, "get_style_preferences") else ""
-    return f"""You are an autonomous AI automation engineer built into MC & S CoWorker.
-You help build and manage automation plugins for an accounting firm.
 
+    # Inject live practice context so the assistant can answer operational questions
+    context_lines = []
+    try:
+        pending_count = _approval_queue.count_pending() if _approval_queue else 0
+        context_lines.append(f"Pending approvals in queue: {pending_count}")
+        if _approval_queue and pending_count > 0:
+            pending_items = _approval_queue.list_pending(limit=5)
+            for item in pending_items:
+                desc = item.get("description", item.get("action_type", "?"))
+                plugin = item.get("plugin_id", "?")
+                context_lines.append(f"  - [{plugin}] {desc[:80]}")
+    except Exception:
+        pass
+    try:
+        from plugins.plugin_asic_returns import get_asic_returns
+        asic_open = [r for r in get_asic_returns(limit=200)
+                     if r.get("status") not in ("completed", "cancelled")]
+        context_lines.append(f"Open ASIC annual returns: {len(asic_open)}")
+        awaiting_solvency = [r for r in asic_open if r.get("status") == "awaiting_solvency"]
+        overdue_asic = [r for r in asic_open if r.get("status") == "overdue"]
+        if awaiting_solvency:
+            context_lines.append(f"  Awaiting solvency resolution: {len(awaiting_solvency)} "
+                                  f"({', '.join(r.get('company_name','?') for r in awaiting_solvency[:3])})")
+        if overdue_asic:
+            context_lines.append(f"  Overdue ASIC returns: {len(overdue_asic)} "
+                                  f"({', '.join(r.get('company_name','?') for r in overdue_asic[:3])})")
+        elif asic_open:
+            names = ", ".join(r.get("company_name", "?") for r in asic_open[:5])
+            context_lines.append(f"  Companies: {names}{'...' if len(asic_open) > 5 else ''}")
+    except Exception:
+        pass
+    try:
+        lessons = get_active_lessons()
+        if lessons:
+            lesson_text = "; ".join(l["lesson"] for l in lessons[:10])
+            context_lines.append(f"Learned preferences: {lesson_text}")
+    except Exception:
+        pass
+    try:
+        recent = get_recent_activity(limit=10)
+        if recent:
+            activity_text = "; ".join(
+                f"{r.get('classification','?')}: {r.get('subject','?')[:40]}"
+                for r in recent
+            )
+            context_lines.append(f"Recent activity (last 10): {activity_text}")
+    except Exception:
+        pass
+    try:
+        # Overdue debtors summary from XPM invoices
+        from gateway_client import XPMClient
+        xpm = XPMClient()
+        if xpm.is_available():
+            summary = xpm.get_debtor_summary()
+            total = summary.get("total_outstanding", 0)
+            count = summary.get("invoice_count", 0)
+            over90 = summary.get("90_plus", 0)
+            context_lines.append(
+                f"Debtor summary: {count} outstanding invoices totalling ${total:,.0f} "
+                f"(${over90:,.0f} is 90+ days overdue)"
+            )
+    except Exception:
+        pass
+
+    practice_context = ("\n".join(context_lines)) if context_lines else ""
+    practice_name = get_setting("practice_name", "MC & S")
+
+    return f"""You are the AI assistant built into {practice_name} CoWorker, an intelligent automation platform for an Australian accounting firm.
+You can answer questions about the practice's current state, explain what plugins do, help build new automation, and advise on workflow improvements.
+
+CURRENT PRACTICE STATE
+{practice_context if practice_context else '(No live data available yet)'}
+
+PLUGIN DEVELOPMENT
 TIER 1 — Template Builder: for common email/auto-reply patterns
 TIER 2 — Custom Plugin Writer: full Python plugins using:
   - context.claude_fast / context.claude_reason (dual Claude models)
@@ -681,7 +775,66 @@ TIER 2 — Custom Plugin Writer: full Python plugins using:
   - context.approval_queue (confidence-based human review)
 
 Always produce working Python code. Use PluginResult(success=True/False, message="...").
-{f"Style preferences: {style}" if style else ""}"""
+{f'Style preferences: {style}' if style else ''}"""
+
+
+# ── ASIC Tracker ─────────────────────────────────────────────────────────────
+@app.route("/api/asic")
+def list_asic_returns():
+    """List all ASIC annual return records."""
+    try:
+        from plugins.plugin_asic_returns import get_asic_returns
+        status = request.args.get("status", None)
+        limit  = int(request.args.get("limit", 100))
+        rows = get_asic_returns(status=status, limit=limit)
+        return ok(rows)
+    except Exception as e:
+        return err(str(e))
+
+
+@app.route("/api/asic/<int:return_id>/mark-paid", methods=["POST"])
+def asic_mark_paid(return_id):
+    """Mark an ASIC return as paid and update status to 'completed' if solvency also signed."""
+    try:
+        from plugins.plugin_asic_returns import update_asic_return, get_asic_returns
+        rows = get_asic_returns(limit=1000)
+        record = next((r for r in rows if r["id"] == return_id), None)
+        if not record:
+            return err("ASIC return not found", 404)
+        new_status = "completed" if record.get("solvency_signed") else "awaiting_solvency"
+        update_asic_return(return_id, asic_paid=1, status=new_status)
+        return ok({"id": return_id, "asic_paid": True, "status": new_status})
+    except Exception as e:
+        return err(str(e))
+
+
+@app.route("/api/asic/<int:return_id>/mark-solvency-signed", methods=["POST"])
+def asic_mark_solvency_signed(return_id):
+    """Mark an ASIC return's solvency resolution as signed and update status."""
+    try:
+        from plugins.plugin_asic_returns import update_asic_return, get_asic_returns
+        rows = get_asic_returns(limit=1000)
+        record = next((r for r in rows if r["id"] == return_id), None)
+        if not record:
+            return err("ASIC return not found", 404)
+        new_status = "completed" if record.get("asic_paid") else "awaiting_payment"
+        update_asic_return(return_id, solvency_signed=1, status=new_status)
+        return ok({"id": return_id, "solvency_signed": True, "status": new_status})
+    except Exception as e:
+        return err(str(e))
+
+
+@app.route("/api/asic/<int:return_id>/notes", methods=["POST"])
+def asic_update_notes(return_id):
+    """Update the notes field on an ASIC return."""
+    try:
+        from plugins.plugin_asic_returns import update_asic_return
+        body = request.get_json(silent=True) or {}
+        notes = body.get("notes", "")
+        update_asic_return(return_id, notes=notes)
+        return ok({"id": return_id, "notes": notes})
+    except Exception as e:
+        return err(str(e))
 
 
 # ── Email Rules ───────────────────────────────────────────────────────────────

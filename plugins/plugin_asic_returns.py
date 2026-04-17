@@ -212,11 +212,9 @@ class ASICReturnPlugin(AgentPlugin):
 
     default_schedule = Schedule.every_minutes(5)
 
-    _processed_ids: set
     _download_dir: str
 
     def load(self, context: PluginContext) -> bool:
-        self._processed_ids = set()
         self._download_dir = str(
             Path.home() / ".mcs_email_automation" / "asic_downloads"
         )
@@ -349,7 +347,7 @@ class ASICReturnPlugin(AgentPlugin):
 
         for email in asic_emails:
             msg_id = email["id"]
-            if msg_id in self._processed_ids:
+            if _asic_email_already_processed(msg_id):
                 continue
 
             subject    = email.get("subject", "(No Subject)")
@@ -379,7 +377,7 @@ class ASICReturnPlugin(AgentPlugin):
                 if not asic_data:
                     log("    ↳ ⚠ Could not extract ASIC details — flagging for review.")
                     graph.flag_email(msg_id)
-                    self._processed_ids.add(msg_id)
+                    # (source_email_id stored in asic_returns table — no separate mark needed)
                     result.items_skipped += 1
                     continue
 
@@ -470,7 +468,7 @@ class ASICReturnPlugin(AgentPlugin):
                     except Exception as e:
                         log(f"    ↳ ⚠ Could not archive: {e}")
 
-                self._processed_ids.add(msg_id)
+                # (source_email_id stored in asic_returns table — no separate mark needed)
                 result.actions_taken += 1
 
             except Exception as e:

@@ -333,6 +333,11 @@ class ApprovalQueue:
 
     # ── Query ─────────────────────────────────────────────────────────────────
 
+    # Alias so API server can call either name
+    def list_pending(self) -> list[PendingAction]:
+        """Alias for get_pending() — used by the API server."""
+        return self.get_pending()
+
     def get_pending(self) -> list[PendingAction]:
         """Return all pending (not yet reviewed, not expired) actions."""
         self._expire_old_items()
@@ -346,6 +351,28 @@ class ApprovalQueue:
         ).fetchall()
         conn.close()
         return [self._row_to_action(r) for r in rows]
+
+    def edit_payload(self, action_id: int, updated_payload: dict) -> bool:
+        """
+        Update the payload of a pending action before approving (edit-before-approve).
+        Returns True on success, False if not found or not pending.
+        """
+        with self._lock:
+            conn = self._get_db()
+            row = conn.execute(
+                "SELECT id FROM approval_queue WHERE id = ? AND status = 'pending'",
+                (action_id,),
+            ).fetchone()
+            if not row:
+                conn.close()
+                return False
+            conn.execute(
+                "UPDATE approval_queue SET payload = ? WHERE id = ?",
+                (json.dumps(updated_payload), action_id),
+            )
+            conn.commit()
+            conn.close()
+        return True
 
     def get_all(
         self,
