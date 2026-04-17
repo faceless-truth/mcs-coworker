@@ -349,6 +349,27 @@ class NOAProcessorPlugin(AgentPlugin):
                     except Exception as e:
                         log(f"    ↳ ⚠ Could not archive: {e}")
 
+                # Step 6: Store outcome in semantic memory (Stream 2)
+                if context.memory and client_email:
+                    try:
+                        memory_text = (
+                            f"{client_name} NOA {tax_year}: outcome={outcome}, "
+                            f"amount={amount}, entity={entity_name}"
+                        )
+                        context.memory.store_client_interaction(
+                            content=memory_text,
+                            client_email=client_email,
+                            interaction_type="noa_outcome",
+                            extra_meta={
+                                "outcome": outcome,
+                                "amount": amount,
+                                "tax_year": tax_year,
+                                "entity_name": entity_name,
+                            },
+                        )
+                    except Exception:
+                        pass  # memory failure must never break the main workflow
+
                 self._processed_ids.add(msg_id)
                 result.actions_taken += 1
 

@@ -248,7 +248,7 @@ class ClientOutreachPlugin(AgentPlugin):
         except Exception:
             pass
 
-        # ── 5. Load memory/style preferences for personalisation ─────────────
+        # ── 5. Load memory/style preferences for personalisation ─────────
         from config import get_style_preferences, get_active_lessons
         style = get_style_preferences()
         lessons = get_active_lessons()
@@ -287,9 +287,25 @@ class ClientOutreachPlugin(AgentPlugin):
             )
 
             try:
+                # ── Enrich with semantic client history from MemoryStore ──────────
+                client_context = ""
+                if context.memory and contact_email:
+                    try:
+                        client_context = context.memory.get_client_context(
+                            client_email=contact_email,
+                            query=f"{reason} history for {item.get('entity_name', '')}",
+                            n_results=3,
+                        )
+                    except Exception:
+                        pass
+
+                enriched_memory = memory_instructions
+                if client_context:
+                    enriched_memory += f"\n{client_context}\n"
+
                 # Generate email body with Claude
                 body_html = self._generate_email_body(
-                    context.claude, item, memory_instructions
+                    context.claude, item, enriched_memory
                 )
 
                 # Generate subject line

@@ -116,6 +116,7 @@ class PluginContext:
     claude: Any = None        # anthropic.Anthropic client — legacy alias for claude_fast
     claude_fast: Any = None   # Haiku model client — fast, cheap tasks
     claude_reason: Any = None # Sonnet model client — complex reasoning & analysis
+    memory: Any = None        # MemoryStore class — semantic vector memory (Stream 2)
     log: Any = None           # callable: log(message: str)
     notify: Any = None        # callable: notify(subject, body, to=None)
     settings: dict = field(default_factory=dict)  # all app settings as dict

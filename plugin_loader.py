@@ -456,7 +456,7 @@ class PluginLoader:
                     lp.is_ready = False
         return new_ids
 
-    # ── Context factory ───────────────────────────────────────────────────────
+    # ── Context factory ────────────────────────────────────────────────────────────
 
     def _make_context(self, draft_mode: bool) -> PluginContext:
         from config import get_all_settings
@@ -471,11 +471,20 @@ class PluginLoader:
                 except Exception as e:
                     self._log(f"⚠ Notify failed: {e}")
 
+        # Lazy-load MemoryStore — gracefully degrades if chromadb not installed
+        memory = None
+        try:
+            from memory_store import MemoryStore
+            memory = MemoryStore
+        except Exception as e:
+            self._log(f"⚠ MemoryStore unavailable: {e}")
+
         return PluginContext(
             graph=self._graph,
             claude=self._claude,           # legacy alias — same as claude_fast
             claude_fast=self._claude_fast,
             claude_reason=self._claude_reason,
+            memory=memory,
             log=self._log,
             notify=notify,
             settings=get_all_settings(),
