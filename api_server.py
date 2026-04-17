@@ -30,6 +30,12 @@ from config import (
     get_claude_model_fast,
     get_claude_model_reasoning,
     update_claude_models,
+    get_rules, save_rule, delete_rule,
+    get_staff, save_staff, delete_staff,
+    get_links, save_link, delete_link,
+    get_active_lessons, add_lesson, delete_lesson, toggle_lesson,
+    get_style_preferences, save_style_preferences,
+    add_feedback_message, get_feedback_history, clear_feedback_history,
 )
 from plugin_loader import PluginLoader
 from approval_queue import ApprovalQueue
@@ -673,6 +679,123 @@ TIER 2 — Custom Plugin Writer: full Python plugins using:
 Always produce working Python code. Use PluginResult(success=True/False, message="...").
 {f"Style preferences: {style}" if style else ""}"""
 
+
+# ── Email Rules ───────────────────────────────────────────────────────────────
+@app.route("/api/rules")
+def list_rules():
+    return ok(get_rules())
+
+@app.route("/api/rules", methods=["POST"])
+def create_rule():
+    data = request.get_json(force=True)
+    save_rule(data)
+    return ok(get_rules())
+
+@app.route("/api/rules/<int:rule_id>", methods=["DELETE"])
+def remove_rule(rule_id):
+    delete_rule(rule_id)
+    return ok()
+
+# ── Staff ─────────────────────────────────────────────────────────────────────
+@app.route("/api/staff")
+def list_staff():
+    return ok(get_staff())
+
+@app.route("/api/staff", methods=["POST"])
+def create_staff():
+    data = request.get_json(force=True)
+    save_staff(data)
+    return ok(get_staff())
+
+@app.route("/api/staff/<int:staff_id>", methods=["DELETE"])
+def remove_staff(staff_id):
+    delete_staff(staff_id)
+    return ok()
+
+# ── Links & Forms ─────────────────────────────────────────────────────────────
+@app.route("/api/links")
+def list_links():
+    return ok(get_links())
+
+@app.route("/api/links", methods=["POST"])
+def create_link():
+    data = request.get_json(force=True)
+    save_link(data)
+    return ok(get_links())
+
+@app.route("/api/links/<int:link_id>", methods=["DELETE"])
+def remove_link(link_id):
+    delete_link(link_id)
+    return ok()
+
+# ── Plugin management extras ──────────────────────────────────────────────────
+@app.route("/api/plugins/<plugin_id>/disable", methods=["POST"])
+@require_loader
+def disable_plugin(plugin_id):
+    lp = _loader.get_plugin(plugin_id)
+    if not lp:
+        return err("Plugin not found", 404)
+    lp.enabled = False
+    from config import save_plugin_state
+    save_plugin_state(plugin_id, enabled=False)
+    return ok({"enabled": False})
+
+@app.route("/api/plugins/<plugin_id>", methods=["DELETE"])
+@require_loader
+def delete_plugin(plugin_id):
+    lp = _loader.get_plugin(plugin_id)
+    if not lp:
+        return err("Plugin not found", 404)
+    import os
+    try:
+        os.remove(lp.path)
+        _loader.unload_plugin(plugin_id)
+    except Exception as e:
+        return err(str(e))
+    return ok()
+
+# ── Lessons ───────────────────────────────────────────────────────────────────
+@app.route("/api/lessons")
+def list_lessons():
+    return ok(get_active_lessons())
+
+@app.route("/api/lessons", methods=["POST"])
+def create_lesson():
+    data = request.get_json(force=True)
+    add_lesson(data.get("lesson", ""), data.get("source", ""))
+    return ok(get_active_lessons())
+
+@app.route("/api/lessons/<int:lesson_id>", methods=["DELETE"])
+def remove_lesson(lesson_id):
+    delete_lesson(lesson_id)
+    return ok()
+
+@app.route("/api/lessons/<int:lesson_id>/toggle", methods=["POST"])
+def toggle_lesson_route(lesson_id):
+    data = request.get_json(force=True)
+    toggle_lesson(lesson_id, data.get("active", True))
+    return ok()
+
+# ── Style preferences ─────────────────────────────────────────────────────────
+@app.route("/api/style")
+def get_style():
+    return ok({"content": get_style_preferences()})
+
+@app.route("/api/style", methods=["POST"])
+def save_style():
+    data = request.get_json(force=True)
+    save_style_preferences(data.get("content", ""))
+    return ok()
+
+# ── Chat history ──────────────────────────────────────────────────────────────
+@app.route("/api/chat/history")
+def chat_history():
+    return ok(get_feedback_history(200))
+
+@app.route("/api/chat/history", methods=["DELETE"])
+def clear_chat_history():
+    clear_feedback_history()
+    return ok()
 
 def run_server(host="127.0.0.1", port=API_PORT, debug=False):
     """Start the Flask server in a background thread."""
