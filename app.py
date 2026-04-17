@@ -1122,6 +1122,7 @@ class App(ctk.CTk):
         pages = [
             ("dashboard", "  Dashboard"),
             ("plugins",   "  Plugins"),
+            ("approvals", "  Approvals"),
             ("rules",     "  Email Rules"),
             ("staff",     "  Staff & Notify"),
             ("settings",  "  Settings"),
@@ -1136,6 +1137,10 @@ class App(ctk.CTk):
                                 command=lambda k=key: self._show_page(k))
             btn.pack(pady=2, padx=6)
             self._nav_btns[key] = btn
+        # Badge label for pending approvals count
+        self._approvals_badge = ctk.CTkLabel(nav, text="", font=ctk.CTkFont(size=11),
+                                              text_color="#FF5252", anchor="w")
+        self._approvals_badge.pack(pady=(0, 4), padx=(70, 6))
 
     def _build_content_area(self):
         self.content = ctk.CTkFrame(self, fg_color=BG_LIGHT, corner_radius=0)
@@ -1143,6 +1148,7 @@ class App(ctk.CTk):
         self._pages = {}
         self._build_dashboard()
         self._build_plugins_page()
+        self._build_approvals_page()
         self._build_rules_page()
         self._build_staff_page()
         self._build_settings_page()
@@ -1222,6 +1228,207 @@ class App(ctk.CTk):
             ))
         except Exception:
             pass
+
+    # ────────────────────────────────────────────────────────────────────────
+    # Approvals page
+    # ────────────────────────────────────────────────────────────────────────
+
+    def _build_approvals_page(self):
+        page = ctk.CTkFrame(self.content, fg_color=BG_LIGHT, corner_radius=0)
+        self._pages["approvals"] = page
+
+        top = ctk.CTkFrame(page, fg_color=BG_LIGHT)
+        top.pack(fill="x", padx=28, pady=(24, 0))
+        ctk.CTkLabel(top, text="Approvals",
+                     font=ctk.CTkFont(size=22, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(side="left")
+        ctk.CTkButton(top, text="Refresh", width=100, height=32,
+                      fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
+                      command=self._refresh_approvals).pack(side="right")
+
+        ctk.CTkLabel(page,
+                     text="Actions queued for your review. Approve to execute, reject to discard.",
+                     text_color=TEXT_MUTED, font=ctk.CTkFont(size=13)).pack(
+                         anchor="w", padx=28, pady=(4, 4))
+
+        # Summary bar
+        self._approvals_summary_label = ctk.CTkLabel(
+            page, text="", font=ctk.CTkFont(size=12), text_color=TEXT_MUTED)
+        self._approvals_summary_label.pack(anchor="w", padx=28, pady=(0, 8))
+
+        # Filter row
+        filter_row = ctk.CTkFrame(page, fg_color=BG_LIGHT)
+        filter_row.pack(fill="x", padx=28, pady=(0, 8))
+        ctk.CTkLabel(filter_row, text="Show:",
+                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED).pack(side="left")
+        self._approvals_filter = ctk.StringVar(value="pending")
+        for label, val in [("Pending", "pending"), ("All", "all"),
+                           ("Approved", "approved"), ("Rejected", "rejected")]:
+            ctk.CTkRadioButton(filter_row, text=label, variable=self._approvals_filter,
+                               value=val, font=ctk.CTkFont(size=12),
+                               command=self._refresh_approvals).pack(
+                                   side="left", padx=8)
+
+        self._approvals_scroll = ctk.CTkScrollableFrame(page, fg_color=BG_LIGHT)
+        self._approvals_scroll.pack(fill="both", expand=True, padx=28, pady=(0, 20))
+
+        self.after(600, self._refresh_approvals)
+        # Poll for new pending items every 30 seconds
+        self._schedule_approvals_poll()
+
+    def _schedule_approvals_poll(self):
+        """Refresh the approvals badge every 30 seconds."""
+        self._refresh_approvals_badge()
+        self.after(30000, self._schedule_approvals_poll)
+
+    def _refresh_approvals_badge(self):
+        """Update the sidebar badge with pending count."""
+        try:
+            from approval_queue import get_approval_queue
+            count = get_approval_queue().count_pending()
+            if count > 0:
+                self._approvals_badge.configure(text=f"  {count} pending")
+            else:
+                self._approvals_badge.configure(text="")
+        except Exception:
+            pass
+
+    def _refresh_approvals(self):
+        """Rebuild the approvals list from the queue."""
+        for w in self._approvals_scroll.winfo_children():
+            w.destroy()
+
+        try:
+            from approval_queue import get_approval_queue, ActionStatus
+            aq = get_approval_queue()
+            summary = aq.summary()
+            self._approvals_summary_label.configure(
+                text=f"Pending: {summary.get('pending', 0)}  •  "
+                     f"Auto-approved: {summary.get('auto_approved', 0)}  •  "
+                     f"Approved: {summary.get('approved', 0)}  •  "
+                     f"Rejected: {summary.get('rejected', 0)}  •  "
+                     f"Threshold: {summary.get('threshold', 0.75):.0%}")
+
+            filt = self._approvals_filter.get()
+            if filt == "pending":
+                items = aq.get_pending()
+            else:
+                all_items = aq.get_all(limit=100)
+                if filt == "all":
+                    items = all_items
+                else:
+                    items = [i for i in all_items if i.status.value == filt]
+
+            if not items:
+                empty = ctk.CTkFrame(self._approvals_scroll, fg_color=CARD_BG,
+                                     corner_radius=12)
+                empty.pack(fill="x", pady=20)
+                msg = "No pending approvals." if filt == "pending" else "No items found."
+                ctk.CTkLabel(empty, text=msg,
+                             font=ctk.CTkFont(size=15, weight="bold"),
+                             text_color=TEXT_PRIMARY).pack(pady=(30, 4))
+                ctk.CTkLabel(empty,
+                             text="Actions above the confidence threshold execute automatically.",
+                             font=ctk.CTkFont(size=12),
+                             text_color=TEXT_MUTED).pack(pady=(0, 30))
+            else:
+                for item in items:
+                    self._approval_card(self._approvals_scroll, item, aq)
+
+            self._refresh_approvals_badge()
+        except Exception as e:
+            ctk.CTkLabel(self._approvals_scroll,
+                         text=f"Error loading approvals: {e}",
+                         text_color="#C62828",
+                         font=ctk.CTkFont(size=12)).pack(anchor="w", pady=8)
+
+    def _approval_card(self, parent, item, aq):
+        """Render a single approval queue item as a card."""
+        from approval_queue import ActionStatus
+        status_colors = {
+            ActionStatus.PENDING: ACCENT_AMBER,
+            ActionStatus.APPROVED: ACCENT_GREEN,
+            ActionStatus.AUTO_APPROVED: ACCENT_GREEN,
+            ActionStatus.REJECTED: "#C62828",
+            ActionStatus.EXPIRED: TEXT_MUTED,
+        }
+        card = ctk.CTkFrame(parent, fg_color=CARD_BG, corner_radius=12)
+        card.pack(fill="x", pady=6)
+
+        # Header row
+        hdr = ctk.CTkFrame(card, fg_color="transparent")
+        hdr.pack(fill="x", padx=16, pady=(12, 4))
+        ctk.CTkLabel(hdr, text=item.action_type.replace("_", " ").title(),
+                     font=ctk.CTkFont(size=14, weight="bold"),
+                     text_color=TEXT_PRIMARY).pack(side="left")
+        status_text = item.status.value.replace("_", " ").upper()
+        ctk.CTkLabel(hdr, text=status_text,
+                     font=ctk.CTkFont(size=11, weight="bold"),
+                     text_color=status_colors.get(item.status, TEXT_MUTED)).pack(
+                         side="right")
+
+        # Details
+        details = [
+            ("Plugin", item.plugin_id),
+            ("Recipient", item.recipient or "—"),
+            ("Subject", item.subject or "—"),
+            ("Confidence", f"{item.confidence:.0%}" if item.confidence else "—"),
+            ("Queued", item.timestamp),
+        ]
+        for label, val in details:
+            row = ctk.CTkFrame(card, fg_color="transparent")
+            row.pack(fill="x", padx=16, pady=1)
+            ctk.CTkLabel(row, text=f"{label}:",
+                         font=ctk.CTkFont(size=11, weight="bold"),
+                         text_color=TEXT_MUTED, width=90, anchor="w").pack(side="left")
+            ctk.CTkLabel(row, text=str(val)[:120],
+                         font=ctk.CTkFont(size=11),
+                         text_color=TEXT_PRIMARY, anchor="w").pack(side="left")
+
+        # Body preview
+        if item.body_preview:
+            ctk.CTkLabel(card, text="Preview:",
+                         font=ctk.CTkFont(size=11, weight="bold"),
+                         text_color=TEXT_MUTED, anchor="w").pack(
+                             anchor="w", padx=16, pady=(6, 2))
+            preview_box = ctk.CTkTextbox(card, height=60,
+                                         font=ctk.CTkFont(size=11),
+                                         fg_color="#1A1A2E", text_color="#E0E0E0",
+                                         corner_radius=6)
+            preview_box.pack(fill="x", padx=16, pady=(0, 6))
+            preview_box.insert("1.0", item.body_preview[:500])
+            preview_box.configure(state="disabled")
+
+        # Action buttons (only for PENDING items)
+        from approval_queue import ActionStatus
+        if item.status == ActionStatus.PENDING:
+            btn_row = ctk.CTkFrame(card, fg_color="transparent")
+            btn_row.pack(fill="x", padx=16, pady=(4, 12))
+
+            def _approve(item_id=item.id):
+                try:
+                    aq.approve(item_id, approved_by="user")
+                    self._log(f"[Approvals] Approved action #{item_id}")
+                    self.after(100, self._refresh_approvals)
+                except Exception as e:
+                    self._log(f"[Approvals] Error approving #{item_id}: {e}")
+
+            def _reject(item_id=item.id):
+                try:
+                    aq.reject(item_id, approved_by="user")
+                    self._log(f"[Approvals] Rejected action #{item_id}")
+                    self.after(100, self._refresh_approvals)
+                except Exception as e:
+                    self._log(f"[Approvals] Error rejecting #{item_id}: {e}")
+
+            ctk.CTkButton(btn_row, text="Approve", width=100, height=32,
+                          fg_color=ACCENT_GREEN, hover_color="#1B5E20",
+                          command=_approve).pack(side="left", padx=(0, 8))
+            ctk.CTkButton(btn_row, text="Reject", width=100, height=32,
+                          fg_color="#C62828", hover_color="#7F0000",
+                          command=_reject).pack(side="left")
+        else:
+            ctk.CTkLabel(card, text="", height=8).pack()
 
     # ────────────────────────────────────────────────────────────────────────
     # Email Rules page
@@ -1371,20 +1578,93 @@ class App(ctk.CTk):
         page = ctk.CTkFrame(self.content, fg_color=BG_LIGHT, corner_radius=0)
         self._pages["activity"] = page
 
-        top = ctk.CTkFrame(page, fg_color=BG_LIGHT)
-        top.pack(fill="x", padx=28, pady=(24, 0))
-        ctk.CTkLabel(top, text="Activity Log",
+        ctk.CTkLabel(page, text="Activity Log",
                      font=ctk.CTkFont(size=22, weight="bold"),
-                     text_color=TEXT_PRIMARY).pack(side="left")
-        ctk.CTkButton(top, text="Refresh", width=100, height=32,
+                     text_color=TEXT_PRIMARY).pack(anchor="w", padx=28, pady=(24, 8))
+
+        # Sub-tab bar
+        tab_bar = ctk.CTkFrame(page, fg_color=BG_LIGHT)
+        tab_bar.pack(fill="x", padx=28, pady=(0, 8))
+        self._activity_sub_panels = {}
+        self._activity_sub_btns = {}
+
+        def _show_sub(key):
+            for k, p in self._activity_sub_panels.items():
+                p.pack_forget()
+            self._activity_sub_panels[key].pack(fill="both", expand=True,
+                                                 padx=28, pady=(0, 20))
+            for k, b in self._activity_sub_btns.items():
+                b.configure(fg_color=BRAND_BLUE if k == key else "transparent")
+
+        for key, label in [("email", "Email Activity"),
+                           ("memory", "Memory Browser"),
+                           ("events", "Event Log")]:
+            btn = ctk.CTkButton(tab_bar, text=label, width=140, height=32,
+                                fg_color=BRAND_BLUE if key == "email" else "transparent",
+                                hover_color="#1565C0", text_color="white",
+                                font=ctk.CTkFont(size=12),
+                                command=lambda k=key: _show_sub(k))
+            btn.pack(side="left", padx=(0, 6))
+            self._activity_sub_btns[key] = btn
+
+        # ── Email Activity sub-panel ──
+        email_panel = ctk.CTkFrame(page, fg_color=BG_LIGHT)
+        self._activity_sub_panels["email"] = email_panel
+        top = ctk.CTkFrame(email_panel, fg_color=BG_LIGHT)
+        top.pack(fill="x", pady=(0, 6))
+        ctk.CTkButton(top, text="Refresh", width=100, height=30,
                       fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
                       command=self._refresh_activity).pack(side="right")
-
-        self.activity_box = ctk.CTkTextbox(page,
+        self.activity_box = ctk.CTkTextbox(email_panel,
                                            font=ctk.CTkFont(family="Courier", size=12),
-                                           fg_color=CARD_BG, text_color=TEXT_PRIMARY, corner_radius=8)
-        self.activity_box.pack(fill="both", expand=True, padx=28, pady=(12, 20))
+                                           fg_color=CARD_BG, text_color=TEXT_PRIMARY,
+                                           corner_radius=8)
+        self.activity_box.pack(fill="both", expand=True)
+
+        # ── Memory Browser sub-panel ──
+        mem_panel = ctk.CTkFrame(page, fg_color=BG_LIGHT)
+        self._activity_sub_panels["memory"] = mem_panel
+        mem_top = ctk.CTkFrame(mem_panel, fg_color=BG_LIGHT)
+        mem_top.pack(fill="x", pady=(0, 6))
+        self._mem_search_entry = ctk.CTkEntry(mem_top, placeholder_text="Search memories...",
+                                              height=32, font=ctk.CTkFont(size=12))
+        self._mem_search_entry.pack(side="left", fill="x", expand=True, padx=(0, 8))
+        ctk.CTkButton(mem_top, text="Search", width=90, height=32,
+                      fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
+                      command=self._search_memory).pack(side="left", padx=(0, 6))
+        ctk.CTkButton(mem_top, text="Show All", width=90, height=32,
+                      fg_color="transparent", hover_color="#E3F2FD",
+                      text_color=BRAND_BLUE, border_width=1, border_color=BRAND_BLUE,
+                      command=self._show_all_memories).pack(side="left")
+        self._mem_results_box = ctk.CTkTextbox(mem_panel,
+                                               font=ctk.CTkFont(family="Courier", size=11),
+                                               fg_color=CARD_BG, text_color=TEXT_PRIMARY,
+                                               corner_radius=8)
+        self._mem_results_box.pack(fill="both", expand=True)
+        self._mem_results_box.insert("1.0", "Enter a search term above to browse semantic memory.\n")
+        self._mem_results_box.configure(state="disabled")
+
+        # ── Event Log sub-panel ──
+        evt_panel = ctk.CTkFrame(page, fg_color=BG_LIGHT)
+        self._activity_sub_panels["events"] = evt_panel
+        evt_top = ctk.CTkFrame(evt_panel, fg_color=BG_LIGHT)
+        evt_top.pack(fill="x", pady=(0, 6))
+        ctk.CTkButton(evt_top, text="Refresh", width=100, height=30,
+                      fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
+                      command=self._refresh_event_log).pack(side="right")
+        ctk.CTkButton(evt_top, text="Clear", width=80, height=30,
+                      fg_color="#C62828", hover_color="#7F0000",
+                      command=self._clear_event_log).pack(side="right", padx=(0, 8))
+        self._event_log_box = ctk.CTkTextbox(evt_panel,
+                                             font=ctk.CTkFont(family="Courier", size=11),
+                                             fg_color="#1A1A2E", text_color="#E0E0E0",
+                                             corner_radius=8)
+        self._event_log_box.pack(fill="both", expand=True)
+
+        # Show email panel by default
+        email_panel.pack(fill="both", expand=True, padx=28, pady=(0, 20))
         self._refresh_activity()
+        self._refresh_event_log()
 
     def _refresh_activity(self):
         self.activity_box.configure(state="normal")
@@ -1403,6 +1683,102 @@ class App(ctk.CTk):
                     f"{str(r.get('action',''))[:14]:<16} "
                     f"{'Yes' if r.get('draft_created') else 'No'}\n")
         self.activity_box.configure(state="disabled")
+
+    def _search_memory(self):
+        query = self._mem_search_entry.get().strip()
+        if not query:
+            return
+        self._mem_results_box.configure(state="normal")
+        self._mem_results_box.delete("1.0", "end")
+        self._mem_results_box.insert("1.0", f"Searching for: {query}...\n")
+        self._mem_results_box.configure(state="disabled")
+        def _do_search():
+            try:
+                from memory_store import MemoryStore
+                results = MemoryStore.search(query, n_results=20)
+                lines = [f"Found {len(results)} result(s) for '{query}':\n", "-" * 80 + "\n"]
+                for i, r in enumerate(results, 1):
+                    meta = r.get("metadata", {})
+                    lines.append(f"[{i}] Collection: {meta.get('collection','?')}  "
+                                 f"Score: {r.get('distance', 0):.3f}\n")
+                    lines.append(f"    Client: {meta.get('client_name', meta.get('client','?'))}  "
+                                 f"Type: {meta.get('type','?')}  "
+                                 f"Date: {meta.get('date', meta.get('timestamp','?'))}\n")
+                    lines.append(f"    {str(r.get('document',''))[:200]}\n\n")
+                self.after(0, lambda: self._update_mem_box("".join(lines)))
+            except Exception as e:
+                self.after(0, lambda err=str(e): self._update_mem_box(f"Error: {err}\n"))
+        threading.Thread(target=_do_search, daemon=True).start()
+
+    def _show_all_memories(self):
+        self._mem_results_box.configure(state="normal")
+        self._mem_results_box.delete("1.0", "end")
+        self._mem_results_box.insert("1.0", "Loading all memories...\n")
+        self._mem_results_box.configure(state="disabled")
+        def _do_load():
+            try:
+                from memory_store import MemoryStore
+                import chromadb
+                from pathlib import Path
+                CHROMA_PATH = str(Path.home() / ".mcs_email_automation" / "chroma_db")
+                client = chromadb.PersistentClient(path=CHROMA_PATH)
+                lines = []
+                for col_name in ["client_interactions", "lessons", "documents", "general"]:
+                    try:
+                        col = client.get_collection(col_name)
+                        count = col.count()
+                        lines.append(f"\n=== {col_name} ({count} items) ===\n")
+                        if count > 0:
+                            data = col.get(limit=50, include=["documents", "metadatas"])
+                            for doc, meta in zip(data["documents"], data["metadatas"]):
+                                lines.append(f"  [{meta.get('type','?')}] "
+                                             f"{meta.get('client_name', meta.get('client','?'))} "
+                                             f"({meta.get('date', meta.get('timestamp','?'))})\n")
+                                lines.append(f"    {str(doc)[:150]}\n")
+                    except Exception:
+                        lines.append(f"\n=== {col_name} (empty or not created) ===\n")
+                self.after(0, lambda: self._update_mem_box("".join(lines) or "No memories stored yet.\n"))
+            except Exception as e:
+                self.after(0, lambda err=str(e): self._update_mem_box(f"Error: {err}\n"))
+        threading.Thread(target=_do_load, daemon=True).start()
+
+    def _update_mem_box(self, text):
+        self._mem_results_box.configure(state="normal")
+        self._mem_results_box.delete("1.0", "end")
+        self._mem_results_box.insert("1.0", text)
+        self._mem_results_box.configure(state="disabled")
+
+    def _refresh_event_log(self):
+        self._event_log_box.configure(state="normal")
+        self._event_log_box.delete("1.0", "end")
+        try:
+            from event_bus import EventBus
+            history = EventBus.get_history(limit=200)
+            if not history:
+                self._event_log_box.insert("1.0", "No events recorded yet.\n")
+            else:
+                self._event_log_box.insert("1.0",
+                    f"{'Timestamp':<22} {'Event Type':<35} {'Source':<25} Payload\n")
+                self._event_log_box.insert("end", "-" * 110 + "\n")
+                for evt in reversed(history):
+                    payload_str = str(evt.payload)[:60] if evt.payload else ""
+                    self._event_log_box.insert("end",
+                        f"{str(evt.timestamp)[:21]:<22} "
+                        f"{evt.event_type[:33]:<35} "
+                        f"{str(evt.source or '')[:23]:<25} "
+                        f"{payload_str}\n")
+        except Exception as e:
+            self._event_log_box.insert("1.0", f"Error loading events: {e}\n")
+        self._event_log_box.configure(state="disabled")
+
+    def _clear_event_log(self):
+        try:
+            from event_bus import EventBus
+            EventBus.clear_history()
+            self._refresh_event_log()
+            self._log("Event log cleared.")
+        except Exception as e:
+            self._log(f"Error clearing event log: {e}")
 
     # ────────────────────────────────────────────────────────────────────────
     # Plugins page
@@ -1945,6 +2321,42 @@ class App(ctk.CTk):
         self._settings_field(scroll, "anthropic_api_key", "Anthropic API Key",
                              get_setting("anthropic_api_key"), show="*")
 
+        # Model display row
+        model_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        model_row.pack(fill="x", pady=(4, 0))
+        fast_model = get_setting("claude_model_fast", "Not detected yet")
+        reason_model = get_setting("claude_model_reasoning", "Not detected yet")
+        ctk.CTkLabel(model_row, text="Fast model (Haiku):",
+                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED,
+                     width=200, anchor="w").pack(side="left")
+        self._fast_model_label = ctk.CTkLabel(model_row, text=fast_model,
+                     font=ctk.CTkFont(size=12), text_color=ACCENT_GREEN)
+        self._fast_model_label.pack(side="left")
+        model_row2 = ctk.CTkFrame(scroll, fg_color="transparent")
+        model_row2.pack(fill="x", pady=(2, 4))
+        ctk.CTkLabel(model_row2, text="Reasoning model (Sonnet):",
+                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED,
+                     width=200, anchor="w").pack(side="left")
+        self._reason_model_label = ctk.CTkLabel(model_row2, text=reason_model,
+                     font=ctk.CTkFont(size=12), text_color=ACCENT_GREEN)
+        self._reason_model_label.pack(side="left")
+
+        # Monthly token cap
+        self._settings_field(scroll, "monthly_token_cap", "Monthly Token Cap",
+                             get_setting("monthly_token_cap", "500000"))
+        ctk.CTkLabel(scroll,
+                     text="Maximum tokens per month across all plugins. Default: 500,000 (~$3-30 AUD/month).",
+                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED,
+                     wraplength=500, anchor="w", justify="left").pack(anchor="w", pady=(0, 4))
+
+        # Heartbeat interval
+        self._settings_field(scroll, "heartbeat_interval_seconds", "Heartbeat Interval (seconds)",
+                             get_setting("heartbeat_interval_seconds", "60"))
+        ctk.CTkLabel(scroll,
+                     text="How often the background heartbeat fires (minimum 30s). Default: 60s.",
+                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED,
+                     wraplength=500, anchor="w", justify="left").pack(anchor="w", pady=(0, 4))
+
         # ── Practice Details ──────────────────────────────────────────────
         self._settings_section(scroll, "Practice Details")
         self._settings_field(scroll, "practice_name", "Practice Name",
@@ -1992,6 +2404,104 @@ class App(ctk.CTk):
             ctk.CTkCheckBox(days_row, text=name, variable=var, width=50,
                             font=ctk.CTkFont(size=12)).pack(side="left", padx=4)
             self._bh_day_vars[num] = var
+
+        # ── Integrations: XPM ─────────────────────────────────────────────
+        self._settings_section(scroll, "XPM / Xero Practice Manager")
+        ctk.CTkLabel(scroll,
+                     text="Connect to XPM to enable WIP summaries, job lookups, client notes, and meeting prep.",
+                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED,
+                     wraplength=500, anchor="w", justify="left").pack(anchor="w", pady=(0, 6))
+        self._settings_field(scroll, "xpm_api_key", "XPM API Key",
+                             get_setting("xpm_api_key", ""), show="*")
+        self._settings_field(scroll, "xpm_base_url", "XPM Base URL",
+                             get_setting("xpm_base_url", "https://api.xero.com/practicemanager/3.0"))
+
+        # XPM connection test button
+        xpm_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        xpm_row.pack(fill="x", pady=(4, 8))
+        self._xpm_status_label = ctk.CTkLabel(xpm_row, text="",
+                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED)
+        ctk.CTkButton(xpm_row, text="Test XPM Connection", width=180, height=32,
+                      fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
+                      command=self._test_xpm_connection).pack(side="left")
+        self._xpm_status_label.pack(side="left", padx=12)
+
+        # ── Integrations: FuseSign ────────────────────────────────────────────
+        self._settings_section(scroll, "FuseSign")
+        ctk.CTkLabel(scroll,
+                     text="Connect to FuseSign to monitor signing bundles and generate engagement letters.",
+                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED,
+                     wraplength=500, anchor="w", justify="left").pack(anchor="w", pady=(0, 6))
+        self._settings_field(scroll, "fusesign_api_key", "FuseSign API Key",
+                             get_setting("fusesign_api_key", ""), show="*")
+        self._settings_field(scroll, "fusesign_base_url", "FuseSign Base URL",
+                             get_setting("fusesign_base_url", "https://api.fusesign.com/v1"))
+
+        fusesign_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        fusesign_row.pack(fill="x", pady=(4, 8))
+        self._fusesign_status_label = ctk.CTkLabel(fusesign_row, text="",
+                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED)
+        ctk.CTkButton(fusesign_row, text="Test FuseSign Connection", width=200, height=32,
+                      fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
+                      command=self._test_fusesign_connection).pack(side="left")
+        self._fusesign_status_label.pack(side="left", padx=12)
+
+        # ── Integrations: Microsoft Teams ─────────────────────────────────────
+        self._settings_section(scroll, "Microsoft Teams")
+        ctk.CTkLabel(scroll,
+                     text="Connect Teams to receive automated alerts and briefings in your team channel.",
+                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED,
+                     wraplength=500, anchor="w", justify="left").pack(anchor="w", pady=(0, 6))
+        self._settings_field(scroll, "teams_webhook_url", "Incoming Webhook URL",
+                             get_setting("teams_webhook_url", ""))
+        ctk.CTkLabel(scroll,
+                     text="Create an Incoming Webhook connector in your Teams channel and paste the URL above.",
+                     font=ctk.CTkFont(size=11), text_color=TEXT_MUTED,
+                     wraplength=500, anchor="w", justify="left").pack(anchor="w", pady=(0, 4))
+
+        teams_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        teams_row.pack(fill="x", pady=(4, 8))
+        self._teams_status_label = ctk.CTkLabel(teams_row, text="",
+                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED)
+        ctk.CTkButton(teams_row, text="Send Test Message", width=180, height=32,
+                      fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
+                      command=self._test_teams_connection).pack(side="left")
+        self._teams_status_label.pack(side="left", padx=12)
+
+        # ── Autonomy ──────────────────────────────────────────────────────────
+        self._settings_section(scroll, "Autonomy & Approval")
+        ctk.CTkLabel(scroll,
+                     text="Actions above the confidence threshold execute automatically. "
+                          "Below it, they queue for your approval in the Approvals tab.",
+                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED,
+                     wraplength=500, anchor="w", justify="left").pack(anchor="w", pady=(0, 6))
+
+        thresh_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        thresh_row.pack(fill="x", pady=4)
+        ctk.CTkLabel(thresh_row, text="Auto-approve threshold:",
+                     font=ctk.CTkFont(size=13), text_color=TEXT_PRIMARY,
+                     width=200, anchor="w").pack(side="left")
+        thresh_val = float(get_setting("approval_auto_threshold", "0.75"))
+        self._thresh_label = ctk.CTkLabel(thresh_row,
+                     text=f"{thresh_val:.0%}",
+                     font=ctk.CTkFont(size=13, weight="bold"),
+                     text_color=ACCENT_GREEN)
+        self._thresh_label.pack(side="right", padx=8)
+        self._thresh_slider = ctk.CTkSlider(thresh_row, from_=0.5, to=1.0,
+                     number_of_steps=10, width=200)
+        self._thresh_slider.set(thresh_val)
+        self._thresh_slider.configure(command=self._on_threshold_change)
+        self._thresh_slider.pack(side="left", padx=8)
+
+        expiry_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        expiry_row.pack(fill="x", pady=4)
+        ctk.CTkLabel(expiry_row, text="Pending action expiry (hours):",
+                     font=ctk.CTkFont(size=13), text_color=TEXT_PRIMARY,
+                     width=200, anchor="w").pack(side="left")
+        expiry_entry = ctk.CTkEntry(expiry_row, width=80, height=30)
+        expiry_entry.insert(0, get_setting("approval_expiry_hours", "48"))
+        expiry_entry.pack(side="left", padx=4)
+        self._settings_fields["approval_expiry_hours"] = ("entry", expiry_entry)
 
         # ── Email Signature ───────────────────────────────────────────────
         self._settings_section(scroll, "Email Signature")
@@ -2064,6 +2574,79 @@ class App(ctk.CTk):
         entry.pack(side="left", fill="x", expand=True)
         self._settings_fields[key] = ("entry", entry)
 
+    def _on_threshold_change(self, value):
+        """Live-update the threshold label as the slider moves."""
+        pct = f"{float(value):.0%}"
+        self._thresh_label.configure(text=pct)
+        set_setting("approval_auto_threshold", str(round(float(value), 2)))
+        from approval_queue import get_approval_queue
+        get_approval_queue().set_threshold(float(value))
+
+    def _test_xpm_connection(self):
+        """Save current XPM credentials then test the connection."""
+        api_key = self._settings_fields.get("xpm_api_key", (None, None))[1]
+        base_url = self._settings_fields.get("xpm_base_url", (None, None))[1]
+        if api_key:
+            set_setting("xpm_api_key", api_key.get().strip())
+        if base_url:
+            set_setting("xpm_base_url", base_url.get().strip())
+        self._xpm_status_label.configure(text="Testing...", text_color=TEXT_MUTED)
+        def _do_test():
+            try:
+                from gateway_client import XPMClient
+                client = XPMClient()
+                clients = client.list_clients(search="", limit=1)
+                self.after(0, lambda: self._xpm_status_label.configure(
+                    text=f"Connected ({len(clients)} client(s) found)",
+                    text_color=ACCENT_GREEN))
+            except Exception as e:
+                self.after(0, lambda err=str(e): self._xpm_status_label.configure(
+                    text=f"Failed: {err[:60]}", text_color="#C62828"))
+        threading.Thread(target=_do_test, daemon=True).start()
+
+    def _test_fusesign_connection(self):
+        """Save current FuseSign credentials then test the connection."""
+        api_key = self._settings_fields.get("fusesign_api_key", (None, None))[1]
+        base_url = self._settings_fields.get("fusesign_base_url", (None, None))[1]
+        if api_key:
+            set_setting("fusesign_api_key", api_key.get().strip())
+        if base_url:
+            set_setting("fusesign_base_url", base_url.get().strip())
+        self._fusesign_status_label.configure(text="Testing...", text_color=TEXT_MUTED)
+        def _do_test():
+            try:
+                from gateway_client import FuseSignClient
+                client = FuseSignClient()
+                envelopes = client.list_envelopes(status="pending", limit=1)
+                self.after(0, lambda: self._fusesign_status_label.configure(
+                    text=f"Connected ({len(envelopes)} pending envelope(s))",
+                    text_color=ACCENT_GREEN))
+            except Exception as e:
+                self.after(0, lambda err=str(e): self._fusesign_status_label.configure(
+                    text=f"Failed: {err[:60]}", text_color="#C62828"))
+        threading.Thread(target=_do_test, daemon=True).start()
+
+    def _test_teams_connection(self):
+        """Save current Teams webhook then send a test message."""
+        webhook = self._settings_fields.get("teams_webhook_url", (None, None))[1]
+        if webhook:
+            set_setting("teams_webhook_url", webhook.get().strip())
+        self._teams_status_label.configure(text="Sending...", text_color=TEXT_MUTED)
+        def _do_test():
+            try:
+                from gateway_client import TeamsClient
+                client = TeamsClient()
+                client.send_alert(
+                    title="CoWorker Test",
+                    message="Teams integration is working correctly.",
+                    color="00C853")
+                self.after(0, lambda: self._teams_status_label.configure(
+                    text="Test message sent successfully", text_color=ACCENT_GREEN))
+            except Exception as e:
+                self.after(0, lambda err=str(e): self._teams_status_label.configure(
+                    text=f"Failed: {err[:60]}", text_color="#C62828"))
+        threading.Thread(target=_do_test, daemon=True).start()
+
     def _save_all_settings(self):
         for key, (kind, widget) in self._settings_fields.items():
             if kind == "bool":
@@ -2075,8 +2658,21 @@ class App(ctk.CTk):
         active = [num for num, var in self._bh_day_vars.items() if var.get()]
         set_setting("business_days", ",".join(sorted(active)))
 
+        # Save threshold slider value
+        if hasattr(self, "_thresh_slider"):
+            set_setting("approval_auto_threshold",
+                        str(round(float(self._thresh_slider.get()), 2)))
+
         # Re-init Claude client with new API key
         self._loader.set_claude()
+
+        # Refresh model labels
+        if hasattr(self, "_fast_model_label"):
+            self._fast_model_label.configure(
+                text=get_setting("claude_model_fast", "Not detected yet"))
+        if hasattr(self, "_reason_model_label"):
+            self._reason_model_label.configure(
+                text=get_setting("claude_model_reasoning", "Not detected yet"))
 
         self._log("Settings saved.")
         messagebox.showinfo("Settings", "All settings saved successfully.")

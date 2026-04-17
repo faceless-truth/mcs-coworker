@@ -51,6 +51,9 @@ from approval_queue import (
 def make_queue() -> ApprovalQueue:
     """Return a new ApprovalQueue backed by a fresh temp DB."""
     db_path = Path(tempfile.mktemp(suffix="_aq_test.db"))
+    # Also point config to this DB so set_threshold/get_threshold work
+    cfg.DB_PATH = db_path
+    cfg.init_db()
     return ApprovalQueue(db_path=db_path)
 
 
