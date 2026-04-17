@@ -49,10 +49,19 @@ from config import get_setting, set_setting
 XERO_AUTH_URL   = "https://login.xero.com/identity/connect/authorize"
 XERO_TOKEN_URL  = "https://identity.xero.com/connect/token"
 XERO_REVOKE_URL = "https://identity.xero.com/connect/revocation"
-XERO_CONNECTIONS_URL = "https://api.xero.com/connections"
+XERO_CONNECTIONS_URL  = "https://api.xero.com/connections"
+XERO_USERINFO_URL     = "https://identity.xero.com/connect/userinfo"
+XPM_STAFF_LIST_URL    = "https://api.xero.com/practicemanager/3.0/staff.api/list"
 
 REDIRECT_URI    = "http://localhost:7842/oauth/callback"
-SCOPES          = "openid profile email accounting.transactions accounting.contacts offline_access practicemanager"
+# New granular Practice Manager scopes (replaced the old single 'practicemanager' scope)
+SCOPES          = (
+    "openid profile email offline_access "
+    "practicemanager.client.read practicemanager.client "
+    "practicemanager.job.read practicemanager.job "
+    "practicemanager.staff.read "
+    "practicemanager.time.read"
+)
 
 # ── Credentials helpers ───────────────────────────────────────────────────────
 
@@ -260,6 +269,99 @@ def fetch_tenant_id(access_token: str) -> str:
     set_setting("xero_tenant_id", tenant_id)
     return tenant_id
 
+# ── Staff identity (per-accountant scoping) ──────────────────────────────────
+
+def fetch_staff_identity(access_token: str, tenant_id: str) -> dict:
+    """
+    Identify the logged-in accountant's XPM staff record.
+
+    Steps:
+      1. Call Xero /connect/userinfo to get the authenticated user's email.
+      2. Call XPM /staff.api/list to find the matching staff member.
+      3. Store xero_staff_uuid and xero_staff_name in settings.
+
+    Returns a dict with keys: email, uuid, name.
+    Raises XeroOAuthError if the staff member cannot be matched.
+    """
+    # Step 1: Get the authenticated user's email from Xero userinfo
+    req = urllib.request.Request(
+        XERO_USERINFO_URL,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Accept":        "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            userinfo = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode() if e.fp else ""
+        raise XeroOAuthError(f"Failed to fetch userinfo ({e.code}): {error_body}") from e
+
+    user_email = (userinfo.get("email") or "").lower().strip()
+    if not user_email:
+        raise XeroOAuthError("Could not determine authenticated user email from Xero userinfo.")
+
+    # Step 2: Fetch all XPM staff and match by email
+    req2 = urllib.request.Request(
+        XPM_STAFF_LIST_URL,
+        headers={
+            "Authorization":  f"Bearer {access_token}",
+            "Xero-Tenant-Id": tenant_id,
+            "Accept":         "application/xml",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req2, timeout=30) as resp:
+            xml_bytes = resp.read()
+    except urllib.error.HTTPError as e:
+        error_body = e.read().decode() if e.fp else ""
+        raise XeroOAuthError(f"Failed to fetch XPM staff list ({e.code}): {error_body}") from e
+
+    # Parse XML — use simple string matching to avoid lxml dependency
+    import xml.etree.ElementTree as ET
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError as e:
+        raise XeroOAuthError(f"Failed to parse XPM staff XML: {e}") from e
+
+    # Find the staff member whose email matches the authenticated user
+    matched_uuid = ""
+    matched_name = ""
+    for staff_el in root.iter("Staff"):
+        email_el = staff_el.find("Email")
+        uuid_el  = staff_el.find("UUID")
+        name_el  = staff_el.find("Name")
+        if email_el is not None and email_el.text:
+            if email_el.text.lower().strip() == user_email:
+                matched_uuid = (uuid_el.text or "").strip() if uuid_el is not None else ""
+                matched_name = (name_el.text or "").strip() if name_el is not None else ""
+                break
+
+    if not matched_uuid:
+        # Soft failure: store the email so the user can see what was tried
+        set_setting("xero_staff_uuid", "")
+        set_setting("xero_staff_name", f"(not matched — {user_email})")
+        raise XeroOAuthError(
+            f"Could not find XPM staff record for email '{user_email}'. "
+            "Ensure the accountant's Xero login email matches their XPM staff email."
+        )
+
+    set_setting("xero_staff_uuid", matched_uuid)
+    set_setting("xero_staff_name", matched_name)
+    return {"email": user_email, "uuid": matched_uuid, "name": matched_name}
+
+
+def get_staff_uuid() -> str:
+    """Return the stored XPM staff UUID for the connected accountant."""
+    return get_setting("xero_staff_uuid", "")
+
+
+def get_staff_name() -> str:
+    """Return the stored XPM staff name for the connected accountant."""
+    return get_setting("xero_staff_name", "")
+
+
 # ── Revoke ────────────────────────────────────────────────────────────────────
 
 def revoke_token() -> None:
@@ -404,10 +506,20 @@ def start_auth_flow(timeout: int = 300) -> dict:
     token_data = exchange_code(auth_code, code_verifier)
 
     # Fetch tenant ID
+    tenant_id = ""
     try:
-        fetch_tenant_id(token_data["access_token"])
+        tenant_id = fetch_tenant_id(token_data["access_token"])
     except Exception:
         pass  # Non-fatal — tenant ID can be set manually
+
+    # Resolve the accountant's XPM staff identity (for per-accountant scoping)
+    if tenant_id:
+        try:
+            fetch_staff_identity(token_data["access_token"], tenant_id)
+        except XeroOAuthError:
+            pass  # Non-fatal — scoping will be disabled but connection still works
+        except Exception:
+            pass
 
     # Clean up temp settings
     set_setting("_xero_pkce_verifier", "")
@@ -446,9 +558,10 @@ def _store_tokens(token_data: dict) -> None:
 
 
 def _clear_tokens() -> None:
-    """Clear all stored Xero tokens."""
+    """Clear all stored Xero tokens and staff identity."""
     for key in ("xero_access_token", "xero_refresh_token",
-                "xero_token_expiry", "xero_tenant_id"):
+                "xero_token_expiry", "xero_tenant_id",
+                "xero_staff_uuid", "xero_staff_name"):
         set_setting(key, "")
 
 
