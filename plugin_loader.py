@@ -523,6 +523,16 @@ class PluginLoader:
         except Exception as e:
             self._log(f"⚠ GatewayClient unavailable: {e}")
 
+        # Lazy-load ApprovalQueue — gracefully degrades if DB unavailable
+        approval_queue = None
+        try:
+            from approval_queue import get_approval_queue
+            approval_queue = get_approval_queue()
+            # Wire up the EventBus so the queue can publish events
+            approval_queue.set_event_bus(EventBus)
+        except Exception as e:
+            self._log(f"⚠ ApprovalQueue unavailable: {e}")
+
         return PluginContext(
             graph=self._graph,
             claude=self._claude,           # legacy alias — same as claude_fast
@@ -531,6 +541,7 @@ class PluginLoader:
             memory=memory,
             event_bus=EventBus,
             gateway=gateway,
+            approval_queue=approval_queue,
             log=self._log,
             notify=notify,
             settings=get_all_settings(),

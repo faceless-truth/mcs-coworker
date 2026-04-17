@@ -144,6 +144,9 @@ def init_db():
         "teams_graph_token":      "",
         # Stream 3 — Heartbeat interval
         "heartbeat_interval_seconds": "60",
+        # Stream 6 — Approval queue
+        "approval_auto_threshold": "0.75",
+        "approval_expiry_hours":   "48",
     }
     for key, value in defaults.items():
         c.execute(

@@ -6,3 +6,4 @@ pytz>=2024.1
 pystray>=0.19.5
 Pillow>=10.0.0
 chromadb>=0.4.0
+# Stream 6 (approval_queue) uses stdlib sqlite3 — no extra package needed
