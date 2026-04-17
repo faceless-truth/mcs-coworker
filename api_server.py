@@ -14,7 +14,9 @@ from datetime import datetime
 from functools import wraps
 from typing import Any
 
-from flask import Flask, jsonify, request
+import queue
+import time
+from flask import Flask, Response, jsonify, request, stream_with_context
 from flask_cors import CORS
 
 # ── Backend imports ────────────────────────────────────────────────────────────
@@ -160,6 +162,83 @@ def activity():
             "status": r.get("status", "success"),
         })
     return ok(formatted)
+
+
+# ── Activity SSE stream ────────────────────────────────────────────────────────
+# Subscribers receive new activity rows as Server-Sent Events
+_sse_subscribers: list[queue.Queue] = []
+_sse_lock = threading.Lock()
+
+
+def _broadcast_activity(entry: dict):
+    """Push a new activity entry to all connected SSE clients."""
+    with _sse_lock:
+        dead = []
+        for q in _sse_subscribers:
+            try:
+                q.put_nowait(entry)
+            except queue.Full:
+                dead.append(q)
+        for q in dead:
+            _sse_subscribers.remove(q)
+
+
+# Wire into EventBus so every plugin.run.complete event triggers a broadcast
+def _wire_sse_to_event_bus():
+    from event_bus import EventBus
+    def _on_plugin_complete(event_type: str, data: dict):
+        entry = {
+            "id": f"live-{int(time.time()*1000)}",
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "plugin": data.get("plugin_id", "unknown"),
+            "action": data.get("message", "Plugin run completed"),
+            "status": "success" if data.get("success", True) else "error",
+        }
+        _broadcast_activity(entry)
+    EventBus.subscribe("plugin.run.complete", _on_plugin_complete, subscriber_id="sse_bridge")
+    EventBus.subscribe("plugin.run.failed", lambda et, d: _broadcast_activity({
+        "id": f"live-{int(time.time()*1000)}",
+        "time": datetime.now().strftime("%H:%M:%S"),
+        "plugin": d.get("plugin_id", "unknown"),
+        "action": d.get("error", "Plugin run failed"),
+        "status": "error",
+    }), subscriber_id="sse_bridge_fail")
+
+
+@app.route("/api/activity/stream")
+def activity_stream():
+    """Server-Sent Events endpoint — streams new activity entries in real time."""
+    client_q: queue.Queue = queue.Queue(maxsize=50)
+    with _sse_lock:
+        _sse_subscribers.append(client_q)
+
+    def generate():
+        # Send a ping immediately so the client knows the connection is live
+        yield "event: ping\ndata: connected\n\n"
+        try:
+            while True:
+                try:
+                    entry = client_q.get(timeout=20)
+                    yield f"data: {json.dumps(entry)}\n\n"
+                except queue.Empty:
+                    # Keepalive ping every 20s
+                    yield "event: ping\ndata: keepalive\n\n"
+        except GeneratorExit:
+            pass
+        finally:
+            with _sse_lock:
+                if client_q in _sse_subscribers:
+                    _sse_subscribers.remove(client_q)
+
+    return Response(
+        stream_with_context(generate()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
 
 
 # ── Approvals ──────────────────────────────────────────────────────────────────
@@ -489,6 +568,11 @@ def run_server(host="127.0.0.1", port=API_PORT, debug=False):
 
 
 def start_in_thread(host="127.0.0.1", port=API_PORT):
+    # Wire SSE broadcaster to EventBus before starting
+    try:
+        _wire_sse_to_event_bus()
+    except Exception:
+        pass  # EventBus may not be ready yet — wiring happens lazily
     t = threading.Thread(target=run_server, args=(host, port), daemon=True)
     t.start()
     return t
