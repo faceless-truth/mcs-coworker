@@ -161,6 +161,16 @@ def init_db():
             (key, value),
         )
 
+    # Force-update Xero app credentials so they are always current
+    # (INSERT OR IGNORE won't overwrite existing empty values on upgrades)
+    for key, value in [
+        ("xero_client_id",     "76454701D582444F9EA5F11A835A6E91"),
+        ("xero_client_secret", "c8slT8k09aTZKDnXNkrgAhCz9BAsXDjfZZS4lkLVXAca6cWt"),
+    ]:
+        current = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        if current is None or current[0] == "":
+            c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+
     # No default email rules — accountant builds their own from scratch
 
     # Seed default links & forms
