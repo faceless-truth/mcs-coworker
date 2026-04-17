@@ -45,8 +45,12 @@ from kpi_monitor import KPIMonitor
 
 # ── App setup ──────────────────────────────────────────────────────────────────
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:7842", "http://127.0.0.1:7842",
-                   "http://localhost:3000", "http://127.0.0.1:3000"])
+CORS(app, origins=[
+    "http://localhost:7842", "http://127.0.0.1:7842",
+    "http://localhost:3000", "http://127.0.0.1:3000",
+    "http://localhost:5173", "http://127.0.0.1:5173",
+], supports_credentials=True)
+# Electron uses file:// or app:// — handle via wildcard on those routes separately
 
 API_PORT = 7842
 

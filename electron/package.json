@@ -1,0 +1,79 @@
+{
+  "name": "mcs-coworker",
+  "version": "2.4.1",
+  "description": "MCS CoWorker — AI-powered accounting practice assistant",
+  "main": "main.js",
+  "author": "MC&S Accountants",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win --x64",
+    "build:dir": "electron-builder --win --x64 --dir"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0"
+  },
+  "build": {
+    "appId": "au.com.mcsaccountants.coworker",
+    "productName": "MCS CoWorker",
+    "copyright": "Copyright © 2025 MC&S Accountants",
+    "directories": {
+      "output": "dist-electron",
+      "buildResources": "assets"
+    },
+    "files": [
+      "main.js",
+      "preload.js",
+      "assets/**/*",
+      "../frontend/dist/**/*",
+      "../api_server_standalone.py",
+      "../api_server.py",
+      "../config.py",
+      "../gateway_client.py",
+      "../xero_oauth.py",
+      "../plugin_loader.py",
+      "../approval_queue.py",
+      "../token_meter.py",
+      "../event_bus.py",
+      "../kpi_monitor.py",
+      "../memory_store.py",
+      "../plugins/**/*",
+      "!../plugins/**/__pycache__/**",
+      "!../**/__pycache__/**",
+      "!../**/*.pyc"
+    ],
+    "extraResources": [
+      {
+        "from": "../",
+        "to": "app",
+        "filter": [
+          "*.py",
+          "plugins/**/*.py",
+          "requirements.txt"
+        ]
+      }
+    ],
+    "win": {
+      "target": [
+        { "target": "nsis", "arch": ["x64"] }
+      ],
+      "icon": "assets/icon.ico",
+      "requestedExecutionLevel": "asInvoker"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "MCS CoWorker",
+      "runAfterFinish": true
+    },
+    "mac": {
+      "target": "dmg",
+      "icon": "assets/icon.icns",
+      "category": "public.app-category.business"
+    }
+  }
+}
