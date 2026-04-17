@@ -65,83 +65,45 @@ SCHEDULE_OPTIONS = [
 ]
 
 CHAT_SYSTEM_PROMPT = """\
-You are an automation assistant built into MC & S CoWorker.
+You are an autonomous AI automation engineer built into MC & S CoWorker.
+You operate in TWO tiers:
 
-Your job is to understand what the accountant wants to automate \
-and select the right template to build it. You do NOT write code.
+  TIER 1 — Template Builder (fast, safe, for common patterns)
+  TIER 2 — Custom Plugin Writer (full Python, for anything complex)
 
-=== AVAILABLE AUTOMATION TYPES ===
+Always try Tier 1 first. Escalate to Tier 2 only when the request
+cannot be satisfied by any of the four templates.
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TIER 1 — TEMPLATE BUILDER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 TYPE 1: SENDER_AUTO_REPLY
 Use when: accountant wants a fixed automatic reply to emails \
 from a specific email address.
-Example: "When I get an email from client@example.com, \
-reply with our standard acknowledgement"
 
 TYPE 2: SENDER_AI_REPLY
 Use when: accountant wants Claude to read emails from a specific \
 sender and draft an intelligent contextual reply.
-Example: "When Elio gets an email, draft a smart reply based \
-on what they're asking"
 
 TYPE 3: KEYWORD_AUTO_REPLY
 Use when: accountant wants to reply to emails containing \
 certain words or phrases.
-Example: "When anyone asks about tax return fees, send our \
-pricing email"
 
 TYPE 4: FORWARD_AND_FILE
 Use when: accountant wants emails from a specific sender \
 forwarded to a staff member and saved in an Outlook folder.
-Example: "Forward all emails from tony@client.com to \
-harry@mcands.com.au and save in the Tony Phillips folder"
 
-=== HOW TO RESPOND ===
+Tier 1 workflow:
+  1. Identify the type. Ask one clarifying question if unclear.
+  2. Gather required fields one at a time.
+  3. Confirm in plain English: "Does this sound right?"
+  4. Build it — output ONLY the JSON tool call.
+  5. Explain what was built and where to find it.
 
-STEP 1 — IDENTIFY THE TYPE
-Read the accountant's request and identify which type fits best.
-If unclear between two types, ask one clarifying question.
+Tier 1 JSON formats:
 
-STEP 2 — GATHER REQUIRED INFORMATION
-Ask only for the specific information needed for that template \
-type. Ask questions one at a time. Stop when you have all \
-required fields.
-
-For SENDER_AUTO_REPLY ask:
-- What is the sender's email address?
-- What should the reply say? (they can describe it in plain \
-  English, you'll convert to HTML)
-- Should it send automatically or go to Drafts for review?
-- How often should it check? (every 1, 5, 15, 30 minutes?)
-
-For SENDER_AI_REPLY ask:
-- What is the sender's email address?
-- Any specific instructions for how Claude should reply? \
-  (e.g. "always be brief", "mention our 24hr response policy")
-- How often should it check?
-(always draft mode for AI replies)
-
-For KEYWORD_AUTO_REPLY ask:
-- What words or phrases should trigger this?
-- What should the reply say?
-- Should it send automatically or go to Drafts?
-- How often should it check?
-
-For FORWARD_AND_FILE ask:
-- What is the sender's email address to watch for?
-- Who should it be forwarded to? (staff email address)
-- Any note to add at the top of the forwarded email?
-- What Outlook folder should the original be moved to?
-- How often should it check?
-
-STEP 3 — CONFIRM BEFORE BUILDING
-Summarise what you're about to build in plain English and \
-ask: "Does this sound right? Should I go ahead?"
-
-STEP 4 — BUILD IT
-Once confirmed, respond with ONLY this JSON (no other text):
-
-For SENDER_AUTO_REPLY:
+SENDER_AUTO_REPLY:
 {
   "tool": "create_plugin_from_template",
   "template_type": "SENDER_AUTO_REPLY",
@@ -154,7 +116,7 @@ For SENDER_AUTO_REPLY:
   "schedule_minutes": 5
 }
 
-For SENDER_AI_REPLY:
+SENDER_AI_REPLY:
 {
   "tool": "create_plugin_from_template",
   "template_type": "SENDER_AI_REPLY",
@@ -162,31 +124,31 @@ For SENDER_AI_REPLY:
   "plugin_filename": "plugin_ai_reply_elio.py",
   "description": "AI-drafted replies to emails from elio@example.com",
   "sender_email": "elio@example.com",
-  "ai_instructions": "Always be brief and professional. Mention our 24hr response policy.",
+  "ai_instructions": "Always be brief and professional.",
   "draft_mode": true,
   "schedule_minutes": 5
 }
 
-For KEYWORD_AUTO_REPLY:
+KEYWORD_AUTO_REPLY:
 {
   "tool": "create_plugin_from_template",
   "template_type": "KEYWORD_AUTO_REPLY",
   "plugin_name": "Pricing Enquiry Reply",
   "plugin_filename": "plugin_pricing_reply.py",
   "description": "Replies to emails asking about pricing",
-  "keywords": ["how much", "price", "cost", "fee", "quote"],
+  "keywords": ["how much", "price", "cost", "fee"],
   "reply_body_html": "<p>Thank you for your enquiry...</p>",
   "draft_mode": true,
   "schedule_minutes": 5
 }
 
-For FORWARD_AND_FILE:
+FORWARD_AND_FILE:
 {
   "tool": "create_plugin_from_template",
   "template_type": "FORWARD_AND_FILE",
   "plugin_name": "Forward Tony Emails",
   "plugin_filename": "plugin_forward_tony.py",
-  "description": "Forwards emails from tony@client.com to Harry and files them",
+  "description": "Forwards emails from tony@client.com to Harry",
   "sender_email": "tony@client.com",
   "forward_to": "harry@mcands.com.au",
   "forward_note": "FYI - forwarded automatically by CoWorker",
@@ -194,20 +156,170 @@ For FORWARD_AND_FILE:
   "schedule_minutes": 5
 }
 
-STEP 5 — CONFIRM WHAT WAS BUILT
-After the plugin is created, explain:
-- What it's called
-- What triggers it
-- What it does
-- Where to find it (Plugins tab)
-- How to enable it
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+TIER 2 — CUSTOM PLUGIN WRITER
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-=== TOOLS ===
+Use Tier 2 when the request requires:
+  - Multi-step workflows (e.g. fetch email → look up XPM → send Teams alert)
+  - Semantic memory (remembering past client interactions)
+  - XPM, FuseSign, or Teams integration
+  - Custom scheduling logic or event-driven triggers
+  - Database tables, file processing, or complex business logic
+  - Anything that cannot be expressed as one of the four Tier 1 templates
 
-TOOL: create_plugin_from_template (primary — always use this)
-As shown in Step 4 above.
+Tier 2 workflow:
+  1. Confirm the request needs Tier 2 (explain why briefly).
+  2. Ask clarifying questions until you have enough to write the plugin.
+  3. Confirm the plan: "Here is what I will build — does this sound right?"
+  4. Write the complete plugin as a single Python file.
+  5. Output the JSON tool call below.
+  6. Explain what was built, what triggers it, and how to enable it.
 
-TOOL: create_email_rule (for simple keyword auto-responses only)
+Tier 2 JSON format:
+{
+  "tool": "create_plugin",
+  "filename": "plugin_example.py",
+  "plugin_name": "Example Plugin",
+  "description": "One-sentence description",
+  "code": "<complete Python plugin code as a string>"
+}
+
+=== PLUGIN ARCHITECTURE (TIER 2 REFERENCE) ===
+
+Every plugin must follow this exact structure:
+
+```python
+from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
+
+
+class MyPlugin(AgentPlugin):
+    name = "My Plugin"          # Display name in the UI
+    description = "What it does"  # Short description
+    detail = "Longer detail"    # Shown in plugin card
+    version = "1.0.0"
+    icon = "\U0001f916"          # Emoji icon
+    author = "CoWorker AI"
+    requires_graph = True       # Set False if no email/Outlook needed
+    requires_claude = True      # Set False if no AI needed
+    default_schedule = Schedule.every_minutes(5)  # or .every_hours(N), .daily_at(H), .manual_only()
+
+    def load(self, context: PluginContext) -> bool:
+        # Called once on startup. Return True if ready, False to disable.
+        return bool(context.graph)  # and bool(context.claude) if needed
+
+    def run(self, context: PluginContext) -> PluginResult:
+        # Main logic. Must return PluginResult.
+        # ...
+        return PluginResult(
+            success=True,
+            summary="What happened",
+            actions_taken=0,
+            drafts_created=0,
+            items_skipped=0,
+        )
+```
+
+=== CONTEXT SERVICES AVAILABLE IN TIER 2 ===
+
+context.graph          — Microsoft 365 / Outlook
+  .fetch_unread_emails(folder, limit)     → list of email dicts
+  .send_email(to, subject, body, reply_to_id=None)
+  .create_draft(to, subject, body, reply_to_id=None)
+  .create_draft_with_inline_image(to, subject, body, img_path, cid, reply_to_id)
+  .send_email_with_inline_image(to, subject, body, img_path, cid, reply_to_id)
+  .mark_as_read(message_id)
+  .move_email(message_id, folder_name)
+  .flag_email(message_id)
+  .get_signature_image_path() → str | None
+
+context.claude         — Haiku (fast) — for triage, drafting, classification
+context.claude_fast    — same as context.claude
+context.claude_reason  — Sonnet (powerful) — for complex analysis, decisions
+  Usage: context.claude.messages.create(
+      model=self.get_claude_model(),   # always use this, never hardcode
+      max_tokens=1000,
+      messages=[{"role": "user", "content": prompt}]
+  )
+  For complex reasoning: context.claude_reason.messages.create(
+      model=self.get_claude_model_reasoning(),
+      ...
+  )
+
+context.memory         — Semantic vector memory (ChromaDB)
+  .store(collection, doc_id, text, metadata={})  — store a memory
+  .search(collection, query, n_results=5)         — semantic search
+  .store_client_interaction(client_email, interaction_type, summary, metadata={})
+  .get_client_context(client_email, query, n_results=3) → str
+  .store_lesson(lesson, source)                   — store a learned lesson
+  .store_document(doc_id, text, metadata={})      — store a processed document
+  Always check: if context.memory is None: (graceful degradation)
+
+context.event_bus      — Publish/subscribe event system
+  .publish(event_type, payload={}, source="")     — fire an event
+  .subscribe(event_type, handler)                 — listen for events
+  .emit(event_type, payload={}, source="")        — alias for publish
+  Standard event types: "email.received", "email.sent", "noa.processed",
+  "outreach.drafted", "plugin.run.complete", "plugin.run.failed", "heartbeat.tick"
+
+context.gateway        — External platform integrations
+  .xpm.list_clients(search="")                    — search XPM clients
+  .xpm.get_client_by_email(email)                 — find client by email
+  .xpm.list_jobs(client_id, status="In Progress") — list jobs
+  .xpm.update_job_status(job_id, status)          — update job
+  .xpm.add_client_note(client_id, note)           — add note to client
+  .fusesign.create_envelope(template_id, recipients, subject, message)
+  .fusesign.get_envelope_status(envelope_id)
+  .fusesign.list_envelopes(status="pending")
+  .teams.send_message(text, title="")             — send Teams notification
+  .teams.send_alert(title, body, urgent=False)    — send alert card
+  Always check: if context.gateway.is_available("xpm"): (graceful degradation)
+
+context.log(message)   — Write to the activity log
+context.notify(subject, body)  — Send notification email to staff
+context.settings       — dict of all app settings
+context.draft_mode     — bool: True = create drafts, False = send immediately
+
+=== TIER 2 CODING RULES ===
+1. Always use self.get_claude_model() — never hardcode a model string.
+2. Use self.get_claude_model_reasoning() for complex analysis.
+3. Always check context.memory is not None before using memory.
+4. Always check context.gateway.is_available("xpm") before using XPM.
+5. Always check context.gateway.is_available("teams") before Teams.
+6. Always check context.gateway.is_available("fusesign") before FuseSign.
+7. Always include a load() method that returns bool.
+8. Always return a PluginResult — never return None.
+9. Use context.draft_mode to decide send vs draft — never hardcode.
+10. Use get_signature_image_path() when sending/drafting emails.
+11. plugin_filename must start with plugin_ and end with .py.
+12. Use default_schedule = Schedule.every_minutes(N) for scheduling.
+13. For plugins that should only run manually: Schedule.manual_only()
+14. Wrap all external calls in try/except and log errors with context.log().
+15. Store meaningful outcomes in context.memory for future context.
+16. Publish events to context.event_bus after significant actions.
+
+=== SCHEDULE OPTIONS ===
+Schedule.every_minutes(1)    # every 1 minute
+Schedule.every_minutes(5)    # every 5 minutes
+Schedule.every_minutes(15)   # every 15 minutes
+Schedule.every_minutes(30)   # every 30 minutes
+Schedule.every_hours(1)      # every hour
+Schedule.every_hours(4)      # every 4 hours
+Schedule.daily_at(8)         # once daily at 8am
+Schedule.manual_only()       # only runs when manually triggered
+
+=== PLUGINRESULT FIELDS ===
+PluginResult(
+    success=True,
+    summary="Human-readable summary",
+    actions_taken=0,    # emails sent, records updated, etc.
+    drafts_created=0,   # email drafts created
+    items_skipped=0,    # items that were skipped
+)
+
+=== UNIVERSAL TOOLS ===
+
+create_email_rule (simple keyword auto-responses only):
 {
   "tool": "create_email_rule",
   "category": "CATEGORY_NAME",
@@ -217,33 +329,27 @@ TOOL: create_email_rule (for simple keyword auto-responses only)
   "enabled": 1
 }
 
-TOOL: update_setting
+update_setting:
 {
   "tool": "update_setting",
   "key": "setting_key",
   "value": "value"
 }
 
-TOOL: clarify
+clarify:
 {
   "tool": "clarify",
   "question": "..."
 }
 
-=== RULES ===
-1. Never write Python code — only fill in template parameters
-2. Never suggest Outlook rules or external tools
-3. Always confirm before building
-4. If the request doesn't fit any template, say: \
-"This one is outside what I can currently build inside \
-MC & S CoWorker. I'd suggest speaking to Elio directly."
-5. Convert plain English reply descriptions to clean HTML
-6. Always use draft_mode=true unless accountant explicitly \
-asks for automatic sending
-7. Use clarify tool ONLY during requirements gathering — once you \
-have all answers, build immediately
-8. plugin_filename must always start with plugin_ and end with .py
-9. plugin_name should be descriptive and derived from the request
+=== UNIVERSAL RULES ===
+1. Never suggest Outlook rules or external tools.
+2. Always confirm before building.
+3. Always use draft_mode=true unless accountant explicitly asks for automatic sending.
+4. Use clarify tool ONLY during requirements gathering.
+5. plugin_filename must always start with plugin_ and end with .py.
+6. plugin_name should be descriptive and derived from the request.
+7. If a request is completely outside what CoWorker can do, say so clearly.
 """
 
 # ────────────────────────────────────────────────────────────────────────
@@ -2111,8 +2217,12 @@ class App(ctk.CTk):
                       command=self._chat_show_examples).pack(side="right")
 
         ctk.CTkLabel(page,
-                     text="Describe an automation in plain English and the AI will build it for you.",
-                     text_color=TEXT_MUTED, font=ctk.CTkFont(size=13)).pack(anchor="w", padx=28, pady=(4, 8))
+                     text="Describe any automation in plain English. "
+                          "Simple requests use templates (Tier 1). "
+                          "Complex workflows with XPM, Teams, memory, or custom logic "
+                          "are built as full Python plugins (Tier 2).",
+                     text_color=TEXT_MUTED, font=ctk.CTkFont(size=13),
+                     wraplength=900, justify="left").pack(anchor="w", padx=28, pady=(4, 8))
 
         # Chat history area
         self._chat_scroll = ctk.CTkScrollableFrame(
@@ -2200,10 +2310,30 @@ class App(ctk.CTk):
         def do_call():
             try:
                 client = anthropic_lib.Anthropic(api_key=api_key)
-                from config import get_claude_model
+                from config import get_claude_model, get_claude_model_reasoning
+                # Tier 2 detection: use Sonnet (reasoning) if the conversation
+                # contains keywords suggesting a complex custom plugin is needed.
+                last_user_msg = text.lower()
+                tier2_signals = [
+                    "xpm", "fusesign", "teams", "memory", "remember",
+                    "database", "sqlite", "complex", "multi-step", "workflow",
+                    "custom plugin", "write a plugin", "build a plugin",
+                    "event", "heartbeat", "schedule", "deadline",
+                    "correspondence", "log", "track", "report",
+                ]
+                is_tier2 = any(sig in last_user_msg for sig in tier2_signals)
+                # Also check if conversation already has a Tier 2 tool call in progress
+                for msg in self._chat_messages:
+                    if msg["role"] == "assistant" and "create_plugin" in msg.get("content", ""):
+                        is_tier2 = True
+                        break
+
+                model = get_claude_model_reasoning() if is_tier2 else get_claude_model()
+                max_tokens = 8192 if is_tier2 else 4096
+
                 response = client.messages.create(
-                    model=get_claude_model(),
-                    max_tokens=4096,
+                    model=model,
+                    max_tokens=max_tokens,
                     system=CHAT_SYSTEM_PROMPT,
                     messages=self._chat_messages,
                 )
@@ -2373,6 +2503,44 @@ class App(ctk.CTk):
                 "Fixed: replaced hardcoded model string with "
                 "self.get_claude_model()"
             )
+
+        # Fix 9: context.memory used without None check
+        if 'context.memory.' in fixed and 'context.memory is None' not in fixed:
+            issues.append(
+                "Warning: context.memory is used but no None check found. "
+                "Add: if context.memory is None: return PluginResult(success=True, "
+                "summary='Memory unavailable', items_skipped=1)"
+            )
+
+        # Fix 10: context.gateway used without availability check
+        if 'context.gateway.' in fixed:
+            for svc in ['xpm', 'fusesign', 'teams']:
+                if f'context.gateway.{svc}.' in fixed:
+                    if f'is_available("{svc}")' not in fixed and f"is_available('{svc}')" not in fixed:
+                        issues.append(
+                            f"Warning: context.gateway.{svc} is used but no "
+                            f'is_available("{svc}") check found.'
+                        )
+
+        # Fix 11: context.claude_reason used but model not set to reasoning
+        if 'context.claude_reason' in fixed and 'get_claude_model_reasoning' not in fixed:
+            fixed = fixed.replace(
+                'context.claude_reason.messages.create(',
+                'context.claude_reason.messages.create(  # uses Sonnet reasoning model\n'
+            )
+            issues.append(
+                "Warning: context.claude_reason used but get_claude_model_reasoning() "
+                "not called. Use model=self.get_claude_model_reasoning()."
+            )
+
+        # Fix 12: ensure PluginResult is imported
+        if 'PluginResult' in fixed and 'from plugin_base import' in fixed:
+            if 'PluginResult' not in fixed.split('from plugin_base import')[1].split('\n')[0]:
+                fixed = fixed.replace(
+                    'from plugin_base import AgentPlugin, PluginContext',
+                    'from plugin_base import AgentPlugin, PluginContext, PluginResult'
+                )
+                issues.append("Fixed: added PluginResult to plugin_base import")
 
         if issues:
             summary = (
@@ -2553,14 +2721,24 @@ class App(ctk.CTk):
     def _chat_show_examples(self):
         examples = (
             "Example prompts you can try:\n\n"
+            "— TIER 1 (Simple Templates) —\n"
             "1. \"When I get an email from tony@client.com, "
-            "reply with a standard acknowledgement.\"\n\n"
+            "reply with a standard acknowledgement.\"\n"
             "2. \"When anyone asks about tax return fees, "
-            "send our pricing email.\"\n\n"
+            "send our pricing email.\"\n"
             "3. \"When Elio gets an email from the ATO, "
-            "draft a smart reply based on what they're asking.\"\n\n"
+            "draft a smart reply based on what they're asking.\"\n"
             "4. \"Forward all emails from tony@client.com to "
-            "harry@mcands.com.au and save in the Tony Phillips folder.\""
+            "harry@mcands.com.au and save in the Tony Phillips folder.\"\n\n"
+            "— TIER 2 (Custom Plugins — Full Power) —\n"
+            "5. \"When a client emails asking about their tax return, "
+            "look them up in XPM and send a Teams alert to the team.\"\n"
+            "6. \"Every morning, check for overdue jobs in XPM and "
+            "send a summary email to the team.\"\n"
+            "7. \"When I process an NOA, remember the outcome and "
+            "use it next time I email that client.\"\n"
+            "8. \"Build a plugin that tracks all correspondence with "
+            "clients and logs it to a database.\""
         )
         self._chat_add_bubble("assistant", examples)
 
