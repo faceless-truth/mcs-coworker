@@ -24,7 +24,7 @@ the practice's cash flow.
 
 SCHEDULE
 --------
-Default: every Wednesday at 10:00 AM.
+Default: 1st of every month at 08:00.
 """
 
 from datetime import datetime, date
@@ -41,36 +41,18 @@ class DebtorFollowUpPlugin(AgentPlugin):
                    "emails using AI, and escalates persistent debtors to Teams.")
     VERSION     = "1.0.0"
     ICON        = "💰"
-    SCHEDULE    = Schedule.every_hours(168)
+    SCHEDULE    = Schedule.monthly_on_day(1)  # 1st of every month at 08:00
 
     DEFAULT_SETTINGS = {
-        "run_day":               "3",   # Wednesday
-        "run_hour":              "10",
         "overdue_threshold_days": "14", # start following up after 14 days
         "escalate_days":         "60",  # escalate to Teams after 60 days
         "max_follow_ups":        "3",   # max automated follow-ups before manual
         "confidence_threshold":  "0.7", # approval queue threshold
     }
 
-    def __init__(self):
-        super().__init__()
-        self._last_run_week: str = ""
-
     def run(self, context: PluginContext) -> PluginResult:
         result = PluginResult()
-
-        # ── Day/hour gate ─────────────────────────────────────────────────────
-        now = datetime.now()
-        target_day  = int(self.get_plugin_setting("run_day",  "3"))
-        target_hour = int(self.get_plugin_setting("run_hour", "10"))
-        if (now.weekday() + 1) != target_day or now.hour != target_hour:
-            result.summary = "Not debtor follow-up time."
-            return result
-
-        week_str = f"{date.today().isocalendar()[0]}-W{date.today().isocalendar()[1]}"
-        if self._last_run_week == week_str:
-            result.summary = "Debtor follow-up already run this week."
-            return result
+        # Calendar scheduler ensures this runs on the 1st of each month at 08:00
 
         if not context.gateway or not context.gateway.is_available("xpm"):
             result.summary = "XPM not configured — debtor follow-up skipped."
@@ -194,7 +176,6 @@ class DebtorFollowUpPlugin(AgentPlugin):
                 except Exception:
                     pass
 
-        self._last_run_week = week_str
         result.summary = (f"Debtor follow-up complete. Drafted/queued: {drafted}, "
                           f"Escalated: {escalated}, Skipped: {skipped}.")
         result.actions_taken = drafted + escalated

@@ -24,7 +24,7 @@ every client meeting fully briefed without manual research.
 
 SCHEDULE
 --------
-Default: every 30 minutes (event-driven via email scan).
+Default: daily at 08:00 — scans for today's meetings each morning.
 """
 
 import re
@@ -50,7 +50,7 @@ class MeetingPrepPlugin(AgentPlugin):
                    "and delivers a pre-meeting brief to Teams.")
     VERSION     = "1.0.0"
     ICON        = "📋"
-    SCHEDULE    = Schedule.every_minutes(30)
+    SCHEDULE    = Schedule.daily_at(8)  # Every morning at 08:00
 
     DEFAULT_SETTINGS = {
         "send_to_teams": "1",

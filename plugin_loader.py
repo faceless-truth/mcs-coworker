@@ -8,11 +8,12 @@ and runs them on schedule in background threads.
 import importlib
 import importlib.util
 import inspect
+import calendar
 import os
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, date
 from pathlib import Path
 from typing import Callable
 
@@ -114,6 +115,9 @@ class LoadedPlugin:
 
     @property
     def schedule_label(self) -> str:
+        sched = self.instance.default_schedule
+        if sched.is_calendar_based():
+            return sched.label
         if self.schedule_seconds <= 0:
             return "Manual only"
         if self.schedule_seconds < 3600:
@@ -133,18 +137,46 @@ class LoadedPlugin:
             last_summary=self.last_summary,
         )
 
+    def _next_calendar_run(self) -> float:
+        """Return the unix timestamp of the next calendar-based run."""
+        sched = self.instance.default_schedule
+        now = datetime.now()
+        day = sched.day_of_month
+        months_step = sched.months_interval
+
+        # Try this month first, then advance by months_step until we find a future date
+        year, month = now.year, now.month
+        for _ in range(24):  # safety: max 2 years look-ahead
+            # Clamp day to last valid day of month
+            max_day = calendar.monthrange(year, month)[1]
+            run_day = min(day, max_day)
+            candidate = datetime(year, month, run_day, 8, 0, 0)  # run at 08:00
+            if candidate > now:
+                return candidate.timestamp()
+            # Advance by months_interval
+            month += months_step
+            while month > 12:
+                month -= 12
+                year += 1
+        return 0.0
+
     def schedule_next(self):
-        if self.schedule_seconds > 0:
+        sched = self.instance.default_schedule
+        if sched.is_calendar_based():
+            self._next_run_at = self._next_calendar_run()
+        elif self.schedule_seconds > 0:
             self._next_run_at = time.time() + self.schedule_seconds
         else:
             self._next_run_at = 0.0
 
     def is_due(self) -> bool:
+        sched = self.instance.default_schedule
+        is_scheduled = sched.is_calendar_based() or self.schedule_seconds > 0
         return (
             self.enabled
             and self.is_ready
             and not self.is_template
-            and self.schedule_seconds > 0
+            and is_scheduled
             and self._next_run_at > 0
             and time.time() >= self._next_run_at
         )

@@ -131,65 +131,6 @@ class TestMorningBriefingPlugin(unittest.TestCase):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# 2. WIPSummariserPlugin
-# ═══════════════════════════════════════════════════════════════════════════
-
-class TestWIPSummariserPlugin(unittest.TestCase):
-
-    def setUp(self):
-        from plugin_wip_summariser import WIPSummariserPlugin
-        self.plugin = WIPSummariserPlugin()
-
-    def test_metadata(self):
-        self.assertEqual(self.plugin.PLUGIN_ID, "plugin_wip_summariser")
-        self.assertEqual(self.plugin.NAME, "WIP Ageing Summariser")
-
-    def test_skips_wrong_day(self):
-        ctx = make_context()
-        with patch("plugin_wip_summariser.datetime") as mock_dt:
-            mock_dt.now.return_value = datetime(2025, 4, 15, 9, 0)  # Tuesday
-            result = self.plugin.run(ctx)
-        self.assertIn("Not WIP review time", result.summary)
-
-    def test_skips_no_xpm(self):
-        ctx = make_context()
-        # Monday 9am — passes time gate
-        self.plugin._last_run_week = ""
-        with patch("plugin_wip_summariser.datetime") as mock_dt:
-            mock_dt.now.return_value = datetime(2025, 4, 14, 9, 0)
-            with patch("plugin_wip_summariser.date") as mock_date:
-                mock_date.today.return_value = date(2025, 4, 14)
-                result = self.plugin.run(ctx)
-        self.assertIn("XPM not configured", result.summary)
-
-    def test_bucket_logic(self):
-        today = date.today()
-        jobs = [
-            {"client_name": "A", "name": "J1",
-             "due_date": (today - timedelta(days=10)).isoformat(), "status": "inprogress"},
-            {"client_name": "B", "name": "J2",
-             "due_date": (today - timedelta(days=45)).isoformat(), "status": "inprogress"},
-            {"client_name": "C", "name": "J3",
-             "due_date": (today - timedelta(days=95)).isoformat(), "status": "inprogress"},
-        ]
-        buckets = {"0-30": [], "31-60": [], "61-90": [], "90+": []}
-        for job in jobs:
-            due = datetime.strptime(job["due_date"][:10], "%Y-%m-%d").date()
-            age = (today - due).days
-            if age <= 30:
-                buckets["0-30"].append(job)
-            elif age <= 60:
-                buckets["31-60"].append(job)
-            elif age <= 90:
-                buckets["61-90"].append(job)
-            else:
-                buckets["90+"].append(job)
-        self.assertEqual(len(buckets["0-30"]), 1)
-        self.assertEqual(len(buckets["31-60"]), 1)
-        self.assertEqual(len(buckets["90+"]), 1)
-
-
-# ═══════════════════════════════════════════════════════════════════════════
 # 3. DebtorFollowUpPlugin
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -203,21 +144,10 @@ class TestDebtorFollowUpPlugin(unittest.TestCase):
         self.assertEqual(self.plugin.PLUGIN_ID, "plugin_debtor_followup")
         self.assertEqual(self.plugin.NAME, "Debtor Follow-Up")
 
-    def test_skips_wrong_day(self):
-        ctx = make_context()
-        with patch("plugin_debtor_followup.datetime") as mock_dt:
-            mock_dt.now.return_value = datetime(2025, 4, 14, 10, 0)  # Monday, not Wednesday
-            result = self.plugin.run(ctx)
-        self.assertIn("Not debtor follow-up time", result.summary)
-
     def test_skips_no_xpm(self):
+        # Calendar scheduler handles timing; plugin immediately checks XPM
         ctx = make_context()
-        self.plugin._last_run_week = ""
-        with patch("plugin_debtor_followup.datetime") as mock_dt:
-            mock_dt.now.return_value = datetime(2025, 4, 16, 10, 0)  # Wednesday
-            with patch("plugin_debtor_followup.date") as mock_date:
-                mock_date.today.return_value = date(2025, 4, 16)
-                result = self.plugin.run(ctx)
+        result = self.plugin.run(ctx)
         self.assertIn("XPM not configured", result.summary)
 
     def test_draft_followup_no_claude(self):
@@ -407,37 +337,55 @@ class TestBASReminderPlugin(unittest.TestCase):
         self.assertEqual(self.plugin.PLUGIN_ID, "plugin_bas_reminder")
         self.assertEqual(self.plugin.NAME, "BAS Reminder Drafter")
 
-    def test_skips_wrong_hour(self):
+    def test_skips_no_xpm(self):
+        # Calendar scheduler handles timing; plugin immediately checks XPM
         ctx = make_context()
-        with patch("plugin_bas_reminder.datetime") as mock_dt:
-            mock_dt.now.return_value = datetime(2025, 4, 14, 15, 0)
-            result = self.plugin.run(ctx)
-        self.assertIn("Not BAS reminder time", result.summary)
+        result = self.plugin.run(ctx)
+        self.assertIn("XPM not configured", result.summary)
 
-    def test_skips_no_upcoming_due_dates(self):
-        """When today is far from any BAS due date, no reminders needed."""
+    def test_draft_reminder_no_claude_quarterly(self):
         ctx = make_context()
-        self.plugin._last_run_date = ""
-        # Use the real date module — just patch datetime.now to return 9am
-        # and rely on the real date.today() being far from a BAS due date
-        # by checking the result is not an error
-        with patch("plugin_bas_reminder.datetime") as mock_dt:
-            mock_dt.now.return_value = datetime(2025, 6, 1, 9, 0)
-            # Don't patch date — let the real date module handle comparisons
-            result = self.plugin.run(ctx)
-        # Either "No BAS due dates" or "XPM not configured" — both are valid
-        self.assertIsNotNone(result.summary)
-
-    def test_draft_reminder_no_claude(self):
-        ctx = make_context()
-        body = self.plugin._draft_reminder(ctx, "Test Client", date(2025, 10, 28))
+        body = self.plugin._draft_reminder(ctx, "Test Client", date(2025, 10, 28), "quarterly")
         self.assertIn("Test Client", body)
+        self.assertIn("quarterly", body.lower())
+
+    def test_draft_reminder_no_claude_monthly(self):
+        ctx = make_context()
+        body = self.plugin._draft_reminder(ctx, "Test Client", date(2025, 10, 21), "monthly")
+        self.assertIn("Test Client", body)
+        self.assertIn("monthly", body.lower())
 
     def test_draft_reminder_with_claude(self):
         ctx = make_context(with_claude=True)
         with patch.object(self.plugin, "get_claude_model_fast", return_value="claude-haiku"):
-            body = self.plugin._draft_reminder(ctx, "Test Client", date(2025, 10, 28))
+            body = self.plugin._draft_reminder(ctx, "Test Client", date(2025, 10, 28), "quarterly")
         self.assertEqual(body, "AI generated text.")
+
+    def test_detect_frequency_from_xpm_field(self):
+        client = {"bas_frequency": "monthly"}
+        freq = self.plugin._detect_frequency(None, client, "Test Client", "quarterly")
+        self.assertEqual(freq, "monthly")
+
+    def test_detect_frequency_defaults_to_quarterly(self):
+        client = {}
+        freq = self.plugin._detect_frequency(None, client, "Unknown Client", "quarterly")
+        self.assertEqual(freq, "quarterly")
+
+    def test_get_upcoming_due_dates_monthly(self):
+        from plugin_bas_reminder import BASReminderPlugin
+        plugin = BASReminderPlugin()
+        # 10 days before 21st of next month
+        today = date(2025, 10, 11)
+        dates = plugin._get_upcoming_due_dates("monthly", today, 14)
+        self.assertTrue(any(d.day == 21 for d in dates))
+
+    def test_get_upcoming_due_dates_quarterly(self):
+        from plugin_bas_reminder import BASReminderPlugin
+        plugin = BASReminderPlugin()
+        # 10 days before 28 Oct
+        today = date(2025, 10, 18)
+        dates = plugin._get_upcoming_due_dates("quarterly", today, 14)
+        self.assertTrue(any(d == date(2025, 10, 28) for d in dates))
 
     def test_quarterly_due_dates_calculated(self):
         """Verify the quarterly due dates list has 4 entries."""

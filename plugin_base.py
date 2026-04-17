@@ -50,9 +50,15 @@ class Schedule:
         Schedule.manual_only()
     """
 
-    def __init__(self, interval_seconds: int = 0, label: str = "Manual only"):
+    def __init__(self, interval_seconds: int = 0, label: str = "Manual only",
+                 day_of_month: int = 0, months_interval: int = 0):
         self.interval_seconds = interval_seconds
         self.label = label
+        # For calendar-based schedules (monthly / quarterly)
+        # day_of_month: 1-28, the day of the month to run on
+        # months_interval: 1 = monthly, 3 = quarterly
+        self.day_of_month = day_of_month
+        self.months_interval = months_interval
 
     @classmethod
     def every_seconds(cls, n: int) -> "Schedule":
@@ -71,11 +77,27 @@ class Schedule:
         return cls(interval_seconds=86400, label=f"Daily at {hour:02d}:00")
 
     @classmethod
+    def monthly_on_day(cls, day: int = 1) -> "Schedule":
+        """Run once per month on the given day (1-28). Falls back to last day if month is shorter."""
+        return cls(interval_seconds=0, label=f"Monthly on {day}{'st' if day==1 else 'nd' if day==2 else 'rd' if day==3 else 'th'}",
+                   day_of_month=max(1, min(day, 28)), months_interval=1)
+
+    @classmethod
+    def quarterly_on_day(cls, day: int = 1) -> "Schedule":
+        """Run once per quarter (every 3 months) on the given day."""
+        return cls(interval_seconds=0, label=f"Quarterly on {day}{'st' if day==1 else 'nd' if day==2 else 'rd' if day==3 else 'th'}",
+                   day_of_month=max(1, min(day, 28)), months_interval=3)
+
+    @classmethod
     def manual_only(cls) -> "Schedule":
         return cls(interval_seconds=0, label="Manual only")
 
+    def is_calendar_based(self) -> bool:
+        """True if this schedule fires on a specific day of the month, not an interval."""
+        return self.day_of_month > 0 and self.months_interval > 0
+
     def is_scheduled(self) -> bool:
-        return self.interval_seconds > 0
+        return self.interval_seconds > 0 or self.is_calendar_based()
 
 
 # ── Run result ─────────────────────────────────────────────────────────────────
