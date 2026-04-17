@@ -135,9 +135,14 @@ def init_db():
         "user_firm":              "",
         "user_email":             "",
         "user_setup_complete":    "0",
-        # Stream 4 — Gateway integrations
-        "xpm_api_key":            "",
-        "xpm_base_url":           "https://api.xpm.xero.com",
+        # Stream 4 — Gateway integrations (Xero OAuth)
+        "xero_client_id":         "",
+        "xero_client_secret":     "",
+        "xero_refresh_token":     "",
+        "xero_access_token":      "",
+        "xero_token_expiry":      "",
+        "xero_tenant_id":         "",
+        "xpm_base_url":           "https://api.xero.com/practicemanager/3.1",
         "fusesign_api_key":       "",
         "fusesign_base_url":      "https://api.fusesign.com/v1",
         "teams_webhook_url":      "",

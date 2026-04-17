@@ -4,14 +4,14 @@ MC & S Desktop Agent — Gateway Client (Stream 4 — APEX Upgrade)
 Provides a unified interface to external practice management and
 communication platforms beyond Microsoft 365:
 
-  - XPM (Xero Practice Manager) — client/job/task management
+  - XPM (Xero Practice Manager) — client/job/task management via OAuth 2.0
   - FuseSign                    — document signing workflow
   - Microsoft Teams             — channel messages and notifications
 
 DESIGN
 ------
 Each integration is a separate class:
-  XPMClient      — wraps the XPM REST API
+  XPMClient      — wraps the XPM REST API (OAuth 2.0 via xero_oauth.py)
   FuseSignClient — wraps the FuseSign REST API
   TeamsClient    — wraps the Microsoft Graph API (Teams endpoints)
 
@@ -20,14 +20,18 @@ GatewayClient is a facade that holds all three and exposes a single
 
 CREDENTIALS
 -----------
-All API keys / tokens are stored in the existing SQLite settings table
+All credentials are stored in the existing SQLite settings table
 via config.get_setting() / config.set_setting().  No plaintext secrets
 are hard-coded here.
 
   Setting key              Description
   ─────────────────────    ─────────────────────────────────────────
-  xpm_api_key              XPM API key (from Xero Practice Manager)
-  xpm_base_url             XPM base URL (default: https://api.xpm.xero.com)
+  xero_client_id           MCS Mate Xero app Client ID
+  xero_client_secret       MCS Mate Xero app Client Secret
+  xero_refresh_token       Long-lived OAuth refresh token
+  xero_access_token        Short-lived OAuth access token (auto-refreshed)
+  xero_token_expiry        ISO timestamp of access token expiry
+  xero_tenant_id           Xero organisation/tenant ID
   fusesign_api_key         FuseSign API key
   fusesign_base_url        FuseSign base URL (default: https://api.fusesign.com/v1)
   teams_webhook_url        Teams Incoming Webhook URL for a channel
@@ -74,33 +78,70 @@ class XPMClient:
     """
     Wraps the Xero Practice Manager (XPM) REST API.
 
-    XPM uses API key authentication passed as a query parameter or header.
+    Authentication uses OAuth 2.0 Authorization Code flow via xero_oauth.py.
+    Tokens are automatically refreshed before expiry.
     All methods return parsed JSON dicts/lists or raise XPMError on failure.
     """
 
-    DEFAULT_BASE_URL = "https://api.xpm.xero.com"
+    DEFAULT_BASE_URL = "https://api.xero.com/practicemanager/3.1"
 
-    def __init__(self, api_key: str = "", base_url: str = ""):
-        self.api_key = api_key or get_setting("xpm_api_key", "")
+    def __init__(self, base_url: str = ""):
         self.base_url = (base_url or get_setting("xpm_base_url", self.DEFAULT_BASE_URL)).rstrip("/")
 
     @property
     def is_configured(self) -> bool:
-        return bool(self.api_key)
+        """Return True if OAuth credentials are stored (client ID + secret)."""
+        try:
+            from xero_oauth import is_configured
+            return is_configured()
+        except Exception:
+            return False
+
+    @property
+    def is_authorised(self) -> bool:
+        """Return True if a refresh token is stored (user has completed OAuth)."""
+        try:
+            from xero_oauth import is_authorised
+            return is_authorised()
+        except Exception:
+            return False
+
+    def _get_token(self) -> str:
+        """Return a valid access token, refreshing if needed."""
+        try:
+            from xero_oauth import get_valid_token
+            return get_valid_token()
+        except Exception as e:
+            raise XPMError(f"Xero OAuth error: {e}") from e
+
+    def _get_tenant_id(self) -> str:
+        """Return the stored tenant ID."""
+        tenant_id = get_setting("xero_tenant_id", "")
+        if not tenant_id:
+            raise XPMError(
+                "Xero tenant ID not set. Please complete OAuth setup in Settings → Xero."
+            )
+        return tenant_id
 
     def _request(self, method: str, path: str, params: dict = None, body: dict = None) -> Any:
         """Make an authenticated request to the XPM API."""
         if not self.is_configured:
-            raise XPMError("XPM API key not configured. Add it in Settings.")
+            raise XPMError("Xero not configured. Add Client ID and Secret in Settings → Xero.")
+        if not self.is_authorised:
+            raise XPMError("Xero not authorised. Complete OAuth setup in Settings → Xero.")
+
+        access_token = self._get_token()
+        tenant_id    = self._get_tenant_id()
 
         url = f"{self.base_url}{path}"
         if params:
             url += "?" + urllib.parse.urlencode(params)
 
         headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
+            "Authorization":  f"Bearer {access_token}",
+            "Xero-Tenant-Id": tenant_id,
+            "Content-Type":   "application/json",
+            "Accept":         "application/json",
         }
 
         data = json.dumps(body).encode() if body else None
@@ -545,7 +586,12 @@ class GatewayClient:
     def status_summary(self) -> str:
         """Return a human-readable status string for all integrations."""
         lines = []
-        lines.append(f"XPM:      {'✅ Configured' if self.xpm.is_configured else '⚠ Not configured'}")
+        if self.xpm.is_authorised:
+            lines.append("XPM:      ✅ Connected (OAuth authorised)")
+        elif self.xpm.is_configured:
+            lines.append("XPM:      ⚠ Credentials set — OAuth not yet authorised")
+        else:
+            lines.append("XPM:      ⚠ Not configured")
         lines.append(f"FuseSign: {'✅ Configured' if self.fusesign.is_configured else '⚠ Not configured'}")
         lines.append(f"Teams:    {'✅ Configured' if self.teams.is_configured else '⚠ Not configured'}")
         return "\n".join(lines)

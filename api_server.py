@@ -354,11 +354,20 @@ def usage():
 def get_settings():
     s = get_all_settings()
     # Mask sensitive keys
-    for key in ("anthropic_api_key", "xpm_api_key", "fusesign_api_key", "teams_webhook_url"):
+    for key in ("anthropic_api_key", "fusesign_api_key", "teams_webhook_url",
+                "xero_client_secret", "xero_access_token", "xero_refresh_token"):
         if s.get(key):
-            s[key] = s[key][:8] + "••••••••••••••••••••••••"
+            s[key] = s[key][:4] + "••••••••••••••••••••"
     s["fast_model"] = get_claude_model_fast()
     s["reasoning_model"] = get_claude_model_reasoning()
+    # Add Xero OAuth status
+    try:
+        from xero_oauth import is_configured as xero_is_configured, is_authorised as xero_is_authorised
+        s["xero_configured"] = xero_is_configured()
+        s["xero_authorised"] = xero_is_authorised()
+    except Exception:
+        s["xero_configured"] = False
+        s["xero_authorised"] = False
     return ok(s)
 
 
@@ -367,12 +376,14 @@ def save_settings():
     body = request.get_json(silent=True) or {}
     # Only save non-masked values
     safe_keys = {
-        "anthropic_api_key", "outlook_email", "xpm_api_key",
+        "anthropic_api_key", "outlook_email",
         "fusesign_api_key", "teams_webhook_url",
         "confidence_threshold", "heartbeat_interval_seconds",
         "draft_mode", "auto_update_enabled",
         "fast_model", "reasoning_model",
         "monthly_ai_budget_aud",
+        # Xero OAuth credentials
+        "xero_client_id", "xero_client_secret",
     }
     saved = []
     for key, value in body.items():
@@ -395,7 +406,7 @@ def test_connection(service):
         gw = GatewayClient()
         gw.load()
         if service == "xpm":
-            result = gw.xpm.list_clients(limit=1)
+            result = gw.xpm.list_clients(page=1, page_size=1)
             return ok({"connected": True, "service": "xpm"})
         elif service == "fusesign":
             result = gw.fusesign.list_envelopes(limit=1)
@@ -407,6 +418,107 @@ def test_connection(service):
             return err(f"Unknown service: {service}")
     except Exception as e:
         return ok({"connected": False, "service": service, "error": str(e)})
+
+
+# ── Xero OAuth ─────────────────────────────────────────────────────────────────
+
+# Background thread state for OAuth flow
+_xero_auth_thread: threading.Thread | None = None
+_xero_auth_status: dict = {"status": "idle", "message": ""}
+
+
+@app.route("/api/xero/status")
+def xero_status():
+    """Return current Xero OAuth status."""
+    try:
+        from xero_oauth import is_configured, is_authorised, get_tenant_id
+        return ok({
+            "configured":  is_configured(),
+            "authorised":  is_authorised(),
+            "tenant_id":   get_tenant_id(),
+            "client_id":   get_setting("xero_client_id", ""),
+            "auth_status": _xero_auth_status,
+        })
+    except Exception as e:
+        return err(str(e))
+
+
+@app.route("/api/xero/start-auth", methods=["POST"])
+def xero_start_auth():
+    """
+    Start the Xero OAuth Authorization Code flow in a background thread.
+    Opens the user's browser to the Xero login page.
+    The callback is handled by /oauth/callback below.
+    """
+    global _xero_auth_thread, _xero_auth_status
+
+    if _xero_auth_thread and _xero_auth_thread.is_alive():
+        return ok({"status": "in_progress", "message": "OAuth flow already in progress"})
+
+    _xero_auth_status = {"status": "in_progress", "message": "Opening Xero login..."}
+
+    def _run_auth():
+        global _xero_auth_status
+        try:
+            from xero_oauth import start_auth_flow
+            token_data = start_auth_flow(timeout=300)
+            _xero_auth_status = {
+                "status":  "success",
+                "message": "Xero connected successfully!",
+                "scope":   token_data.get("scope", ""),
+            }
+        except Exception as e:
+            _xero_auth_status = {"status": "error", "message": str(e)}
+
+    _xero_auth_thread = threading.Thread(target=_run_auth, daemon=True)
+    _xero_auth_thread.start()
+
+    return ok({"status": "in_progress", "message": "Xero login page opened in browser"})
+
+
+@app.route("/oauth/callback")
+def xero_oauth_callback():
+    """
+    Xero OAuth callback — receives the authorization code after user login.
+    Passes the code to the waiting start_auth_flow() thread.
+    """
+    code  = request.args.get("code", "")
+    state = request.args.get("state", "")
+    error = request.args.get("error", "")
+
+    try:
+        from xero_oauth import notify_oauth_callback
+        notify_oauth_callback(code=code, state=state, error=error)
+    except Exception as e:
+        return f"<h1>Error</h1><p>{e}</p>", 500
+
+    if error:
+        return (
+            "<!DOCTYPE html><html><head><title>Xero — Error</title>"
+            "<style>body{font-family:sans-serif;text-align:center;padding:60px}</style></head>"
+            f"<body><h1>\u274c Xero Connection Failed</h1><p>{error}</p>"
+            "<p>You can close this window.</p></body></html>"
+        ), 400
+
+    return (
+        "<!DOCTYPE html><html><head><title>MCS CoWorker — Xero Connected</title>"
+        "<style>body{font-family:sans-serif;text-align:center;padding:60px;background:#f0f4f8}"
+        "h1{color:#13b5ea}p{color:#444}</style></head>"
+        "<body><h1>&#10003; Xero Connected!</h1>"
+        "<p>MCS CoWorker is now connected to Xero XPM.</p>"
+        "<p>You can close this window and return to CoWorker.</p></body></html>"
+    )
+
+
+@app.route("/api/xero/disconnect", methods=["POST"])
+def xero_disconnect():
+    """Revoke the Xero refresh token and clear all stored tokens."""
+    try:
+        from xero_oauth import revoke_token
+        revoke_token()
+        return ok({"disconnected": True})
+    except Exception as e:
+        return err(str(e))
 
 
 # ── Chat ───────────────────────────────────────────────────────────────────────
