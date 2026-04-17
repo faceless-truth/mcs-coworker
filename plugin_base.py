@@ -118,6 +118,7 @@ class PluginContext:
     claude_reason: Any = None # Sonnet model client — complex reasoning & analysis
     memory: Any = None        # MemoryStore class — semantic vector memory (Stream 2)
     event_bus: Any = None     # EventBus singleton — publish/subscribe (Stream 3)
+    gateway: Any = None       # GatewayClient — XPM, FuseSign, Teams (Stream 4)
     log: Any = None           # callable: log(message: str)
     notify: Any = None        # callable: notify(subject, body, to=None)
     settings: dict = field(default_factory=dict)  # all app settings as dict

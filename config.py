@@ -135,6 +135,15 @@ def init_db():
         "user_firm":              "",
         "user_email":             "",
         "user_setup_complete":    "0",
+        # Stream 4 — Gateway integrations
+        "xpm_api_key":            "",
+        "xpm_base_url":           "https://api.xpm.xero.com",
+        "fusesign_api_key":       "",
+        "fusesign_base_url":      "https://api.fusesign.com/v1",
+        "teams_webhook_url":      "",
+        "teams_graph_token":      "",
+        # Stream 3 — Heartbeat interval
+        "heartbeat_interval_seconds": "60",
     }
     for key, value in defaults.items():
         c.execute(

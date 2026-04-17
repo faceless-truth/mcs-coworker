@@ -515,6 +515,14 @@ class PluginLoader:
         except Exception as e:
             self._log(f"⚠ MemoryStore unavailable: {e}")
 
+        # Lazy-load GatewayClient — gracefully degrades if credentials not set
+        gateway = None
+        try:
+            from gateway_client import GatewayClient
+            gateway = GatewayClient()
+        except Exception as e:
+            self._log(f"⚠ GatewayClient unavailable: {e}")
+
         return PluginContext(
             graph=self._graph,
             claude=self._claude,           # legacy alias — same as claude_fast
@@ -522,6 +530,7 @@ class PluginLoader:
             claude_reason=self._claude_reason,
             memory=memory,
             event_bus=EventBus,
+            gateway=gateway,
             log=self._log,
             notify=notify,
             settings=get_all_settings(),
