@@ -106,13 +106,20 @@ class PluginContext:
     """
     Passed to plugin.run(). Provides shared services.
     All fields may be None if not configured — plugins should check before use.
+
+    Model tiers (Stream 1 — APEX upgrade):
+      claude_fast   → Haiku: fast, cheap, for triage / drafting / classification
+      claude_reason → Sonnet: slower, powerful, for multi-step analysis & decisions
+      claude        → Legacy alias — always points to claude_fast for backward compat
     """
-    graph: Any = None       # graph_client.GraphClient instance
-    claude: Any = None      # anthropic.Anthropic client instance
-    log: Any = None         # callable: log(message: str)
-    notify: Any = None      # callable: notify(subject, body, to=None)
+    graph: Any = None         # graph_client.GraphClient instance
+    claude: Any = None        # anthropic.Anthropic client — legacy alias for claude_fast
+    claude_fast: Any = None   # Haiku model client — fast, cheap tasks
+    claude_reason: Any = None # Sonnet model client — complex reasoning & analysis
+    log: Any = None           # callable: log(message: str)
+    notify: Any = None        # callable: notify(subject, body, to=None)
     settings: dict = field(default_factory=dict)  # all app settings as dict
-    draft_mode: bool = True  # plugin's individual draft mode setting
+    draft_mode: bool = True   # plugin's individual draft mode setting
 
 
 # ── Base class ────────────────────────────────────────────────────────────────
@@ -250,9 +257,21 @@ class AgentPlugin(ABC):
         return result if result is not None else default
 
     def get_claude_model(self) -> str:
-        """Return the current Claude model string from settings."""
-        from config import get_claude_model
-        return get_claude_model()
+        """Return the fast (Haiku) Claude model string from settings.
+        Kept for backward compatibility — equivalent to get_claude_model_fast().
+        """
+        from config import get_claude_model_fast
+        return get_claude_model_fast()
+
+    def get_claude_model_fast(self) -> str:
+        """Return the fast Claude model (Haiku) for triage, drafting, classification."""
+        from config import get_claude_model_fast
+        return get_claude_model_fast()
+
+    def get_claude_model_reasoning(self) -> str:
+        """Return the reasoning Claude model (Sonnet) for complex analysis and decisions."""
+        from config import get_claude_model_reasoning
+        return get_claude_model_reasoning()
 
     def log_activity(self, source: str, subject: str, category: str,
                      action: str, draft_created: int = 0,

@@ -158,7 +158,9 @@ class PluginLoader:
         self._log = log_callback
         self._plugins: dict[str, LoadedPlugin] = {}
         self._graph = None
-        self._claude = None
+        self._claude = None        # legacy — kept for backward compat, mirrors _claude_fast
+        self._claude_fast = None   # Haiku: fast, cheap tasks
+        self._claude_reason = None # Sonnet: complex reasoning & analysis
         self._scheduler_thread: threading.Thread | None = None
         self._running = False
         self._on_run_complete: Callable | None = None  # called after each plugin run
@@ -170,14 +172,32 @@ class PluginLoader:
         self._graph = graph_client
 
     def set_claude(self):
+        """Initialise both Claude clients from the stored API key.
+
+        - _claude_fast   uses the fast (Haiku) model slot
+        - _claude_reason uses the reasoning (Sonnet) model slot
+        - _claude        is kept as a legacy alias pointing to the same client
+          as _claude_fast so that existing plugins using context.claude continue
+          to work without any changes.
+        """
         if anthropic is None:
             self._claude = None
+            self._claude_fast = None
+            self._claude_reason = None
             return
         api_key = get_setting("anthropic_api_key")
         if api_key:
-            self._claude = anthropic.Anthropic(api_key=api_key)
+            # Both tiers share the same Anthropic client object — the model
+            # is selected per-call via get_claude_model_fast() /
+            # get_claude_model_reasoning() on the plugin instance.
+            client = anthropic.Anthropic(api_key=api_key)
+            self._claude_fast = client
+            self._claude_reason = client
+            self._claude = client  # backward compat alias
         else:
             self._claude = None
+            self._claude_fast = None
+            self._claude_reason = None
 
     def on_run_complete(self, callback: Callable):
         """Register a callback to be called after any plugin finishes running."""
@@ -453,7 +473,9 @@ class PluginLoader:
 
         return PluginContext(
             graph=self._graph,
-            claude=self._claude,
+            claude=self._claude,           # legacy alias — same as claude_fast
+            claude_fast=self._claude_fast,
+            claude_reason=self._claude_reason,
             log=self._log,
             notify=notify,
             settings=get_all_settings(),

@@ -117,6 +117,8 @@ def init_db():
     # Seed default settings
     defaults = {
         "claude_model":           "claude-haiku-4-5-20251001",
+        "claude_model_fast":      "claude-haiku-4-5-20251001",
+        "claude_model_reasoning": "claude-sonnet-4-5",
         "draft_mode":             "1",
         "business_hours_enabled": "1",
         "business_hours_start":   "8",
@@ -177,18 +179,40 @@ def set_setting(key, value):
 
 
 def get_claude_model() -> str:
-    """Return the current Claude model string from settings."""
-    return get_setting("claude_model", "claude-haiku-4-5-20251001")
-
-
-def update_claude_model(api_key: str) -> str:
+    """Return the fast (Haiku) Claude model string from settings.
+    Kept for backward compatibility — equivalent to get_claude_model_fast().
     """
-    Query the Anthropic models API and update the stored model to the
-    newest available Haiku model.  Returns the model ID that was selected.
-    Falls back to the currently stored value on any error.
+    return get_setting("claude_model_fast",
+                       get_setting("claude_model", "claude-haiku-4-5-20251001"))
+
+
+def get_claude_model_fast() -> str:
+    """Return the fast Claude model (Haiku) for triage, drafting, and classification."""
+    return get_setting("claude_model_fast",
+                       get_setting("claude_model", "claude-haiku-4-5-20251001"))
+
+
+def get_claude_model_reasoning() -> str:
+    """Return the reasoning Claude model (Sonnet) for complex analysis and decisions."""
+    return get_setting("claude_model_reasoning", "claude-sonnet-4-5")
+
+
+def update_claude_models(api_key: str) -> dict:
+    """
+    Query the Anthropic models API and update both stored model slots:
+      - claude_model_fast      → newest available Haiku model
+      - claude_model_reasoning → newest available Sonnet model
+
+    Also keeps the legacy 'claude_model' key in sync with the fast model
+    for backward compatibility with older plugins.
+
+    Returns a dict with keys 'fast' and 'reasoning'.
+    Falls back to currently stored values on any error.
     """
     import urllib.request
-    current = get_claude_model()
+    fast_current = get_claude_model_fast()
+    reasoning_current = get_claude_model_reasoning()
+    result = {"fast": fast_current, "reasoning": reasoning_current}
     try:
         req = urllib.request.Request(
             "https://api.anthropic.com/v1/models",
@@ -200,20 +224,43 @@ def update_claude_model(api_key: str) -> str:
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read().decode())
 
-        models = [
-            m for m in data.get("data", [])
-            if "haiku" in m.get("id", "") and m.get("type") == "model"
+        all_models = [
+            m for m in data.get("data", []) if m.get("type") == "model"
         ]
-        if not models:
-            return current
 
-        # Sort by created_at descending — pick the newest
-        models.sort(key=lambda m: m.get("created_at", ""), reverse=True)
-        newest = models[0]["id"]
-        set_setting("claude_model", newest)
-        return newest
+        # ── Fast model: newest Haiku ──────────────────────────────────────────
+        haiku_models = [
+            m for m in all_models if "haiku" in m.get("id", "").lower()
+        ]
+        if haiku_models:
+            haiku_models.sort(key=lambda m: m.get("created_at", ""), reverse=True)
+            newest_haiku = haiku_models[0]["id"]
+            set_setting("claude_model_fast", newest_haiku)
+            set_setting("claude_model", newest_haiku)  # backward compat
+            result["fast"] = newest_haiku
+
+        # ── Reasoning model: newest Sonnet ────────────────────────────────────
+        sonnet_models = [
+            m for m in all_models if "sonnet" in m.get("id", "").lower()
+        ]
+        if sonnet_models:
+            sonnet_models.sort(key=lambda m: m.get("created_at", ""), reverse=True)
+            newest_sonnet = sonnet_models[0]["id"]
+            set_setting("claude_model_reasoning", newest_sonnet)
+            result["reasoning"] = newest_sonnet
+
     except Exception:
-        return current
+        pass  # return current values on any error
+
+    return result
+
+
+def update_claude_model(api_key: str) -> str:
+    """
+    Legacy single-model update — kept for backward compatibility.
+    Calls update_claude_models() and returns the fast model ID.
+    """
+    return update_claude_models(api_key)["fast"]
 
 
 def get_all_settings():

@@ -18,6 +18,10 @@ app = FastAPI(title="MC & S CoWorker Proxy", version="1.0.0")
 
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
+# Model used for classification — fast Haiku tier.
+# Override via environment variable to use a different model without redeploying.
+CLASSIFY_MODEL = os.environ.get("CLASSIFY_MODEL", "claude-haiku-4-5-20251001")
+
 
 class RuleItem(BaseModel):
     category: str
@@ -75,7 +79,7 @@ Respond ONLY with valid JSON:
     try:
         client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
         response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model=CLASSIFY_MODEL,
             max_tokens=300,
             messages=[{"role": "user", "content": prompt}],
         )

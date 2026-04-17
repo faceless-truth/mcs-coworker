@@ -32,6 +32,7 @@ from config import (
     get_links, save_link, delete_link,
     get_staff, save_staff, delete_staff,
     update_claude_model,
+    update_claude_models,
 )
 from graph_client import GraphClient, MCS_TENANT_ID, MCS_CLIENT_ID
 from plugin_loader import PluginLoader
@@ -1102,14 +1103,16 @@ class App(ctk.CTk):
         self._log("Scheduler started. Email triage running automatically.")
 
     def _auto_update_claude_model(self):
-        """Query Anthropic API for the latest Haiku model and cache it."""
+        """Query Anthropic API and cache both the fast (Haiku) and reasoning (Sonnet) models."""
         api_key = get_setting("anthropic_api_key")
         if not api_key:
             return
         try:
-            model = update_claude_model(api_key)
+            models = update_claude_models(api_key)
+            fast = models.get("fast", "unknown")
+            reasoning = models.get("reasoning", "unknown")
             self.after(0, lambda: self._log(
-                f"[Claude] Using model: {model}"
+                f"[Claude] Fast model: {fast}  |  Reasoning model: {reasoning}"
             ))
         except Exception:
             pass
