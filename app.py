@@ -2564,26 +2564,60 @@ class App(ctk.CTk):
                             font=ctk.CTkFont(size=12)).pack(side="left", padx=4)
             self._bh_day_vars[num] = var
 
-        # ── Integrations: XPM ─────────────────────────────────────────────
+        # ── Integrations: XPM (Xero OAuth 2.0) ───────────────────────────────────────────
         self._settings_section(scroll, "XPM / Xero Practice Manager")
-        ctk.CTkLabel(scroll,
-                     text="Connect to XPM to enable WIP summaries, job lookups, client notes, and meeting prep.",
-                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED,
-                     wraplength=500, anchor="w", justify="left").pack(anchor="w", pady=(0, 6))
-        self._settings_field(scroll, "xpm_api_key", "XPM API Key",
-                             get_setting("xpm_api_key", ""), show="*")
-        self._settings_field(scroll, "xpm_base_url", "XPM Base URL",
-                             get_setting("xpm_base_url", "https://api.xero.com/practicemanager/3.0"))
+        ctk.CTkLabel(
+            scroll,
+            text="Connect to Xero XPM via OAuth to enable WIP summaries, job lookups, client notes, and meeting prep.",
+            font=ctk.CTkFont(size=12), text_color=TEXT_MUTED,
+            wraplength=500, anchor="w", justify="left",
+        ).pack(anchor="w", pady=(0, 6))
 
-        # XPM connection test button
+        # Client ID display row
+        cid_row = ctk.CTkFrame(scroll, fg_color="transparent")
+        cid_row.pack(fill="x", pady=(2, 4))
+        ctk.CTkLabel(cid_row, text="App (Client ID):", width=130,
+                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED).pack(side="left")
+        ctk.CTkLabel(cid_row,
+                     text=get_setting("xero_client_id", "Not configured"),
+                     font=ctk.CTkFont(size=12, family="Courier"),
+                     text_color=TEXT_PRIMARY).pack(side="left", padx=4)
+
+        # OAuth status + action buttons row
         xpm_row = ctk.CTkFrame(scroll, fg_color="transparent")
-        xpm_row.pack(fill="x", pady=(4, 8))
-        self._xpm_status_label = ctk.CTkLabel(xpm_row, text="",
-                     font=ctk.CTkFont(size=12), text_color=TEXT_MUTED)
-        ctk.CTkButton(xpm_row, text="Test XPM Connection", width=180, height=32,
-                      fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
-                      command=self._test_xpm_connection).pack(side="left")
-        self._xpm_status_label.pack(side="left", padx=12)
+        xpm_row.pack(fill="x", pady=(6, 8))
+
+        try:
+            from xero_oauth import is_authorised as _xero_authed
+            _xero_connected = _xero_authed()
+        except Exception:
+            _xero_connected = False
+
+        self._xpm_status_label = ctk.CTkLabel(
+            xpm_row,
+            text="✅ Connected to Xero XPM" if _xero_connected else "⚠ Not yet authorised",
+            font=ctk.CTkFont(size=12),
+            text_color=ACCENT_GREEN if _xero_connected else ACCENT_AMBER,
+        )
+        self._xpm_status_label.pack(side="left", padx=(0, 14))
+
+        ctk.CTkButton(
+            xpm_row, text="Connect Xero", width=140, height=32,
+            fg_color=BRAND_BLUE, hover_color=BRAND_DARK,
+            command=self._connect_xero,
+        ).pack(side="left", padx=(0, 6))
+
+        ctk.CTkButton(
+            xpm_row, text="Test Connection", width=140, height=32,
+            fg_color="#37474F", hover_color="#263238",
+            command=self._test_xpm_connection,
+        ).pack(side="left", padx=(0, 6))
+
+        ctk.CTkButton(
+            xpm_row, text="Disconnect", width=110, height=32,
+            fg_color="#C62828", hover_color="#B71C1C",
+            command=self._disconnect_xero,
+        ).pack(side="left")
 
         # ── Integrations: FuseSign ────────────────────────────────────────────
         self._settings_section(scroll, "FuseSign")
@@ -2741,26 +2775,45 @@ class App(ctk.CTk):
         from approval_queue import get_approval_queue
         get_approval_queue().set_threshold(float(value))
 
+    def _connect_xero(self):
+        """Launch the Xero OAuth flow in a background thread."""
+        self._xpm_status_label.configure(text="Opening Xero login...", text_color=TEXT_MUTED)
+        def _do_connect():
+            try:
+                from xero_oauth import start_auth_flow
+                token_data = start_auth_flow(timeout=300)
+                self.after(0, lambda: self._xpm_status_label.configure(
+                    text="✅ Connected to Xero XPM", text_color=ACCENT_GREEN))
+            except Exception as e:
+                self.after(0, lambda err=str(e): self._xpm_status_label.configure(
+                    text=f"Failed: {err[:80]}", text_color="#C62828"))
+        threading.Thread(target=_do_connect, daemon=True).start()
+
+    def _disconnect_xero(self):
+        """Revoke the Xero refresh token and update the status label."""
+        try:
+            from xero_oauth import revoke_token
+            revoke_token()
+            self._xpm_status_label.configure(
+                text="⚠ Disconnected", text_color=ACCENT_AMBER)
+        except Exception as e:
+            messagebox.showerror("Disconnect Error", str(e))
+
     def _test_xpm_connection(self):
-        """Save current XPM credentials then test the connection."""
-        api_key = self._settings_fields.get("xpm_api_key", (None, None))[1]
-        base_url = self._settings_fields.get("xpm_base_url", (None, None))[1]
-        if api_key:
-            set_setting("xpm_api_key", api_key.get().strip())
-        if base_url:
-            set_setting("xpm_base_url", base_url.get().strip())
+        """Test the XPM connection using the stored OAuth token."""
         self._xpm_status_label.configure(text="Testing...", text_color=TEXT_MUTED)
         def _do_test():
             try:
                 from gateway_client import XPMClient
                 client = XPMClient()
-                clients = client.list_clients(search="", limit=1)
+                clients = client.list_clients(page=1, page_size=1)
+                count = len(clients) if isinstance(clients, list) else 1
                 self.after(0, lambda: self._xpm_status_label.configure(
-                    text=f"Connected ({len(clients)} client(s) found)",
+                    text=f"✅ Connected ({count} client(s) found)",
                     text_color=ACCENT_GREEN))
             except Exception as e:
                 self.after(0, lambda err=str(e): self._xpm_status_label.configure(
-                    text=f"Failed: {err[:60]}", text_color="#C62828"))
+                    text=f"Failed: {err[:80]}", text_color="#C62828"))
         threading.Thread(target=_do_test, daemon=True).start()
 
     def _test_fusesign_connection(self):
