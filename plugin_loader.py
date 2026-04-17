@@ -30,6 +30,7 @@ from plugin_base import AgentPlugin, PluginContext, PluginResult
 from config import (
     get_setting, get_plugin_state, save_plugin_state, get_all_plugin_states
 )
+from event_bus import EventBus, HeartbeatPlugin
 
 if getattr(sys, 'frozen', False):
     # Running as PyInstaller bundle — plugins sit next to the .exe
@@ -165,6 +166,8 @@ class PluginLoader:
         self._running = False
         self._on_run_complete: Callable | None = None  # called after each plugin run
         self._on_plugin_registered: Callable | None = None  # called when new plugin discovered
+        # Subscribe to heartbeat ticks so the scheduler wakes up on each tick
+        EventBus.subscribe("heartbeat.tick", self._on_heartbeat_tick, async_dispatch=False)
 
     # ── Setup ─────────────────────────────────────────────────────────────────
 
@@ -298,6 +301,12 @@ class PluginLoader:
             result = lp.instance.run(ctx)
         except Exception as e:
             result = PluginResult(success=False, error=str(e))
+            # Publish failure event
+            EventBus.emit(
+                "plugin.run.failed",
+                payload={"plugin_id": plugin_id, "error": str(e)},
+                source="PluginLoader",
+            )
 
         lp.last_run = datetime.now()
         lp.last_result = "✅ Success" if result.success else f"❌ {result.error}"
@@ -309,6 +318,19 @@ class PluginLoader:
 
         self._log(f"{lp.icon} Done: {lp.last_summary or lp.last_result}")
         self._log(f"{'─' * 50}\n")
+
+        # Publish completion event so other plugins/components can react
+        EventBus.emit(
+            "plugin.run.complete",
+            payload={
+                "plugin_id": plugin_id,
+                "success": result.success,
+                "summary": result.summary,
+                "actions_taken": result.actions_taken,
+                "drafts_created": result.drafts_created,
+            },
+            source="PluginLoader",
+        )
 
         if self._on_run_complete:
             self._on_run_complete(plugin_id, result)
@@ -324,7 +346,7 @@ class PluginLoader:
     # ── Scheduler ─────────────────────────────────────────────────────────────
 
     def start_scheduler(self):
-        """Start the background scheduler thread."""
+        """Start the background scheduler thread and the heartbeat."""
         if self._running:
             return
         self._running = True
@@ -332,12 +354,26 @@ class PluginLoader:
             target=self._scheduler_loop, daemon=True
         )
         self._scheduler_thread.start()
+        # Start the heartbeat — fires every 60 s by default
+        heartbeat_interval = int(get_setting("heartbeat_interval_seconds", "60"))
+        HeartbeatPlugin.start(interval_seconds=heartbeat_interval)
+        EventBus.emit("app.started", source="PluginLoader")
         self._log("⏱ Scheduler started.")
 
     def stop_scheduler(self):
-        """Stop the background scheduler."""
+        """Stop the background scheduler and heartbeat."""
         self._running = False
+        HeartbeatPlugin.stop()
+        EventBus.emit("app.stopping", source="PluginLoader")
         self._log("⏱ Scheduler stopped.")
+
+    def _on_heartbeat_tick(self, event) -> None:
+        """Called on every heartbeat tick — runs any due plugins."""
+        if self._running:
+            try:
+                self.run_all_due()
+            except Exception as e:
+                self._log(f"⚠ Heartbeat tick error: {e}")
 
     def _is_within_business_hours(self) -> bool:
         """Check if current Melbourne time is within configured business hours."""
@@ -485,6 +521,7 @@ class PluginLoader:
             claude_fast=self._claude_fast,
             claude_reason=self._claude_reason,
             memory=memory,
+            event_bus=EventBus,
             log=self._log,
             notify=notify,
             settings=get_all_settings(),
