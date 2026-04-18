@@ -77,7 +77,7 @@ def _init_backend():
     log.info("Approval queue ready")
 
     # KPI monitor
-    km = KPIMonitor()
+    km = KPIMonitor  # already a singleton instance, not a class
     log.info("KPI monitor ready")
 
     # Wire into API server

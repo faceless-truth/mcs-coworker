@@ -16,7 +16,7 @@ from typing import Any
 
 import queue
 import time
-from flask import Flask, Response, jsonify, request, stream_with_context
+from flask import Flask, Response, jsonify, request, stream_with_context, send_from_directory
 from flask_cors import CORS
 
 # ── Backend imports ────────────────────────────────────────────────────────────
@@ -954,6 +954,28 @@ def chat_history():
 def clear_chat_history():
     clear_feedback_history()
     return ok()
+
+# ── Frontend static file serving ──────────────────────────────────────────────────────────────
+# Serves the built React app (frontend_dist/) when running in installed mode.
+
+def _frontend_dir() -> str | None:
+    candidate = os.path.join(os.path.dirname(os.path.abspath(__file__)), "frontend_dist")
+    return candidate if os.path.isdir(candidate) else None
+
+
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_frontend(path):
+    """Serve the React SPA. Non-API paths return index.html (SPA routing)."""
+    frontend = _frontend_dir()
+    if frontend is None:
+        return jsonify({"error": "Frontend not built."}), 404
+    # Serve real static assets (JS, CSS, images, etc.)
+    if path and os.path.isfile(os.path.join(frontend, path)):
+        return send_from_directory(frontend, path)
+    # All other paths → index.html (React Router handles routing client-side)
+    return send_from_directory(frontend, "index.html")
+
 
 def run_server(host="127.0.0.1", port=API_PORT, debug=False):
     """Start the Flask server in a background thread."""
