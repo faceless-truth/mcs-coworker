@@ -48,17 +48,31 @@ else:
     PLUGINS_DIR = Path(__file__).parent / "plugins"
 
 # Plugin IDs that are shown as templates / not run automatically
-# Only plugin_email_triage is active — everything else is hidden
 TEMPLATE_PLUGIN_IDS = {
     "plugin_template",
     "plugin_noa_workflow",
-    "plugin_fusesign_monitor",
     "plugin_meeting_prep",
     "plugin_monthly_invoicing",
-    "plugin_debtor_followup",
-    "plugin_asic_reminder",
     "plugin_client_checkin",
     "plugin_client_outreach",
+    # Retired — replaced by plugin_email_reply
+    "plugin_auto_reply_ross",
+    "plugin_elio_draft_replies",
+    # Retired — replaced by plugin_email_reply (reception profile)
+    "plugin_email_triage",
+}
+
+# Plugins that only run when reception_mode = "1"
+RECEPTION_ONLY_PLUGIN_IDS = {
+    "plugin_noa_processor",
+    "plugin_asic_returns",
+    "plugin_debtor_followup",
+    "plugin_fusesign_monitor",
+}
+
+# Plugins that only run when reception_mode = "0" (accountant mode)
+ACCOUNTANT_ONLY_PLUGIN_IDS = {
+    "plugin_kpi_monitor",
 }
 
 
@@ -172,14 +186,17 @@ class LoadedPlugin:
     def is_due(self) -> bool:
         sched = self.instance.default_schedule
         is_scheduled = sched.is_calendar_based() or self.schedule_seconds > 0
-        return (
-            self.enabled
-            and self.is_ready
-            and not self.is_template
-            and is_scheduled
-            and self._next_run_at > 0
-            and time.time() >= self._next_run_at
-        )
+        if not (self.enabled and self.is_ready and not self.is_template
+                and is_scheduled and self._next_run_at > 0
+                and time.time() >= self._next_run_at):
+            return False
+        # Mode gate: reception-only plugins only run in reception_mode
+        reception_mode = get_setting("reception_mode", "0") == "1"
+        if self.plugin_id in RECEPTION_ONLY_PLUGIN_IDS and not reception_mode:
+            return False
+        if self.plugin_id in ACCOUNTANT_ONLY_PLUGIN_IDS and reception_mode:
+            return False
+        return True
 
 
 class PluginLoader:

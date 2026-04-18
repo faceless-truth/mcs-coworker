@@ -414,6 +414,7 @@ def save_settings():
         "fast_model", "reasoning_model",
         "monthly_ai_budget_aud",
         "skip_public_holidays", "public_holiday_state",
+        "reception_mode", "staff_profile",
         # Xero OAuth credentials
         "xero_client_id", "xero_client_secret",
     }

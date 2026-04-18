@@ -154,6 +154,9 @@ def init_db():
         # Business hours
         "skip_public_holidays":   "1",
         "public_holiday_state":   "VIC",
+        # Installation mode
+        "reception_mode":         "0",   # 1 = reception inbox (NOA/ASIC/Debtor/FuseSign active)
+        "staff_profile":          "elio", # reception | elio | ross | harry | brooke | louise | lyn
         # Stream 3 — Heartbeat interval
         "heartbeat_interval_seconds": "60",
         # Stream 6 — Approval queue

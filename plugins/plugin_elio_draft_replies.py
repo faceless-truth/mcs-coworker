@@ -1,3 +1,7 @@
+"""
+DEPRECATED — Replaced by plugin_email_reply with staff_profile = "elio".
+This file is retained for reference only and will not run.
+"""
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
 import json
 from datetime import datetime
