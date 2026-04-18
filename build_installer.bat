@@ -173,27 +173,32 @@ if not exist "%FRONTEND_DIR%\package.json" (
 echo.
 
 :: ---------------------------------------------------------------------------
-:: STEP 4 - Copy app source files
+:: STEP 4 - Clone app source into build dir (preserves .git for auto-updater)
 :: ---------------------------------------------------------------------------
-echo [4/6] Copying app source...
+echo [4/6] Cloning app source (with .git for auto-updates)...
 
-robocopy "%REPO_DIR%" "%APP_DIR%" *.py /S ^
-    /XD __pycache__ venv .git dist build installer_build installer_output node_modules ^
-    /XF *.pyc *.pyo ^
-    /NFL /NDL /NJH /NJS >nul
+:: Remove the app dir created in STEP 1 so git clone can create it fresh
+if exist "%APP_DIR%" rmdir /s /q "%APP_DIR%"
 
-robocopy "%REPO_DIR%\plugins" "%APP_DIR%\plugins" *.py /S ^
-    /XD __pycache__ ^
-    /XF *.pyc *.pyo ^
-    /NFL /NDL /NJH /NJS >nul
-
-if exist "%REPO_DIR%\assets" (
-    robocopy "%REPO_DIR%\assets" "%APP_DIR%\assets" /E /NFL /NDL /NJH /NJS >nul
+:: Clone the local repo — this is fast (local disk) and includes .git
+git clone "%REPO_DIR%" "%APP_DIR%" --quiet
+if errorlevel 1 (
+    echo [ERROR] git clone failed.
+    pause ^& exit /b 1
 )
 
-if exist "%REPO_DIR%\requirements.txt" (
-    copy /Y "%REPO_DIR%\requirements.txt" "%APP_DIR%\requirements.txt" >nul
+:: Copy the built frontend dist into the cloned app dir
+if exist "%FRONTEND_DIR%\dist" (
+    xcopy /E /I /Y /Q "%FRONTEND_DIR%\dist" "%APP_DIR%\frontend_dist" >nul
 )
+
+:: Remove large/unnecessary folders from the cloned copy to keep installer small
+if exist "%APP_DIR%\installer_build"  rmdir /s /q "%APP_DIR%\installer_build"
+if exist "%APP_DIR%\installer_output" rmdir /s /q "%APP_DIR%\installer_output"
+if exist "%APP_DIR%\node_modules"      rmdir /s /q "%APP_DIR%\node_modules"
+if exist "%APP_DIR%\venv"              rmdir /s /q "%APP_DIR%\venv"
+if exist "%APP_DIR%\dist"              rmdir /s /q "%APP_DIR%\dist"
+if exist "%APP_DIR%\build"             rmdir /s /q "%APP_DIR%\build"
 
 :: Write a VERSION file with the current git commit hash
 for /f %%i in ('git -C "%REPO_DIR%" rev-parse --short HEAD 2^>nul') do set GIT_HASH=%%i
