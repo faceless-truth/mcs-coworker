@@ -157,6 +157,7 @@ def _launch_app() -> subprocess.Popen:
 
     env = os.environ.copy()
     env["MCS_DATA_DIR"]    = str(data_d)
+    env["PYTHONIOENCODING"] = "utf-8"
     env["MCS_INSTALL_DIR"] = str(_install_dir())
 
     # pythonw.exe suppresses the console window on Windows
@@ -170,8 +171,8 @@ def _launch_app() -> subprocess.Popen:
         cwd=str(_app_dir()),
         env=env,
         # Redirect stdout/stderr to a log file so errors are visible
-        stdout=open(_log_dir() / "app_stdout.log", "w", encoding="utf-8"),
-        stderr=open(_log_dir() / "app_stderr.log", "w", encoding="utf-8"),
+        stdout=open(_log_dir() / "app_stdout.log", "w", encoding="utf-8", errors="replace"),
+        stderr=open(_log_dir() / "app_stderr.log", "w", encoding="utf-8", errors="replace"),
     )
     return proc
 

@@ -6,6 +6,15 @@ All Python backend modules (plugin_loader, config, graph_client, etc.) remain un
 """
 from __future__ import annotations
 
+# ── Force UTF-8 output on Windows (prevents UnicodeEncodeError with emoji) ───
+import sys as _sys
+if hasattr(_sys.stdout, "reconfigure"):
+    try:
+        _sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        _sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 import os
 import sys
 import time
