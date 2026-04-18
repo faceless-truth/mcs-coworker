@@ -67,10 +67,10 @@ if not exist "%INNO_SETUP_DIR%\iscc.exe" (
 )
 
 :: Add Inno Setup to PATH for this session
-set PATH=%PATH%;%INNO_SETUP_DIR%
+set "PATH=%PATH%;%INNO_SETUP_DIR%"
 
 :: Auto-install PyInstaller if missing
-pyinstaller --version >nul 2>&1
+where pyinstaller >nul 2>&1
 if errorlevel 1 (
     echo [0/7] PyInstaller not found - installing...
     pip install pyinstaller --quiet
@@ -83,10 +83,11 @@ if errorlevel 1 (
 )
 
 :: Auto-install pnpm if missing (needed for React frontend build)
-pnpm --version >nul 2>&1
+where pnpm >nul 2>&1
 if errorlevel 1 (
     echo [0/7] pnpm not found - installing via npm...
     npm install -g pnpm --silent >nul 2>&1
+    ver >nul
     if errorlevel 1 (
         echo [WARN] Could not install pnpm. Frontend build will be skipped.
     ) else (
