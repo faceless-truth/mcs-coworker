@@ -123,7 +123,7 @@ del "%BUILD_DIR%\get-pip.py" >nul 2>&1
 echo [2/6] Installing Python packages (this takes a few minutes)...
 "%PYTHON_DIR%\python.exe" -m pip install --no-warn-script-location --quiet ^
     anthropic flask flask-cors requests ^
-    pywebview ^
+    pywebview pythonnet ^
     pdfminer.six pillow openpyxl pandas beautifulsoup4 ^
     schedule python-dateutil holidays ^
     msal
@@ -276,3 +276,25 @@ echo   Future updates: just git push - no reinstall needed.
 echo  ============================================================
 echo.
 pause
+goto :eof
+
+:: ---------------------------------------------------------------------------
+:: SUBROUTINE: find_frontend_dir
+:: Tries common locations for the frontend repo
+:: ---------------------------------------------------------------------------
+:find_frontend_dir
+if exist "%FRONTEND_DIR%\package.json" goto :eof
+:: Try sibling folder names
+for %%D in (
+    "C:\Users\ElioScarton\mcs-coworker-demo"
+    "C:\Users\ElioScarton\mcs-coworker-frontend"
+    "%REPO_DIR%\..\mcs-coworker-demo"
+    "%REPO_DIR%\..\mcs-coworker-frontend"
+) do (
+    if exist "%%~D\package.json" (
+        set FRONTEND_DIR=%%~D
+        goto :eof
+    )
+)
+:: Not found - build_installer will warn and skip frontend build
+goto :eof
