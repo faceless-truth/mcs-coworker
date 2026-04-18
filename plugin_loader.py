@@ -28,6 +28,27 @@ except ImportError:
     pytz = None
 
 from plugin_base import AgentPlugin, PluginContext, PluginResult
+
+
+def _safe_log(callback: "Callable[[str], None]") -> "Callable[[str], None]":
+    """Wrap a log callback so it never raises UnicodeEncodeError.
+    On Windows the default stdout uses cp1252 which can't handle emoji.
+    We encode to ascii with xmlcharrefreplace so the message is still readable.
+    """
+    def _log(msg: str) -> None:
+        try:
+            callback(msg)
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            safe = msg.encode("ascii", errors="replace").decode("ascii")
+            try:
+                callback(safe)
+            except Exception:
+                pass
+        except Exception:
+            pass
+    return _log
+
+
 from config import (
     get_setting, get_plugin_state, save_plugin_state, get_all_plugin_states
 )
@@ -206,7 +227,7 @@ class PluginLoader:
     """
 
     def __init__(self, log_callback: Callable[[str], None] = print):
-        self._log = log_callback
+        self._log = _safe_log(log_callback)
         self._plugins: dict[str, LoadedPlugin] = {}
         self._graph = None
         self._claude = None        # legacy — kept for backward compat, mirrors _claude_fast
