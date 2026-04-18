@@ -29,7 +29,7 @@ You only need to rebuild the installer when Python package dependencies change (
 ### Build steps
 
 ```bat
-cd C:\path\to\mcs-coworker
+cd C:\Users\ElioScarton\mcs-coworker
 build_installer.bat
 ```
 

@@ -35,13 +35,13 @@ echo [CHECK] All prerequisites found.
 echo.
 
 :: ── Configuration ──────────────────────────────────────────────────────────
-set REPO_DIR=%~dp0
+set REPO_DIR=C:\Users\ElioScarton\mcs-coworker\
 set BUILD_DIR=%REPO_DIR%installer_build
 set PYTHON_EMBED_URL=https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip
 set PYTHON_EMBED_ZIP=%BUILD_DIR%\python-embed.zip
 set PYTHON_DIR=%BUILD_DIR%\python
 set APP_DIR=%BUILD_DIR%\app
-set FRONTEND_DIR=%REPO_DIR%..\mcs-coworker-demo
+set FRONTEND_DIR=C:\Users\ElioScarton\mcs-coworker-demo
 
 :: ── Clean previous build ───────────────────────────────────────────────────
 echo [1/7] Cleaning previous build...
