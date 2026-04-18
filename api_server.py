@@ -1,5 +1,5 @@
 """
-EVA — Flask API Server
+MCS CoWorker — Flask API Server
 Bridges the React/pywebview frontend to all Python backend modules.
 Runs on localhost:7842 — not exposed externally.
 """
@@ -534,11 +534,11 @@ def xero_oauth_callback():
         ), 400
 
     return (
-        "<!DOCTYPE html><html><head><title>EVA — Xero Connected</title>"
+        "<!DOCTYPE html><html><head><title>MCS CoWorker — Xero Connected</title>"
         "<style>body{font-family:sans-serif;text-align:center;padding:60px;background:#f0f4f8}"
         "h1{color:#13b5ea}p{color:#444}</style></head>"
         "<body><h1>&#10003; Xero Connected!</h1>"
-        "<p>EVA is now connected to Xero XPM.</p>"
+        "<p>MCS CoWorker is now connected to Xero XPM.</p>"
         "<p>You can close this window and return to CoWorker.</p></body></html>"
     )
 

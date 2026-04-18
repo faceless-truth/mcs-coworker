@@ -1,5 +1,5 @@
 """
-EVA — Auto-Update System (Hybrid Installer Edition)
+MCS CoWorker — Auto-Update System (Hybrid Installer Edition)
 =============================================================
 Performs a silent git pull + pip install on every launch so that
 pushing a fix to GitHub is all that is needed to update every
@@ -83,7 +83,7 @@ def _get_remote_commit() -> Optional[str]:
         req = Request(
             f"https://api.github.com/repos/{GITHUB_REPO}/commits/main",
             headers={"Accept": "application/vnd.github.v3+json",
-                     "User-Agent": "EVA-Updater/2.0"},
+                     "User-Agent": "MCS CoWorker-Updater/2.0"},
         )
         with urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read())

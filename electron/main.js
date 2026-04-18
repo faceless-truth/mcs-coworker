@@ -1,5 +1,5 @@
 /**
- * EVA — Electron Main Process
+ * MCS CoWorker — Electron Main Process
  * Launches the Python Flask API server, then opens the React UI in a frameless window.
  * Supports system tray, auto-start on login, and graceful shutdown.
  */
@@ -15,7 +15,7 @@ const API_PORT = 7842;
 const API_URL = `http://127.0.0.1:${API_PORT}`;
 const REACT_BUILD = path.join(__dirname, "..", "frontend", "dist");
 const PYTHON_ENTRY = path.join(__dirname, "..", "api_server_standalone.py");
-const APP_NAME = "EVA";
+const APP_NAME = "MCS CoWorker";
 
 let mainWindow = null;
 let tray = null;

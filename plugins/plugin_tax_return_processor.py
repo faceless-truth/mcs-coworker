@@ -241,7 +241,7 @@ class TaxReturnProcessorPlugin(AgentPlugin):
       <td style="padding:4px 0">{flagged_count}</td></tr>
 </table>
 <p>The full report is attached. Each disallowed item includes the specific ATO citation.</p>
-<p>Kind regards,<br>EVA — CoWorker</p>
+<p>Kind regards,<br>MCS CoWorker — CoWorker</p>
 """
                 if context.draft_mode:
                     import tempfile

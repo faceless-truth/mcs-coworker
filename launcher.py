@@ -1,7 +1,7 @@
 """
-EVA — Windows Launcher
+MCS CoWorker — Windows Launcher
 ================================
-This is the entry point launched by EVA.vbs via wscript.exe.
+This is the entry point launched by MCSCoWorker.vbs via wscript.exe.
 It is a thin wrapper that:
 
   1. Shows a small splash/status window ("Checking for updates...")
@@ -15,8 +15,8 @@ via git pull — so a new installer is only needed when Python dependencies chan
 
 INSTALL LAYOUT (created by installer.iss)
 -----------------------------------------
-C:\\Program Files\\EVA\\
-    EVA.vbs              <- VBScript launcher (no compilation needed)
+C:\\Program Files\\MCS CoWorker\\
+    MCSCoWorker.vbs              <- VBScript launcher (no compilation needed)
     python\\                 <- embedded Python 3.11 runtime
         python.exe
         pythonw.exe
@@ -46,7 +46,7 @@ from pathlib import Path
 # ── Path resolution ────────────────────────────────────────────────────────────
 
 def _install_dir() -> Path:
-    """Root of the installation directory (where EVA.exe lives)."""
+    """Root of the installation directory (where MCSCoWorker.exe lives)."""
     if getattr(sys, "frozen", False):
         return Path(sys.executable).parent
     # Dev mode: assume we are in the repo root
@@ -81,7 +81,7 @@ class SplashWindow:
 
     def __init__(self):
         self.root = tk.Tk()
-        self.root.title("EVA")
+        self.root.title("MCS CoWorker")
         self.root.resizable(False, False)
         self.root.overrideredirect(True)   # borderless
         self.root.configure(bg="#1a1a2e")
@@ -95,7 +95,7 @@ class SplashWindow:
         self.root.geometry(f"{w}x{h}+{x}+{y}")
 
         tk.Label(
-            self.root, text="EVA",
+            self.root, text="MCS CoWorker",
             font=("Segoe UI", 16, "bold"),
             fg="#e0e0e0", bg="#1a1a2e"
         ).pack(pady=(18, 4))
@@ -166,8 +166,8 @@ def _launch_app() -> subprocess.Popen:
     data_d  = _data_dir()
 
     env = os.environ.copy()
-    env["EVA_DATA_DIR"]    = str(data_d)
-    env["EVA_INSTALL_DIR"] = str(_install_dir())
+    env["MCS_DATA_DIR"]    = str(data_d)
+    env["MCS_INSTALL_DIR"] = str(_install_dir())
 
     # pythonw.exe suppresses the console window on Windows
     pythonw = python.parent / "pythonw.exe"

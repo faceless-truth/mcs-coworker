@@ -91,7 +91,7 @@ class EmailTriagePlugin(AgentPlugin):
 
     # Tier 1 categories that get a high confidence score and can auto-send
     TIER_1_CATEGORIES = {"CHECKLIST_REQUEST", "PRICING_ENQUIRY"}
-    EVA_CATEGORY_TAG  = "EVA Processing"
+    MCS_CATEGORY_TAG  = "MCS CoWorker Processing"
 
     def run(self, context: PluginContext) -> PluginResult:
         graph      = context.graph
@@ -134,10 +134,10 @@ class EmailTriagePlugin(AgentPlugin):
 
             log(f'  Classifying: "{subject}" from {from_email}')
 
-            # Apply "EVA Processing" category tag immediately so the accountant
-            # can see that EVA is handling this email (Fix 1: Inbox Ghost)
+            # Apply "MCS CoWorker Processing" category tag immediately so the accountant
+            # can see that MCS CoWorker is handling this email (Fix 1: Inbox Ghost)
             try:
-                graph.add_category(msg_id, self.EVA_CATEGORY_TAG)
+                graph.add_category(msg_id, self.MCS_CATEGORY_TAG)
             except Exception:
                 pass  # Non-critical — continue even if tagging fails
 
@@ -153,9 +153,9 @@ class EmailTriagePlugin(AgentPlugin):
 
                 if category == "OTHER":
                     log("    ↳ Left in inbox — no rule matched.")
-                    # Remove EVA Processing tag — we're not handling this one
+                    # Remove MCS CoWorker Processing tag — we're not handling this one
                     try:
-                        graph.remove_category(msg_id, self.EVA_CATEGORY_TAG)
+                        graph.remove_category(msg_id, self.MCS_CATEGORY_TAG)
                     except Exception:
                         pass
                     log_activity(from_email, subject, category, "no_action")
@@ -235,9 +235,9 @@ class EmailTriagePlugin(AgentPlugin):
                     graph.flag_email(msg_id)
                     log("    ↳ Flagged for follow-up.")
 
-                # Remove EVA Processing tag and apply the final category tag
+                # Remove MCS CoWorker Processing tag and apply the final category tag
                 try:
-                    graph.remove_category(msg_id, self.EVA_CATEGORY_TAG)
+                    graph.remove_category(msg_id, self.MCS_CATEGORY_TAG)
                     graph.add_category(msg_id, category.replace("_", " ").title())
                 except Exception:
                     pass

@@ -63,7 +63,7 @@ DIGEST_SOURCES = [
 
 _DIGEST_HEADERS = {
     "User-Agent": (
-        "Mozilla/5.0 (compatible; EVA/2.0; +https://mcands.com.au)"
+        "Mozilla/5.0 (compatible; MCSCoWorker/2.0; +https://mcands.com.au)"
     )
 }
 

@@ -76,8 +76,8 @@ NO_REPLY_PATTERNS = [
 # Tier 1 categories — high-confidence template responses that can auto-send
 TIER_1_CATEGORIES = {"CHECKLIST_REQUEST", "PRICING_ENQUIRY"}
 
-# EVA processing tag applied while an email is being handled
-EVA_CATEGORY_TAG = "EVA Processing"
+# MCS CoWorker processing tag applied while an email is being handled
+MCS_CATEGORY_TAG = "MCS CoWorker Processing"
 
 
 class EmailReplyPlugin(AgentPlugin):
@@ -211,7 +211,7 @@ class EmailReplyPlugin(AgentPlugin):
             context.log(f"[EmailReply] Reception: {from_email} — {subject}")
 
             try:
-                graph.add_category(msg_id, EVA_CATEGORY_TAG)
+                graph.add_category(msg_id, MCS_CATEGORY_TAG)
             except Exception:
                 pass
 
@@ -228,7 +228,7 @@ class EmailReplyPlugin(AgentPlugin):
                 context.log(f"    ↳ Classified as OTHER — leaving in inbox.")
                 result.items_skipped += 1
                 try:
-                    graph.remove_category(msg_id, EVA_CATEGORY_TAG)
+                    graph.remove_category(msg_id, MCS_CATEGORY_TAG)
                 except Exception:
                     pass
                 continue
@@ -290,7 +290,7 @@ class EmailReplyPlugin(AgentPlugin):
                     pass
 
             try:
-                graph.remove_category(msg_id, EVA_CATEGORY_TAG)
+                graph.remove_category(msg_id, MCS_CATEGORY_TAG)
                 graph.add_category(msg_id, category.replace("_", " ").title())
             except Exception:
                 pass

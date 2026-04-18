@@ -3,7 +3,7 @@ setlocal EnableDelayedExpansion
 
 echo.
 echo  ============================================================
-echo   EVA - Windows Installer Builder
+echo   MCS CoWorker - Windows Installer Builder
 echo  ============================================================
 echo.
 
@@ -190,7 +190,7 @@ echo.
 :: ---------------------------------------------------------------------------
 echo [5/6] Creating launcher...
 
-:: EVA.vbs - double-clickable launcher, no console window
+:: MCSCoWorker.vbs - double-clickable launcher, no console window
 :: It finds pythonw.exe relative to itself and runs launcher.py
 (
 echo Set oShell = CreateObject^("WScript.Shell"^)
@@ -202,16 +202,16 @@ echo pythonExe = scriptDir ^& "\python\pythonw.exe"
 echo launcherScript = appDir ^& "\launcher.py"
 echo.
 echo If Not oFSO.FileExists^(pythonExe^) Then
-echo     MsgBox "EVA installation appears damaged." ^& vbCrLf ^& _
-echo            "Please reinstall from SharePoint.", vbCritical, "EVA"
+echo     MsgBox "MCS CoWorker installation appears damaged." ^& vbCrLf ^& _
+echo            "Please reinstall from SharePoint.", vbCritical, "MCS CoWorker"
 echo     WScript.Quit 1
 echo End If
 echo.
 echo oShell.CurrentDirectory = appDir
 echo oShell.Run Chr^(34^) ^& pythonExe ^& Chr^(34^) ^& " " ^& Chr^(34^) ^& launcherScript ^& Chr^(34^), 0, False
-) > "%BUILD_DIR%\EVA.vbs"
+) > "%BUILD_DIR%\MCSCoWorker.vbs"
 
-echo [5/6] Launcher created (EVA.vbs).
+echo [5/6] Launcher created (MCSCoWorker.vbs).
 echo.
 
 :: ---------------------------------------------------------------------------
@@ -229,9 +229,9 @@ echo.
 echo  ============================================================
 echo   Build complete!
 echo.
-echo   Installer: %OUTPUT_DIR%\EVA_Setup.exe
+echo   Installer: %OUTPUT_DIR%\MCSCoWorker_Setup.exe
 echo.
-echo   Upload EVA_Setup.exe to SharePoint.
+echo   Upload MCSCoWorker_Setup.exe to SharePoint.
 echo   Accountants download and double-click to install.
 echo   Future updates: just git push - no reinstall needed.
 echo  ============================================================

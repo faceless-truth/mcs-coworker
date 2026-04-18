@@ -1,4 +1,4 @@
-# EVA — Windows Setup Guide
+# MCS CoWorker — Windows Setup Guide
 
 ## Prerequisites
 
@@ -17,8 +17,8 @@ Open **Command Prompt** or **PowerShell** and run:
 
 ```bat
 :: 1. Clone the repository
-git clone https://github.com/faceless-truth/mcs-coworker.git C:\EVA
-cd C:\EVA
+git clone https://github.com/faceless-truth/mcs-coworker.git C:\MCS CoWorker
+cd C:\MCS CoWorker
 
 :: 2. Install Python dependencies
 pip install -r requirements.txt
@@ -41,23 +41,23 @@ cd ..
 
 ### Option A — Run directly (development / testing)
 ```bat
-cd C:\EVA\electron
+cd C:\MCS CoWorker\electron
 npx electron .
 ```
 
 ### Option B — Build a proper Windows installer
 ```bat
-cd C:\EVA\electron
+cd C:\MCS CoWorker\electron
 npm run build
 ```
-This creates `dist-electron\EVA Setup.exe` — install it like any Windows app.
+This creates `dist-electron\MCS CoWorker Setup.exe` — install it like any Windows app.
 
 ---
 
 ## Updating to the Latest Version
 
 ```bat
-cd C:\EVA
+cd C:\MCS CoWorker
 git pull origin main
 pip install -r requirements.txt
 cd frontend && npm run build && cd ..
@@ -80,7 +80,7 @@ Each accountant connects with their own Xero credentials — their CoWorker inst
 ## Auto-Start on Login
 
 CoWorker configures itself to start automatically with Windows. To disable this:
-- Open **Task Manager → Startup apps** and disable **EVA**
+- Open **Task Manager → Startup apps** and disable **MCS CoWorker**
 
 ---
 

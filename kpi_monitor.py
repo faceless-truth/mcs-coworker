@@ -1,5 +1,5 @@
 """
-EVA — Proactive KPI Monitoring (Tier 3C)
+MCS CoWorker — Proactive KPI Monitoring (Tier 3C)
 ==================================================
 Monitors key practice metrics and escalates automatically when thresholds
 are breached — without waiting for a human to notice.
