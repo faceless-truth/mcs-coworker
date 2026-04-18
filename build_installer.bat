@@ -19,7 +19,7 @@ set PYTHON_EMBED_ZIP=%BUILD_DIR%\python-embed.zip
 set PYTHON_DIR=%BUILD_DIR%\python
 set APP_DIR=%BUILD_DIR%\app
 set INNO_SETUP_DIR=C:\Program Files (x86)\Inno Setup 6
-set INNO_INSTALLER_URL=https://files.jrsoftware.org/is/6/innosetup-6.3.3.exe
+set INNO_INSTALLER_URL=https://github.com/jrsoftware/issrc/releases/download/is-6_7_1/innosetup-6.7.1.exe
 set INNO_INSTALLER_TMP=%TEMP%\innosetup-installer.exe
 
 :: ---------------------------------------------------------------------------
