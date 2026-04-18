@@ -1,6 +1,6 @@
 @echo off
 echo ===================================
-echo  MCS CoWorker - Build Frontend
+echo  EVA - Build Frontend
 echo ===================================
 echo.
 

@@ -1,5 +1,5 @@
 /**
- * MCS CoWorker — Electron Preload Script
+ * EVA — Electron Preload Script
  * Safely exposes IPC channels to the React renderer via contextBridge.
  */
 

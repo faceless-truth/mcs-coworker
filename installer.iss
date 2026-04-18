@@ -1,8 +1,8 @@
-; MCS CoWorker - Inno Setup Script
-; Produces: MCSCoWorker_Setup.exe
+; EVA - Inno Setup Script
+; Produces: EVA_Setup.exe
 ; Run via build_installer.bat
 
-#define MyAppName      "MCS CoWorker"
+#define MyAppName      "EVA"
 #define MyAppVersion   "2.0"
 #define MyAppPublisher "MC & S Accountants"
 #define MyAppURL       "https://mcands.com.au"
@@ -26,9 +26,9 @@ AppUpdatesURL={#MyAppURL}
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 AllowNoIcons=yes
-PrivilegesRequired=admin
+PrivilegesRequired=lowest
 OutputDir={#MyRepoDir}\installer_output
-OutputBaseFilename=MCSCoWorker_Setup
+OutputBaseFilename=EVA_Setup
 SetupIconFile={#MyRepoDir}\assets\icon.ico
 WizardImageFile={#MyRepoDir}\assets\installer_banner.bmp
 WizardSmallImageFile={#MyRepoDir}\assets\installer_icon.bmp
@@ -47,10 +47,10 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
 Name: "desktopicon";  Description: "Create a &desktop shortcut";              GroupDescription: "Additional icons:"; Flags: unchecked
-Name: "startupentry"; Description: "Start MCS CoWorker when &Windows starts"; GroupDescription: "Startup:";          Flags: unchecked
+Name: "startupentry"; Description: "Start EVA when &Windows starts"; GroupDescription: "Startup:";          Flags: unchecked
 
 [Files]
-Source: "{#MyBuildDir}\MCSCoWorker.vbs"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MyBuildDir}\EVA.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#MyBuildDir}\python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#MyBuildDir}\app\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#MyRepoDir}\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -59,22 +59,22 @@ Source: "{#MyRepoDir}\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion r
 Name: "{app}\data"; Permissions: users-full
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\MCSCoWorker.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\assets\icon.ico"
+Name: "{group}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\EVA.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\assets\icon.ico"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\MCSCoWorker.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\assets\icon.ico"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\EVA.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\assets\icon.ico"; Tasks: desktopicon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#MyAppName}"; ValueData: """{sys}\wscript.exe"" ""{app}\MCSCoWorker.vbs"""; Flags: uninsdeletevalue; Tasks: startupentry
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#MyAppName}"; ValueData: """{sys}\wscript.exe"" ""{app}\EVA.vbs"""; Flags: uninsdeletevalue; Tasks: startupentry
 
 [Run]
-Filename: "{sys}\wscript.exe"; Parameters: """{app}\MCSCoWorker.vbs"""; WorkingDir: "{app}"; Description: "Launch {#MyAppName} now"; Flags: nowait postinstall skipifsilent
+Filename: "{sys}\wscript.exe"; Parameters: """{app}\EVA.vbs"""; WorkingDir: "{app}"; Description: "Launch {#MyAppName} now"; Flags: nowait postinstall skipifsilent
 
 [Code]
 procedure InitializeWizard();
 begin
   WizardForm.WelcomeLabel2.Caption :=
-    'This will install MCS CoWorker on your computer.' + #13#10 + #13#10 +
-    'MCS CoWorker is your AI-powered accounting assistant. ' +
+    'This will install EVA on your computer.' + #13#10 + #13#10 +
+    'EVA is your AI-powered accounting assistant. ' +
     'It monitors your inbox, tracks ASIC returns, follows up debtors, ' +
     'and prepares your daily briefing automatically.' + #13#10 + #13#10 +
     'The app updates itself silently whenever your administrator ' +

@@ -1,5 +1,5 @@
 """
-MCS CoWorker — Multi-Agent Event Wiring (Tier 3A)
+EVA — Multi-Agent Event Wiring (Tier 3A)
 ==================================================
 This module wires the existing plugins together via the Event Bus so they
 react to each other's outcomes, not just run on independent timers.

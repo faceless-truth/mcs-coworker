@@ -1,5 +1,5 @@
 """
-xero_oauth.py — Xero OAuth 2.0 Authorization Code Flow for MCS CoWorker
+xero_oauth.py — Xero OAuth 2.0 Authorization Code Flow for EVA
 ========================================================================
 Handles the full OAuth lifecycle for the MCS Mate Xero Web App:
 
@@ -414,11 +414,11 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             # Serve a simple success page
             html = (
                 "<!DOCTYPE html>"
-                "<html><head><title>MCS CoWorker - Xero Connected</title>"
+                "<html><head><title>EVA - Xero Connected</title>"
                 "<style>body{font-family:sans-serif;text-align:center;padding:60px;background:#f0f4f8}"
                 "h1{color:#13b5ea}p{color:#444}</style></head>"
                 "<body><h1>&#10003; Xero Connected!</h1>"
-                "<p>MCS CoWorker is now connected to Xero XPM.</p>"
+                "<p>EVA is now connected to Xero XPM.</p>"
                 "<p>You can close this window.</p></body></html>"
             ).encode("utf-8")
             self.send_response(200)

@@ -1,5 +1,5 @@
 """
-MCS CoWorker — Token Metering & Cost Tracking (Tier 3B)
+EVA — Token Metering & Cost Tracking (Tier 3B)
 ========================================================
 Wraps every Claude API call to capture token usage, calculate cost,
 and persist records to SQLite for the dashboard.

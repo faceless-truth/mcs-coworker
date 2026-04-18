@@ -82,7 +82,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='MCS CoWorker',
+    name='EVA',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -99,5 +99,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='MCS CoWorker',
+    name='EVA',
 )

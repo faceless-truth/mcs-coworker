@@ -1,5 +1,5 @@
 """
-MCS CoWorker — Standalone API Server Entry Point
+EVA — Standalone API Server Entry Point
 Used by the Electron wrapper to start the Flask backend without the tkinter UI.
 Initialises all modules and starts the Flask server on port 7842.
 """
@@ -22,7 +22,7 @@ logging.basicConfig(
 log = logging.getLogger("coworker")
 
 def main():
-    log.info("MCS CoWorker API Server starting...")
+    log.info("EVA API Server starting...")
 
     # ── Initialise database ────────────────────────────────────────────────────
     from config import init_db

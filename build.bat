@@ -72,14 +72,14 @@ if errorlevel 1 (
 :: Post-build: copy plugins and launch scripts
 echo.
 echo [POST] Copying plugins and launch scripts...
-xcopy /E /I /Y plugins "dist\MCS CoWorker\plugins"
-copy /Y launch.bat "dist\MCS CoWorker\launch.bat" >nul 2>&1
-copy /Y launch_silent.vbs "dist\MCS CoWorker\launch_silent.vbs" >nul 2>&1
+xcopy /E /I /Y plugins "dist\EVA\plugins"
+copy /Y launch.bat "dist\EVA\launch.bat" >nul 2>&1
+copy /Y launch_silent.vbs "dist\EVA\launch_silent.vbs" >nul 2>&1
 
 echo.
 echo ============================================
 echo   Build complete!
-echo   App:  dist\MCS CoWorker\MCS CoWorker.exe
+echo   App:  dist\EVA\EVA.exe
 echo ============================================
 echo.
 pause

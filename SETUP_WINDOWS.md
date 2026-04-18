@@ -1,8 +1,8 @@
-# MCS CoWorker — Windows Setup Guide
+# EVA — Windows Setup Guide
 
 ## For Accountants: Installing the App
 
-1. Download **MCSCoWorker_Setup.exe** from the MC&S SharePoint.
+1. Download **EVA_Setup.exe** from the MC&S SharePoint.
 2. Double-click the file and follow the installer prompts.
 3. Choose whether to add a Desktop shortcut and whether to start automatically with Windows.
 4. Click **Finish** — the app will launch immediately.
@@ -38,10 +38,10 @@ The script will:
 2. Install all Python dependencies into it
 3. Build the React frontend
 4. Copy the app source
-5. Compile `MCSCoWorker.exe` (the launcher) with PyInstaller
-6. Run Inno Setup to produce `installer_output\MCSCoWorker_Setup.exe`
+5. Compile `EVA.exe` (the launcher) with PyInstaller
+6. Run Inno Setup to produce `installer_output\EVA_Setup.exe`
 
-Upload `MCSCoWorker_Setup.exe` to SharePoint. Done.
+Upload `EVA_Setup.exe` to SharePoint. Done.
 
 ### Build time
 
@@ -77,8 +77,8 @@ This should happen rarely — the existing package set covers almost all needs.
 ## What Gets Installed Where
 
 ```
-C:\Program Files\MCS CoWorker\
-    MCSCoWorker.exe          ← launcher (compiled, rarely changes)
+C:\Program Files\EVA\
+    EVA.exe          ← launcher (compiled, rarely changes)
     python\                  ← bundled Python 3.11 runtime
     app\                     ← the git repo (auto-updates from GitHub)
         main.py
@@ -122,7 +122,7 @@ The React frontend may not have built correctly. Check that `app\frontend_dist\`
 The machine needs internet access to GitHub (github.com port 443). Check firewall rules.
 
 **Update failed on launch**
-The app will continue running with the previous version. Check the update history in Settings > About. If git pull is consistently failing, run `git status` in `C:\Program Files\MCS CoWorker\app\` to check for conflicts.
+The app will continue running with the previous version. Check the update history in Settings > About. If git pull is consistently failing, run `git status` in `C:\Program Files\EVA\app\` to check for conflicts.
 
 **Uninstall**
-Use Windows Settings > Apps > MCS CoWorker > Uninstall. The `data\` folder (containing `coworker.db`) is preserved — delete it manually if you want a clean removal.
+Use Windows Settings > Apps > EVA > Uninstall. The `data\` folder (containing `coworker.db`) is preserved — delete it manually if you want a clean removal.

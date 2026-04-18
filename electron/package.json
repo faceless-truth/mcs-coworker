@@ -1,7 +1,7 @@
 {
   "name": "mcs-coworker",
   "version": "2.4.1",
-  "description": "MCS CoWorker — AI-powered accounting practice assistant",
+  "description": "EVA — AI-powered accounting practice assistant",
   "main": "main.js",
   "author": "MC&S Accountants",
   "private": true,
@@ -17,7 +17,7 @@
   },
   "build": {
     "appId": "au.com.mcsaccountants.coworker",
-    "productName": "MCS CoWorker",
+    "productName": "EVA",
     "copyright": "Copyright © 2025 MC&S Accountants",
     "directories": {
       "output": "dist-electron",
@@ -67,7 +67,7 @@
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "MCS CoWorker",
+      "shortcutName": "EVA",
       "runAfterFinish": true
     },
     "mac": {
