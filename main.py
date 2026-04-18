@@ -34,6 +34,13 @@ else:
 
 FRONTEND_DIR = BASE_DIR / "frontend_dist"
 
+# Ensure the app directory is on sys.path so sibling modules (config, graph_client,
+# plugin_loader, etc.) can be imported regardless of how the process was started.
+# This is required when launched via the VBScript launcher from the installer.
+for _p in [str(BASE_DIR), str(APP_DIR)]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 # ── Initialise database ────────────────────────────────────────────────────────
 import config
 config.init_db()
