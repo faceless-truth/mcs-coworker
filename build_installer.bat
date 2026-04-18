@@ -55,6 +55,8 @@ if not exist "%INNO_SETUP_DIR%\iscc.exe" (
     :: Silent install - /VERYSILENT suppresses all UI
     "%INNO_INSTALLER_TMP%" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
     del "%INNO_INSTALLER_TMP%" >nul 2>&1
+    :: Reset errorlevel - Inno Setup installer returns non-zero even on success with /VERYSILENT
+    ver >nul
     if not exist "%INNO_SETUP_DIR%\iscc.exe" (
         echo [ERROR] Inno Setup install failed.
         pause & exit /b 1
@@ -72,6 +74,7 @@ pyinstaller --version >nul 2>&1
 if errorlevel 1 (
     echo [0/7] PyInstaller not found - installing...
     pip install pyinstaller --quiet
+    ver >nul
     if errorlevel 1 (
         echo [ERROR] Could not install PyInstaller.
         pause & exit /b 1
