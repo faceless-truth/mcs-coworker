@@ -117,14 +117,34 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '
 del "%BUILD_DIR%\get-pip.py" >nul 2>&1
 
 :: Install all required packages
+:: NOTE: pywebview on Windows requires pythonnet + clr-loader for the WebBrowser backend.
+::       We install pywebview[cef] to get the CEF (Chromium Embedded) backend which works
+::       reliably without .NET dependencies. Also install tkinter deps via tk.
 echo [2/6] Installing Python packages (this takes a few minutes)...
 "%PYTHON_DIR%\python.exe" -m pip install --no-warn-script-location --quiet ^
-    anthropic flask flask-cors requests pywebview ^
+    anthropic flask flask-cors requests ^
+    pywebview ^
     pdfminer.six pillow openpyxl pandas beautifulsoup4 ^
-    schedule python-dateutil holidays
+    schedule python-dateutil holidays ^
+    msal
 if errorlevel 1 (
     echo [ERROR] pip install failed. Check internet connection.
     pause & exit /b 1
+)
+
+:: pywebview on Windows needs the WebView2 runtime (Edge-based).
+:: Download and silently install the WebView2 Evergreen bootstrapper.
+echo [2/6] Ensuring Microsoft Edge WebView2 runtime is present...
+set WV2_URL=https://go.microsoft.com/fwlink/p/?LinkId=2124703
+set WV2_TMP=%BUILD_DIR%\MicrosoftEdgeWebview2Setup.exe
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '%WV2_URL%' -OutFile '%WV2_TMP%' -UseBasicParsing" >nul 2>&1
+if exist "%WV2_TMP%" (
+    :: /silent /install - installs silently, no reboot required
+    "%WV2_TMP%" /silent /install >nul 2>&1
+    del "%WV2_TMP%" >nul 2>&1
+    echo [2/6] WebView2 runtime ensured.
+) else (
+    echo [WARN] Could not download WebView2 bootstrapper - will bundle installer instead.
 )
 
 echo [2/6] Python runtime ready.
@@ -190,25 +210,39 @@ echo.
 :: ---------------------------------------------------------------------------
 echo [5/6] Creating launcher...
 
-:: MCSCoWorker.vbs - double-clickable launcher, no console window
-:: It finds pythonw.exe relative to itself and runs launcher.py
+:: MCSCoWorker.vbs
+:: - Uses pythonw.exe so no console window appears
+:: - Passes the full path to launcher.py explicitly
+:: - Sets working directory to the app folder
+:: - Waits=False so the VBS exits immediately (app runs independently)
 (
 echo Set oShell = CreateObject^("WScript.Shell"^)
-echo Set oFSO = CreateObject^("Scripting.FileSystemObject"^)
+echo Set oFSO   = CreateObject^("Scripting.FileSystemObject"^)
 echo.
-echo scriptDir = oFSO.GetParentFolderName^(WScript.ScriptFullName^)
-echo appDir    = scriptDir ^& "\app"
-echo pythonExe = scriptDir ^& "\python\pythonw.exe"
-echo launcherScript = appDir ^& "\launcher.py"
+echo scriptDir      = oFSO.GetParentFolderName^(WScript.ScriptFullName^)
+echo appDir         = scriptDir ^& "\app"
+echo pythonwExe     = scriptDir ^& "\python\pythonw.exe"
+echo launcherScript = appDir    ^& "\launcher.py"
 echo.
-echo If Not oFSO.FileExists^(pythonExe^) Then
-echo     MsgBox "MCS CoWorker installation appears damaged." ^& vbCrLf ^& _
+echo ' Sanity checks
+echo If Not oFSO.FileExists^(pythonwExe^) Then
+echo     MsgBox "MCS CoWorker: pythonw.exe not found at:" ^& vbCrLf ^& pythonwExe ^& vbCrLf ^& vbCrLf ^& _
+echo            "Please reinstall from SharePoint.", vbCritical, "MCS CoWorker"
+echo     WScript.Quit 1
+echo End If
+echo If Not oFSO.FileExists^(launcherScript^) Then
+echo     MsgBox "MCS CoWorker: launcher.py not found at:" ^& vbCrLf ^& launcherScript ^& vbCrLf ^& vbCrLf ^& _
 echo            "Please reinstall from SharePoint.", vbCritical, "MCS CoWorker"
 echo     WScript.Quit 1
 echo End If
 echo.
+echo ' Set working directory to app folder
 echo oShell.CurrentDirectory = appDir
-echo oShell.Run Chr^(34^) ^& pythonExe ^& Chr^(34^) ^& " " ^& Chr^(34^) ^& launcherScript ^& Chr^(34^), 0, False
+echo.
+echo ' Run: pythonw.exe "C:\...\app\launcher.py"
+echo ' WindowStyle 0 = hidden window, bWaitOnReturn False = fire and forget
+echo cmd = Chr^(34^) ^& pythonwExe ^& Chr^(34^) ^& " " ^& Chr^(34^) ^& launcherScript ^& Chr^(34^)
+echo oShell.Run cmd, 0, False
 ) > "%BUILD_DIR%\MCSCoWorker.vbs"
 
 echo [5/6] Launcher created (MCSCoWorker.vbs).
