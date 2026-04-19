@@ -1,8 +1,7 @@
 """
 MC & S CoWorker — Desktop Entry Point (pywebview)
-Replaces the Tkinter app.py shell.
 Starts Flask API on localhost:7842, then opens a native window via pywebview.
-All Python backend modules (plugin_loader, config, graph_client, etc.) remain unchanged.
+Minimises to system tray when closed. Registers itself to start with Windows.
 """
 from __future__ import annotations
 
@@ -33,7 +32,6 @@ logging.basicConfig(
 log = logging.getLogger("coworker")
 
 # ── Resolve paths ──────────────────────────────────────────────────────────────
-# When bundled with PyInstaller, sys._MEIPASS is the temp extraction dir
 if getattr(sys, "frozen", False):
     BASE_DIR = Path(sys._MEIPASS)
     APP_DIR = Path(sys.executable).parent
@@ -42,10 +40,9 @@ else:
     APP_DIR = BASE_DIR
 
 FRONTEND_DIR = BASE_DIR / "frontend_dist"
+INSTALL_DIR = APP_DIR.parent  # one level up from app/
 
-# Ensure the app directory is on sys.path so sibling modules (config, graph_client,
-# plugin_loader, etc.) can be imported regardless of how the process was started.
-# This is required when launched via the VBScript launcher from the installer.
+# Ensure the app directory is on sys.path
 for _p in [str(BASE_DIR), str(APP_DIR)]:
     if _p not in sys.path:
         sys.path.insert(0, _p)
@@ -61,11 +58,11 @@ from approval_queue import ApprovalQueue
 from kpi_monitor import KPIMonitor
 import api_server
 
+
 def _init_backend():
     """Initialise all backend services and wire them into the API server."""
     log.info("Initialising backend services...")
 
-    # Graph client (Microsoft 365)
     graph = GraphClient()
     try:
         graph.authenticate()
@@ -73,7 +70,6 @@ def _init_backend():
     except Exception as e:
         log.warning(f"Graph auth failed (will retry): {e}")
 
-    # Plugin loader
     loader = PluginLoader()
     loader.set_graph(graph)
     loader.set_claude()
@@ -81,15 +77,12 @@ def _init_backend():
     loader.start_scheduler()
     log.info(f"Plugin loader started — {len(loader.get_plugins())} plugins loaded")
 
-    # Approval queue
     aq = ApprovalQueue()
     log.info("Approval queue ready")
 
-    # KPI monitor
-    km = KPIMonitor  # already a singleton instance, not a class
+    km = KPIMonitor  # singleton instance
     log.info("KPI monitor ready")
 
-    # Wire into API server
     api_server.set_loader(loader)
     api_server.set_approval_queue(aq)
     api_server.set_kpi_monitor(km)
@@ -99,7 +92,6 @@ def _init_backend():
 
 
 def _wait_for_server(host="127.0.0.1", port=7842, timeout=10.0):
-    """Block until the Flask server is accepting connections."""
     import socket
     deadline = time.time() + timeout
     while time.time() < deadline:
@@ -112,26 +104,65 @@ def _wait_for_server(host="127.0.0.1", port=7842, timeout=10.0):
 
 
 def _get_frontend_url() -> str:
-    """Return the URL to load in the webview window."""
-    # If bundled frontend exists, serve it via Flask static
     if FRONTEND_DIR.exists():
         return "http://127.0.0.1:7842/"
-    # Dev mode: Vite dev server
     return "http://127.0.0.1:3000/"
+
+
+def _register_startup():
+    """Add MCS CoWorker to Windows startup registry (HKCU — no admin needed)."""
+    try:
+        import winreg
+        # Find the VBS launcher path
+        vbs = INSTALL_DIR / "MCSCoWorker.vbs"
+        if not vbs.exists():
+            return
+        cmd = f'wscript.exe "{vbs}"'
+        key = winreg.OpenKey(
+            winreg.HKEY_CURRENT_USER,
+            r"Software\Microsoft\Windows\CurrentVersion\Run",
+            0, winreg.KEY_SET_VALUE
+        )
+        winreg.SetValueEx(key, "MCSCoWorker", 0, winreg.REG_SZ, cmd)
+        winreg.CloseKey(key)
+        log.info("Registered in Windows startup")
+    except Exception as e:
+        log.warning(f"Could not register startup: {e}")
+
+
+def _build_tray_icon():
+    """Build a pystray Icon using the app's icon.ico, or a generated fallback."""
+    try:
+        from PIL import Image as PILImage
+        icon_path = INSTALL_DIR / "icon.ico"
+        if icon_path.exists():
+            img = PILImage.open(str(icon_path))
+            # pystray needs RGBA
+            img = img.convert("RGBA")
+        else:
+            # Fallback: simple navy square with white "M"
+            img = PILImage.new("RGBA", (64, 64), (15, 52, 96, 255))
+        return img
+    except Exception as e:
+        log.warning(f"Could not load tray icon: {e}")
+        return None
 
 
 def main():
     log.info("MC & S CoWorker starting...")
 
-    # 1. Start Flask API server in background thread
+    # Register in Windows startup (silent, HKCU only)
+    _register_startup()
+
+    # 1. Start Flask API server
     log.info("Starting API server on port 7842...")
     api_server.start_in_thread(host="127.0.0.1", port=7842)
 
-    # 2. Initialise backend in background (don't block the window)
+    # 2. Initialise backend in background
     backend_thread = threading.Thread(target=_init_backend, daemon=True)
     backend_thread.start()
 
-    # 3. Wait for Flask to be ready
+    # 3. Wait for Flask
     if not _wait_for_server(timeout=10):
         log.error("API server failed to start within 10 seconds")
         sys.exit(1)
@@ -141,7 +172,7 @@ def main():
     try:
         import webview
     except ImportError:
-        log.error("pywebview not installed. Run: pip install pywebview")
+        log.error("pywebview not installed.")
         sys.exit(1)
 
     url = _get_frontend_url()
@@ -158,7 +189,7 @@ def main():
         confirm_close=False,
     )
 
-    # Inject a flag so the React app knows it's in desktop mode
+    # Inject desktop flag for React app
     def on_loaded():
         try:
             window.evaluate_js("window.__pywebview__ = true;")
@@ -167,16 +198,89 @@ def main():
 
     window.events.loaded += on_loaded
 
-    # pywebview setting: open links that target a new window in the real browser
+    # Open external links in real browser
     try:
         import webview as _wv
         _wv.settings['OPEN_EXTERNAL_LINKS_IN_BROWSER'] = True
     except Exception:
         pass
 
-    # Start webview (blocks until window is closed)
+    # ── System tray setup ──────────────────────────────────────────────────────
+    _quit_event = threading.Event()
+
+    def _show_window(icon=None, item=None):
+        """Restore and focus the window from the tray."""
+        try:
+            window.show()
+        except Exception:
+            pass
+
+    def _quit_app(icon=None, item=None):
+        """Quit the app entirely from the tray menu."""
+        _quit_event.set()
+        try:
+            if icon:
+                icon.stop()
+        except Exception:
+            pass
+        try:
+            webview.windows[0].destroy()
+        except Exception:
+            pass
+
+    tray_icon = None
+    try:
+        import pystray
+        from pystray import MenuItem as TrayItem, Menu as TrayMenu
+
+        tray_img = _build_tray_icon()
+        if tray_img:
+            tray_icon = pystray.Icon(
+                "MCSCoWorker",
+                tray_img,
+                "MC & S CoWorker",
+                menu=TrayMenu(
+                    TrayItem("Open MC & S CoWorker", _show_window, default=True),
+                    TrayMenu.SEPARATOR,
+                    TrayItem("Quit", _quit_app),
+                )
+            )
+
+            # Run tray in its own thread
+            tray_thread = threading.Thread(target=tray_icon.run, daemon=True)
+            tray_thread.start()
+            log.info("System tray icon active")
+
+    except ImportError:
+        log.warning("pystray not installed — tray icon unavailable")
+    except Exception as e:
+        log.warning(f"Tray icon failed: {e}")
+
+    # Override close: hide to tray instead of quitting
+    def on_closing():
+        """Called when user clicks X — hide to tray instead of closing."""
+        if tray_icon is not None:
+            try:
+                window.hide()
+                return False  # prevent default close
+            except Exception:
+                pass
+        return True  # no tray — allow close
+
+    window.events.closing += on_closing
+
+    # Start webview (blocks until window is destroyed)
     webview.start(debug=False, http_server=False)
-    log.info("Window closed — shutting down")
+
+    # If we get here and quit wasn't requested, it means window was destroyed
+    # (e.g. via _quit_app). Stop tray if still running.
+    if tray_icon is not None and not _quit_event.is_set():
+        try:
+            tray_icon.stop()
+        except Exception:
+            pass
+
+    log.info("MC & S CoWorker shut down")
 
 
 if __name__ == "__main__":

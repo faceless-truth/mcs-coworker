@@ -31,15 +31,15 @@ copy /Y "%REPO_DIR%\main.py"          "%APP_DIR%\main.py"
 copy /Y "%REPO_DIR%\api_server.py"    "%APP_DIR%\api_server.py"
 copy /Y "%REPO_DIR%\launcher.py"      "%APP_DIR%\launcher.py"
 copy /Y "%REPO_DIR%\plugin_loader.py" "%APP_DIR%\plugin_loader.py"
+copy /Y "%REPO_DIR%\graph_client.py"  "%APP_DIR%\graph_client.py"
 echo.
 
-:: ── Step 3: Install pythonnet (required for pywebview on Windows) ──
-echo [3/4] Installing pythonnet for pywebview WebView2 backend...
+:: ── Step 3: Install pythonnet + pystray (required for pywebview and tray icon) ──
+echo [3/4] Installing required packages (pythonnet, pystray)...
 echo       (This may take 1-2 minutes on first run)
-"%PYTHON%" -m pip install --no-warn-script-location --quiet pythonnet
+"%PYTHON%" -m pip install --no-warn-script-location --quiet pythonnet pystray pillow
 if errorlevel 1 (
-    echo [WARN] pythonnet install failed — trying clr-loader separately...
-    "%PYTHON%" -m pip install --no-warn-script-location --quiet clr-loader
+    echo [WARN] Package install had warnings — continuing...
 )
 echo.
 
