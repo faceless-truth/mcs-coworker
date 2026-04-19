@@ -14,24 +14,25 @@ echo.
 echo [1/4] Pulling latest code from GitHub...
 cd /d "%REPO_DIR%"
 git pull origin main
-if errorlevel 1 ( echo [ERROR] git pull failed. & pause & exit /b 1 )
 echo.
 
 echo [2/4] Building frontend...
 cd /d "%FRONTEND_DIR%"
-if not exist "node_modules" (
-    echo       Installing npm packages for the first time...
-    where pnpm >nul 2>&1
-    if errorlevel 1 ( npm install -g pnpm )
-    pnpm install --frozen-lockfile
-    if errorlevel 1 ( echo [ERROR] pnpm install failed. & pause & exit /b 1 )
-)
+echo       Running pnpm install...
+pnpm install --frozen-lockfile
 echo       Running pnpm build...
 pnpm build
-if errorlevel 1 ( echo [ERROR] Frontend build failed. & pause & exit /b 1 )
+if errorlevel 1 goto buildfail
 echo       Frontend built OK.
 echo.
+goto step3
 
+:buildfail
+echo [ERROR] Frontend build failed. See above for details.
+pause
+exit /b 1
+
+:step3
 echo [3/4] Copying app files...
 if not exist "%APP_DIR%" mkdir "%APP_DIR%"
 if not exist "%APP_DIR%\plugins" mkdir "%APP_DIR%\plugins"
