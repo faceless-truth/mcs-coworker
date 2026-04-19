@@ -30,3 +30,8 @@ Thumbs.db
 
 # First-run marker
 .shortcut_created
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+frontend/.manus-logs/
