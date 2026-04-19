@@ -19,7 +19,7 @@ GRAPH_SCOPES = [
 ]
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
-REDIRECT_URI = "http://localhost:8765"
+REDIRECT_URI = "http://localhost:7842/auth/callback"
 
 # Hardcoded MC&S Entra ID credentials — accountants don't need Azure setup
 MCS_TENANT_ID = "88ea4eb1-1dce-414e-bbfe-ce0c51a5bd98"   
@@ -63,51 +63,23 @@ class GraphClient:
         return False
 
     def authenticate(self, callback=None):
-        """Open browser for OAuth2 login, capture code via local server."""
+        """Open browser for OAuth2 login.
+
+        The redirect is handled by the Flask server's /auth/callback route
+        (same port 7842 as the app), so the webview never navigates away.
+        """
         if not self._app:
             raise ValueError(
                 "Graph client not configured. Add Tenant ID and Client ID first."
             )
 
-        # Start local server to capture redirect
-        auth_code_container = {"code": None, "error": None}
+        # Reset state for this auth attempt
+        self._auth_event.clear()
+        self._pending_callback = callback
+        self._pending_auth_code = None
+        self._pending_auth_error = None
 
-        class Handler(BaseHTTPRequestHandler):
-            def do_GET(self):
-                parsed = urlparse(self.path)
-                params = parse_qs(parsed.query)
-
-                if "code" in params:
-                    auth_code_container["code"] = params["code"][0]
-                    self.send_response(200)
-                    self.send_header("Content-Type", "text/html")
-                    self.end_headers()
-                    self.wfile.write(b"""
-<html><body style='font-family:Arial;text-align:center;padding:60px'>
-<h2 style='color:#2E7D32'>&#10003; Authentication Successful</h2>
-<p>You can close this window and return to MC&S Email Automation.</p>
-</body></html>""")
-                else:
-                    auth_code_container["error"] = params.get(
-                        "error", ["Unknown"]
-                    )[0]
-                    self.send_response(400)
-                    self.end_headers()
-                    self.wfile.write(b"Authentication failed.")
-
-            def log_message(self, format, *args):
-                pass  # Suppress server logs
-
-        server = HTTPServer(("localhost", 8765), Handler)
-        server.timeout = 120  # 2 min timeout
-
-        def run_server():
-            server.handle_request()
-            self._auth_event.set()
-
-        threading.Thread(target=run_server, daemon=True).start()
-
-        # Build auth URL and open browser
+        # Build auth URL and open in the system browser
         auth_url = self._app.get_authorization_request_url(
             scopes=GRAPH_SCOPES,
             redirect_uri=REDIRECT_URI,
@@ -115,11 +87,12 @@ class GraphClient:
         webbrowser.open(auth_url)
 
         def wait_and_complete():
+            # Wait for /auth/callback to call receive_auth_code()
             self._auth_event.wait(timeout=120)
 
-            if auth_code_container["code"]:
+            if self._pending_auth_code:
                 result = self._app.acquire_token_by_authorization_code(
-                    code=auth_code_container["code"],
+                    code=self._pending_auth_code,
                     scopes=GRAPH_SCOPES,
                     redirect_uri=REDIRECT_URI,
                 )
@@ -134,20 +107,22 @@ class GraphClient:
                     if callback:
                         callback(
                             success=False,
-                            error=result.get(
-                                "error_description", "Unknown error"
-                            ),
+                            error=result.get("error_description", "Unknown error"),
                         )
             else:
                 if callback:
                     callback(
                         success=False,
-                        error=auth_code_container.get(
-                            "error", "Timeout or cancelled"
-                        ),
+                        error=self._pending_auth_error or "Timeout or cancelled",
                     )
 
         threading.Thread(target=wait_and_complete, daemon=True).start()
+
+    def receive_auth_code(self, code: str = None, error: str = None):
+        """Called by the Flask /auth/callback route when Microsoft redirects back."""
+        self._pending_auth_code = code
+        self._pending_auth_error = error
+        self._auth_event.set()
 
     def _get_token(self):
         """Get a fresh access token."""

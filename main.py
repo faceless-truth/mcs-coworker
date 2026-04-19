@@ -93,6 +93,7 @@ def _init_backend():
     api_server.set_loader(loader)
     api_server.set_approval_queue(aq)
     api_server.set_kpi_monitor(km)
+    api_server.set_graph_client(graph)
 
     return loader, aq, km
 
@@ -166,20 +167,12 @@ def main():
 
     window.events.loaded += on_loaded
 
-    # Intercept navigation: keep 127.0.0.1:7842 inside the webview,
-    # open everything else (OAuth redirects, external links) in the real browser.
-    def on_navigating(url: str):
-        import webbrowser as _wb
-        if "127.0.0.1:7842" in url or "localhost:7842" in url:
-            return  # allow — this is our own app
-        # External URL or OAuth redirect — open in default browser
-        _wb.open(url)
-        return False  # cancel navigation inside webview
-
+    # pywebview setting: open links that target a new window in the real browser
     try:
-        window.events.before_load += on_navigating
-    except AttributeError:
-        pass  # older pywebview versions may not have before_load
+        import webview as _wv
+        _wv.settings['OPEN_EXTERNAL_LINKS_IN_BROWSER'] = True
+    except Exception:
+        pass
 
     # Start webview (blocks until window is closed)
     webview.start(debug=False, http_server=False)

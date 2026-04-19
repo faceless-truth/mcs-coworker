@@ -58,6 +58,7 @@ API_PORT = 7842
 _loader: PluginLoader | None = None
 _approval_queue: ApprovalQueue | None = None
 _kpi_monitor: KPIMonitor | None = None
+_graph_client = None  # set by main.py after GraphClient is created
 _start_time: datetime = datetime.now()
 
 
@@ -74,6 +75,11 @@ def set_approval_queue(aq: ApprovalQueue):
 def set_kpi_monitor(km: KPIMonitor):
     global _kpi_monitor
     _kpi_monitor = km
+
+
+def set_graph_client(gc):
+    global _graph_client
+    _graph_client = gc
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -954,6 +960,29 @@ def chat_history():
 def clear_chat_history():
     clear_feedback_history()
     return ok()
+
+# ── Microsoft OAuth callback ─────────────────────────────────────────────────
+@app.route("/auth/callback")
+def auth_callback():
+    """Receives the Microsoft OAuth2 redirect and passes the code to GraphClient."""
+    code = request.args.get("code")
+    error = request.args.get("error")
+    if _graph_client is not None:
+        _graph_client.receive_auth_code(code=code, error=error)
+    if error:
+        html = f"""<html><body style='font-family:Arial;text-align:center;padding:60px'>
+<h2 style='color:#c0392b'>Authentication Failed</h2>
+<p>{error}</p>
+<p>You can close this tab.</p>
+</body></html>"""
+        return html, 400
+    html = """<html><body style='font-family:Arial;text-align:center;padding:60px'>
+<h2 style='color:#2E7D32'>&#10003; Authentication Successful</h2>
+<p>You can close this tab and return to MC&amp;S CoWorker.</p>
+<script>setTimeout(function(){window.close();},2000);</script>
+</body></html>"""
+    return html, 200
+
 
 # ── Frontend static file serving ──────────────────────────────────────────────────────────────
 # Serves the built React app (frontend_dist/) when running in installed mode.
