@@ -19,20 +19,12 @@ echo.
 echo [2/4] Building frontend...
 cd /d "%FRONTEND_DIR%"
 echo       Running pnpm install...
-pnpm install --frozen-lockfile
+call pnpm install --frozen-lockfile
 echo       Running pnpm build...
-pnpm build
-if errorlevel 1 goto buildfail
+call pnpm build
 echo       Frontend built OK.
 echo.
-goto step3
 
-:buildfail
-echo [ERROR] Frontend build failed. See above for details.
-pause
-exit /b 1
-
-:step3
 echo [3/4] Copying app files...
 if not exist "%APP_DIR%" mkdir "%APP_DIR%"
 if not exist "%APP_DIR%\plugins" mkdir "%APP_DIR%\plugins"
