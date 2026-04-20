@@ -133,7 +133,7 @@ def list_plugins():
             "name": inst.NAME,
             "description": getattr(inst, "DESCRIPTION", ""),
             "enabled": lp.enabled,
-            "status": "running" if lp.running else ("disabled" if not lp.enabled else "idle"),
+            "status": "disabled" if not lp.enabled else "idle",
             "lastRun": _format_dt(lp.last_run),
             "nextRun": _format_next(lp),
             "schedule": _schedule_label(lp),
@@ -629,7 +629,7 @@ def system_status():
         tick = 0
 
     return ok({
-        "heartbeat": "Active" if _loader and _loader._scheduler_running else "Stopped",
+        "heartbeat": "Active" if _loader and _loader._running else "Stopped",
         "heartbeatTick": tick,
         "fastModel": get_claude_model_fast(),
         "reasoningModel": get_claude_model_reasoning(),
