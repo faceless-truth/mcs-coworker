@@ -669,11 +669,11 @@ def _format_time(ts: str) -> str:
 def _format_next(lp) -> str:
     if not lp.enabled:
         return "Disabled"
-    if lp.schedule_seconds == 0:
+    if lp.schedule_seconds == 0 and not lp.instance.default_schedule.is_calendar_based():
         return "On event"
-    if lp.next_run is None:
+    if lp._next_run_at <= 0:
         return "Soon"
-    diff = (lp.next_run - datetime.now()).total_seconds()
+    diff = lp._next_run_at - time.time()
     if diff <= 0:
         return "Now"
     if diff < 60:
@@ -910,13 +910,15 @@ def delete_plugin(plugin_id):
     lp = _loader.get_plugin(plugin_id)
     if not lp:
         return err("Plugin not found", 404)
-    import os
+    from plugin_loader import PLUGINS_DIR
+    plugin_file = PLUGINS_DIR / f"{plugin_id}.py"
     try:
-        os.remove(lp.path)
-        _loader.unload_plugin(plugin_id)
+        if plugin_file.exists():
+            plugin_file.unlink()
+        _loader.reload_plugins()
     except Exception as e:
         return err(str(e))
-    return ok()
+    return ok({"deleted": plugin_id})
 
 # ── Lessons ───────────────────────────────────────────────────────────────────
 @app.route("/api/lessons")
