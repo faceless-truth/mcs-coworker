@@ -30,7 +30,8 @@ function useActivityStream(enabled: boolean) {
       try {
         const res = await fetch(`${API_BASE}/api/activity`);
         if (res.ok) {
-          const data = await res.json();
+          const json = await res.json();
+          const data = (json && typeof json === "object" && "data" in json) ? json.data : json;
           if (Array.isArray(data) && data.length > 0) {
             setEntries(data);
           }
@@ -91,16 +92,17 @@ export default function Activity() {
 
   // Fetch memory and events when those tabs are opened
   useEffect(() => {
+    const unwrap = (d: any) => (d && typeof d === "object" && "data" in d) ? d.data : d;
     if (subTab === "memory") {
       fetch(`${API_BASE}/api/memory`)
         .then(r => r.ok ? r.json() : [])
-        .then(d => setMemory(Array.isArray(d) ? d : []))
+        .then(d => setMemory(Array.isArray(unwrap(d)) ? unwrap(d) : []))
         .catch(() => {});
     }
     if (subTab === "events") {
       fetch(`${API_BASE}/api/events`)
         .then(r => r.ok ? r.json() : [])
-        .then(d => setEvents(Array.isArray(d) ? d : []))
+        .then(d => setEvents(Array.isArray(unwrap(d)) ? unwrap(d) : []))
         .catch(() => {});
     }
   }, [subTab]);

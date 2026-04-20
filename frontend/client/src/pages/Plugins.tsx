@@ -19,7 +19,8 @@ export default function Plugins() {
       try {
         const res = await fetch(`${API_BASE}/api/plugins`);
         if (res.ok) {
-          const data = await res.json();
+          const json = await res.json();
+          const data = (json && typeof json === "object" && "data" in json) ? json.data : json;
           setPlugins(Array.isArray(data) ? data : []);
         }
       } catch (_) {

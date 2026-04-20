@@ -16,8 +16,9 @@ export default function Usage() {
       try {
         const res = await fetch(`${API_BASE}/api/usage`);
         if (res.ok) {
-          const data = await res.json();
-          setUsage(data);
+          const json = await res.json();
+          const data = (json && typeof json === "object" && "data" in json) ? json.data : json;
+          setUsage(data && typeof data === "object" ? data : null);
         }
       } catch (_) {}
       finally {
@@ -35,8 +36,10 @@ export default function Usage() {
   const totalCalls = usage?.totalCalls ?? usage?.total_calls ?? 0;
   const totalTokensIn = usage?.totalTokensIn ?? usage?.total_tokens_in ?? 0;
   const totalTokensOut = usage?.totalTokensOut ?? usage?.total_tokens_out ?? 0;
-  const byDay: any[] = usage?.byDay ?? usage?.by_day ?? [];
-  const byPlugin: any[] = usage?.byPlugin ?? usage?.by_plugin ?? [];
+  const _byDay = usage?.byDay ?? usage?.by_day ?? [];
+  const _byPlugin = usage?.byPlugin ?? usage?.by_plugin ?? [];
+  const byDay: any[] = Array.isArray(_byDay) ? _byDay : [];
+  const byPlugin: any[] = Array.isArray(_byPlugin) ? _byPlugin : [];
 
   const budgetPct = monthlyBudget > 0 ? Math.min(100, Math.round((monthlyCost / monthlyBudget) * 100)) : 0;
 

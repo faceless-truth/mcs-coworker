@@ -170,12 +170,13 @@ def activity():
     rows = get_recent_activity(limit)
     formatted = []
     for r in rows:
+        action = r.get("action") or r.get("subject") or ""
         formatted.append({
             "id": r.get("id"),
             "time": _format_time(r.get("timestamp", "")),
-            "plugin": r.get("plugin_id", ""),
-            "action": r.get("subject", r.get("body", "")),
-            "status": r.get("status", "success"),
+            "plugin": r.get("classification") or r.get("from_email") or "",
+            "action": action,
+            "status": "success",
         })
     return ok(formatted)
 
@@ -202,23 +203,29 @@ def _broadcast_activity(entry: dict):
 # Wire into EventBus so every plugin.run.complete event triggers a broadcast
 def _wire_sse_to_event_bus():
     from event_bus import EventBus
-    def _on_plugin_complete(event_type: str, data: dict):
+    def _on_plugin_complete(event):
+        data = event.payload if hasattr(event, "payload") else {}
         entry = {
             "id": f"live-{int(time.time()*1000)}",
             "time": datetime.now().strftime("%H:%M:%S"),
             "plugin": data.get("plugin_id", "unknown"),
-            "action": data.get("message", "Plugin run completed"),
+            "action": data.get("summary") or data.get("message", "Plugin run completed"),
             "status": "success" if data.get("success", True) else "error",
         }
         _broadcast_activity(entry)
+
+    def _on_plugin_failed(event):
+        data = event.payload if hasattr(event, "payload") else {}
+        _broadcast_activity({
+            "id": f"live-{int(time.time()*1000)}",
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "plugin": data.get("plugin_id", "unknown"),
+            "action": data.get("error", "Plugin run failed"),
+            "status": "error",
+        })
+
     EventBus.subscribe("plugin.run.complete", _on_plugin_complete, subscriber_id="sse_bridge")
-    EventBus.subscribe("plugin.run.failed", lambda et, d: _broadcast_activity({
-        "id": f"live-{int(time.time()*1000)}",
-        "time": datetime.now().strftime("%H:%M:%S"),
-        "plugin": d.get("plugin_id", "unknown"),
-        "action": d.get("error", "Plugin run failed"),
-        "status": "error",
-    }), subscriber_id="sse_bridge_fail")
+    EventBus.subscribe("plugin.run.failed", _on_plugin_failed, subscriber_id="sse_bridge_fail")
 
 
 @app.route("/api/activity/stream")
@@ -258,12 +265,30 @@ def activity_stream():
 
 
 # ── Approvals ──────────────────────────────────────────────────────────────────
+def _approval_to_dict(a) -> dict:
+    """Serialize a PendingAction dataclass to a plain JSON-safe dict."""
+    status = getattr(a, "status", "")
+    return {
+        "action_id":     getattr(a, "action_id", None),
+        "plugin_id":     getattr(a, "plugin_id", ""),
+        "action_type":   getattr(a, "action_type", ""),
+        "description":   getattr(a, "description", ""),
+        "payload":       getattr(a, "payload", {}),
+        "confidence":    getattr(a, "confidence", 0),
+        "status":        status.value if hasattr(status, "value") else str(status),
+        "created_at":    getattr(a, "created_at", ""),
+        "expires_at":    getattr(a, "expires_at", ""),
+        "reviewed_at":   getattr(a, "reviewed_at", None),
+        "reviewer_note": getattr(a, "reviewer_note", None),
+    }
+
+
 @app.route("/api/approvals")
 def list_approvals():
     if _approval_queue is None:
         return ok([])
     items = _approval_queue.list_pending()
-    return ok(items)
+    return ok([_approval_to_dict(a) for a in items])
 
 
 @app.route("/api/approvals/<action_id>/approve", methods=["POST"])
@@ -306,12 +331,14 @@ def edit_approval(action_id):
 def list_memory():
     try:
         from memory_store import MemoryStore
-        ms = MemoryStore()
         query = request.args.get("q", "recent client interactions")
         limit = int(request.args.get("limit", 50))
-        results = ms.search(query, n_results=limit)
-        return ok(results)
-    except Exception as e:
+        results = MemoryStore.search(query, n_results=limit)
+        return ok([
+            {"content": doc, "metadata": meta or {}, "distance": dist}
+            for doc, meta, dist in results
+        ])
+    except Exception:
         return ok([])  # graceful degradation if ChromaDB not ready
 
 
@@ -330,15 +357,20 @@ def delete_memory(record_id):
 @app.route("/api/events")
 def list_events():
     limit = int(request.args.get("limit", 50))
-    history = EventBus.get_history(limit)
+    history = EventBus.get_history(limit=limit)
     formatted = []
     for evt in reversed(history):
+        ts = getattr(evt, "timestamp", 0)
+        try:
+            time_str = datetime.fromtimestamp(float(ts)).strftime("%H:%M:%S")
+        except Exception:
+            time_str = ""
         formatted.append({
-            "id": evt.get("id", ""),
-            "time": _format_time(evt.get("timestamp", "")),
-            "type": evt.get("event_type", ""),
-            "source": evt.get("source", ""),
-            "payload": str(evt.get("data", "")),
+            "id": f"evt-{int(float(ts)*1000)}" if ts else "",
+            "time": time_str,
+            "type": getattr(evt, "type", ""),
+            "source": getattr(evt, "source", ""),
+            "payload": str(getattr(evt, "payload", "")),
         })
     return ok(formatted)
 
@@ -346,10 +378,31 @@ def list_events():
 # ── KPI ────────────────────────────────────────────────────────────────────────
 @app.route("/api/kpi")
 def kpi():
-    if _kpi_monitor is None:
-        return ok([])
     try:
-        metrics = _kpi_monitor.get_current_metrics()
+        from kpi_monitor import get_kpi_config, get_recent_alerts
+        configs = get_kpi_config()
+        alerts = get_recent_alerts(limit=50)
+        latest_by_kpi = {}
+        for a in alerts:
+            kid = a.get("kpi_id")
+            if kid and kid not in latest_by_kpi:
+                latest_by_kpi[kid] = a
+        metrics = []
+        for cfg in configs:
+            kid = cfg.get("kpi_id")
+            latest = latest_by_kpi.get(kid, {})
+            metrics.append({
+                "kpi_id":     kid,
+                "label":      cfg.get("label", kid),
+                "description":cfg.get("description", ""),
+                "threshold":  cfg.get("threshold", 0),
+                "enabled":    bool(cfg.get("enabled", 1)),
+                "severity":   cfg.get("severity", "warning"),
+                "unit":       cfg.get("unit", ""),
+                "value":      latest.get("value"),
+                "message":    latest.get("message", ""),
+                "last_alert": latest.get("timestamp", ""),
+            })
         return ok(metrics)
     except Exception:
         return ok([])
@@ -432,7 +485,9 @@ def save_settings():
     # Re-detect models if API key changed
     if "anthropic_api_key" in saved:
         try:
-            update_claude_models()
+            api_key = get_setting("anthropic_api_key", "")
+            if api_key:
+                update_claude_models(api_key)
         except Exception:
             pass
     return ok({"saved": saved})
@@ -448,10 +503,10 @@ def test_connection(service):
             result = gw.xpm.list_clients(page=1, page_size=1)
             return ok({"connected": True, "service": "xpm"})
         elif service == "fusesign":
-            result = gw.fusesign.list_envelopes(limit=1)
+            result = gw.fusesign.list_envelopes(page_size=1)
             return ok({"connected": True, "service": "fusesign"})
         elif service == "teams":
-            gw.teams.send_alert("CoWorker", "Connection test successful ✅")
+            gw.teams.send_alert(title="CoWorker", body="Connection test successful ✅")
             return ok({"connected": True, "service": "teams"})
         else:
             return err(f"Unknown service: {service}")
@@ -624,7 +679,7 @@ def system_status():
         cost_today = "$0.00"
     try:
         from event_bus import EventBus
-        tick = len(EventBus.get_history(10000))
+        tick = len(EventBus.get_history(limit=10000))
     except Exception:
         tick = 0
 
@@ -703,10 +758,10 @@ def _build_chat_system_prompt() -> str:
         pending_count = _approval_queue.count_pending() if _approval_queue else 0
         context_lines.append(f"Pending approvals in queue: {pending_count}")
         if _approval_queue and pending_count > 0:
-            pending_items = _approval_queue.list_pending(limit=5)
+            pending_items = _approval_queue.list_pending()[:5]
             for item in pending_items:
-                desc = item.get("description", item.get("action_type", "?"))
-                plugin = item.get("plugin_id", "?")
+                desc = getattr(item, "description", "") or getattr(item, "action_type", "?")
+                plugin = getattr(item, "plugin_id", "?")
                 context_lines.append(f"  - [{plugin}] {desc[:80]}")
     except Exception:
         pass
@@ -749,7 +804,7 @@ def _build_chat_system_prompt() -> str:
         # Overdue debtors summary from XPM invoices
         from gateway_client import XPMClient
         xpm = XPMClient()
-        if xpm.is_available():
+        if xpm.is_configured and xpm.is_authorised:
             summary = xpm.get_debtor_summary()
             total = summary.get("total_outstanding", 0)
             count = summary.get("invoice_count", 0)

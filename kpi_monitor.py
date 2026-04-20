@@ -321,7 +321,7 @@ def _check_inbox_backlog(context, config: dict) -> Optional[tuple[float, str]]:
         return None
     try:
         # Use the graph client to count unread emails
-        messages = context.graph.get_unread_emails(max_results=200) or []
+        messages = context.graph.fetch_unread_emails(max_count=200) or []
         count = len(messages)
         threshold = config["threshold"]
         if count >= threshold:
@@ -340,13 +340,13 @@ def _check_plugin_failures(context, config: dict) -> Optional[tuple[float, str]]
         history = EventBus.get_history(event_type="plugin.run.failed") or []
         recent_failures = [
             e for e in history
-            if e.get("timestamp", 0) >= cutoff_ts
+            if getattr(e, "timestamp", 0) >= cutoff_ts
         ]
         count = len(recent_failures)
         threshold = config["threshold"]
         if count >= threshold:
             failed_plugins = list({
-                e.get("payload", {}).get("plugin_id", "?")
+                (getattr(e, "payload", {}) or {}).get("plugin_id", "?")
                 for e in recent_failures
             })
             msg = (f"{count} plugin failures in the last hour: "
@@ -401,8 +401,8 @@ def _dispatch_alert(context, kpi_id: str, severity: str,
         try:
             context.gateway.teams.send_alert(
                 title=title,
-                message=full_msg,
-                color=severity)
+                body=full_msg,
+                urgent=(severity == "critical"))
             logger.info(f"[KPIMonitor] Teams alert sent for {kpi_id}")
         except Exception as e:
             logger.warning(f"[KPIMonitor] Teams alert failed: {e}")

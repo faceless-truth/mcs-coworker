@@ -30,6 +30,18 @@ function useDashboardData() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const unwrap = async (res: Response): Promise<any> => {
+      if (!res.ok) return null;
+      try {
+        const json = await res.json();
+        return (json && typeof json === "object" && "data" in json) ? json.data : json;
+      } catch {
+        return null;
+      }
+    };
+    const arr = (v: any) => (Array.isArray(v) ? v : []);
+    const obj = (v: any) => (v && typeof v === "object" && !Array.isArray(v) ? v : null);
+
     const fetchAll = async () => {
       try {
         const [pRes, aRes, kRes, uRes, sRes] = await Promise.all([
@@ -39,11 +51,11 @@ function useDashboardData() {
           fetch(`${API}/api/usage`),
           fetch(`${API}/api/system/status`),
         ]);
-        if (pRes.ok) setPlugins(await pRes.json());
-        if (aRes.ok) setActivity(await aRes.json());
-        if (kRes.ok) setKpis(await kRes.json());
-        if (uRes.ok) setUsage(await uRes.json());
-        if (sRes.ok) setSystem(await sRes.json());
+        setPlugins(arr(await unwrap(pRes)));
+        setActivity(arr(await unwrap(aRes)));
+        setKpis(arr(await unwrap(kRes)));
+        setUsage(obj(await unwrap(uRes)));
+        setSystem(obj(await unwrap(sRes)));
       } catch (_) {
         // backend not yet ready — keep empty state
       } finally {

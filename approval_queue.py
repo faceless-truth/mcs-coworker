@@ -210,9 +210,9 @@ class ApprovalQueue:
                     # Log execution failure but don't re-queue
                     self._log_execution_error(plugin_id, action_type, description, str(e))
             if self._event_bus:
-                self._event_bus.publish(
+                self._event_bus.emit(
                     "approval.auto_approved",
-                    {
+                    payload={
                         "plugin_id": plugin_id,
                         "action_type": action_type,
                         "description": description,
@@ -227,9 +227,9 @@ class ApprovalQueue:
                 plugin_id, action_type, description, payload, confidence
             )
             if self._event_bus:
-                self._event_bus.publish(
+                self._event_bus.emit(
                     "approval.requested",
-                    {
+                    payload={
                         "action_id": action_id,
                         "plugin_id": plugin_id,
                         "action_type": action_type,
@@ -475,9 +475,9 @@ class ApprovalQueue:
                 pass  # Lesson storage is best-effort
 
         if self._event_bus:
-            self._event_bus.publish(
+            self._event_bus.emit(
                 "approval.approved",
-                {"action_id": action_id, "reviewer_note": reviewer_note},
+                payload={"action_id": action_id, "reviewer_note": reviewer_note},
                 source="approval_queue",
             )
         return True
@@ -521,9 +521,9 @@ class ApprovalQueue:
                 pass  # Lesson storage is best-effort
 
         if self._event_bus:
-            self._event_bus.publish(
+            self._event_bus.emit(
                 "approval.rejected",
-                {"action_id": action_id, "reviewer_note": reviewer_note},
+                payload={"action_id": action_id, "reviewer_note": reviewer_note},
                 source="approval_queue",
             )
         return True

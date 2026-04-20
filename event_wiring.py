@@ -125,7 +125,7 @@ def _wire_triage_to_processors(event_bus: "EventBus", plugins: dict) -> None:
     """
 
     def on_triage_complete(event):
-        payload  = event.get("payload", {})
+        payload  = getattr(event, "payload", {}) or {}
         category = payload.get("category", "").upper()
         msg_id   = payload.get("msg_id", "")
 
@@ -137,9 +137,9 @@ def _wire_triage_to_processors(event_bus: "EventBus", plugins: dict) -> None:
             if noa and hasattr(noa, "_pending_msg_ids"):
                 noa._pending_msg_ids.add(msg_id)
                 logger.info(f"[EventWiring] NOA Processor notified of msg {msg_id}")
-            event_bus.publish(Events.DOCUMENTS_RECEIVED,
-                              source="event_wiring",
-                              payload=payload)
+            event_bus.emit(Events.DOCUMENTS_RECEIVED,
+                           payload=payload,
+                           source="event_wiring")
 
         # NEW_CLIENT → wake Engagement Letter Generator
         elif category in ("NEW_CLIENT", "ONBOARDING"):
@@ -147,9 +147,9 @@ def _wire_triage_to_processors(event_bus: "EventBus", plugins: dict) -> None:
             if eng and hasattr(eng, "_pending_emails"):
                 eng._pending_emails.add(msg_id)
                 logger.info(f"[EventWiring] Engagement Letter notified of msg {msg_id}")
-            event_bus.publish(Events.NEW_CLIENT_DETECTED,
-                              source="event_wiring",
-                              payload=payload)
+            event_bus.emit(Events.NEW_CLIENT_DETECTED,
+                           payload=payload,
+                           source="event_wiring")
 
         # MEETING_REQUEST → wake Meeting Prep
         elif category == "MEETING_REQUEST":
@@ -157,9 +157,9 @@ def _wire_triage_to_processors(event_bus: "EventBus", plugins: dict) -> None:
             if meeting and hasattr(meeting, "_pending_emails"):
                 meeting._pending_emails.add(msg_id)
                 logger.info(f"[EventWiring] Meeting Prep notified of msg {msg_id}")
-            event_bus.publish(Events.MEETING_REQUESTED,
-                              source="event_wiring",
-                              payload=payload)
+            event_bus.emit(Events.MEETING_REQUESTED,
+                           payload=payload,
+                           source="event_wiring")
 
     event_bus.subscribe(Events.EMAIL_TRIAGE_COMPLETE, on_triage_complete,
                         subscriber_id="wiring.triage_router")
@@ -172,7 +172,7 @@ def _wire_wip_to_teams_alert(event_bus: "EventBus", plugins: dict) -> None:
     """
 
     def on_wip_summary(event):
-        payload      = event.get("payload", {})
+        payload      = getattr(event, "payload", {}) or {}
         overdue      = payload.get("overdue_count", 0)
         total        = payload.get("total_jobs", 0)
         date_str     = payload.get("date", "")
@@ -189,10 +189,10 @@ def _wire_wip_to_teams_alert(event_bus: "EventBus", plugins: dict) -> None:
                         try:
                             ctx.gateway.teams.send_alert(
                                 title="⚠️ WIP Overdue Alert",
-                                message=(f"{overdue} jobs are 90+ days overdue "
-                                         f"(out of {total} total). "
-                                         f"Review required — {date_str}"),
-                                color="warning")
+                                body=(f"{overdue} jobs are 90+ days overdue "
+                                      f"(out of {total} total). "
+                                      f"Review required — {date_str}"),
+                                urgent=True)
                         except Exception as e:
                             logger.warning(f"[EventWiring] Teams WIP alert failed: {e}")
                         break
@@ -208,7 +208,7 @@ def _wire_fusesign_to_xpm(event_bus: "EventBus", plugins: dict) -> None:
     """
 
     def on_fusesign_completed(event):
-        payload       = event.get("payload", {})
+        payload       = getattr(event, "payload", {}) or {}
         client_name   = payload.get("client_name", "")
         document_name = payload.get("document_name", "")
         envelope_id   = payload.get("envelope_id", "")
@@ -224,7 +224,7 @@ def _wire_fusesign_to_xpm(event_bus: "EventBus", plugins: dict) -> None:
                 if ctx.gateway and ctx.gateway.is_available("xpm"):
                     try:
                         clients = ctx.gateway.xpm.list_clients(
-                            search=client_name, limit=1)
+                            search=client_name, page_size=1)
                         if clients:
                             client_id = clients[0].get("id") or clients[0].get("client_id")
                             if client_id:
@@ -249,7 +249,7 @@ def _wire_annual_review_to_meeting_prep(event_bus: "EventBus", plugins: dict) ->
     """
 
     def on_annual_review_prompted(event):
-        payload     = event.get("payload", {})
+        payload     = getattr(event, "payload", {}) or {}
         client_name = payload.get("client_name", "")
         email       = payload.get("email", "")
 
@@ -282,13 +282,13 @@ def patch_email_triage_plugin(plugin, event_bus: "EventBus") -> None:
     def patched_run(context):
         result = original_run(context)
         # Publish a batch-done event with summary stats
-        event_bus.publish(
+        event_bus.emit(
             Events.EMAIL_TRIAGE_BATCH_DONE,
-            source="plugin_email_triage",
             payload={
                 "actions_taken": result.actions_taken,
                 "drafts_created": result.drafts_created,
-            })
+            },
+            source="plugin_email_triage")
         return result
 
     plugin.run = patched_run
@@ -305,10 +305,10 @@ def patch_noa_processor_plugin(plugin, event_bus: "EventBus") -> None:
     def patched_run(context):
         result = original_run(context)
         if result.actions_taken > 0:
-            event_bus.publish(
+            event_bus.emit(
                 Events.NOA_PROCESSED,
-                source="plugin_noa_processor",
-                payload={"actions_taken": result.actions_taken})
+                payload={"actions_taken": result.actions_taken},
+                source="plugin_noa_processor")
         return result
 
     plugin.run = patched_run

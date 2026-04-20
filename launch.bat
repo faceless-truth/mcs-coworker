@@ -47,11 +47,14 @@ echo [START] Launching MC ^& S Coworker...
 echo         You can close this window — the app will keep running.
 echo.
 
+:: Force EdgeChromium webview backend (winforms/.NET backend crashes embeddable Python)
+set PYWEBVIEW_GUI=edgechromium
+
 :: Launch with pythonw (no terminal) if available, otherwise fall back to python
 if exist "venv\Scripts\pythonw.exe" (
-    start "" venv\Scripts\pythonw.exe app.py
+    start "" venv\Scripts\pythonw.exe main.py
 ) else (
-    start /min "" python app.py
+    start /min "" python main.py
 )
 
 :: Give it a moment to start, then close the terminal
