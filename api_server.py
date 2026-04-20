@@ -130,8 +130,8 @@ def list_plugins():
         state = states.get(lp.plugin_id, {})
         plugins.append({
             "id": lp.plugin_id,
-            "name": inst.NAME,
-            "description": getattr(inst, "DESCRIPTION", ""),
+            "name": inst.name,
+            "description": getattr(inst, "description", ""),
             "enabled": lp.enabled,
             "status": "disabled" if not lp.enabled else "idle",
             "lastRun": _format_dt(lp.last_run),
