@@ -43,6 +43,12 @@ class DebtorFollowUpPlugin(AgentPlugin):
     ICON        = "💰"
     SCHEDULE    = Schedule.monthly_on_day(1)  # 1st of every month at 08:00
 
+    name        = NAME
+    description = DESCRIPTION
+    version     = VERSION
+    icon        = ICON
+    default_schedule = SCHEDULE
+
     DEFAULT_SETTINGS = {
         "overdue_threshold_days": "14", # start following up after 14 days
         "escalate_days":         "60",  # escalate to Teams after 60 days

@@ -42,6 +42,12 @@ class AnnualReviewPlugin(AgentPlugin):
     ICON        = "🔄"
     SCHEDULE    = Schedule.every_hours(168)
 
+    name        = NAME
+    description = DESCRIPTION
+    version     = VERSION
+    icon        = ICON
+    default_schedule = SCHEDULE
+
     DEFAULT_SETTINGS = {
         "run_day":              "1",     # Monday
         "run_hour":             "8",

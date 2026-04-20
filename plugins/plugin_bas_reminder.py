@@ -82,6 +82,12 @@ class BASReminderPlugin(AgentPlugin):
     # quarterly windows in a single pass
     SCHEDULE    = Schedule.monthly_on_day(21)
 
+    name        = NAME
+    description = DESCRIPTION
+    version     = VERSION
+    icon        = ICON
+    default_schedule = SCHEDULE
+
     DEFAULT_SETTINGS = {
         "lead_days":             "14",    # send reminder N days before due date
         "confidence_threshold":  "0.75",

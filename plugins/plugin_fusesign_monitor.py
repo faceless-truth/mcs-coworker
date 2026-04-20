@@ -43,6 +43,12 @@ class FuseSignMonitorPlugin(AgentPlugin):
     ICON        = "✍️"
     SCHEDULE    = Schedule.every_minutes(15)
 
+    name        = NAME
+    description = DESCRIPTION
+    version     = VERSION
+    icon        = ICON
+    default_schedule = SCHEDULE
+
     DEFAULT_SETTINGS = {
         "overdue_days":     "7",    # days before a pending bundle is considered overdue
         "send_to_teams":    "1",

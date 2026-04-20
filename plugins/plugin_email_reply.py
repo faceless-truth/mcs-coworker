@@ -97,6 +97,11 @@ class EmailReplyPlugin(AgentPlugin):
     requires_claude = True
     default_schedule = Schedule.every_minutes(1)
 
+    name        = NAME
+    description = DESCRIPTION
+    version     = VERSION
+    icon        = ICON
+
     # Track IDs processed this session to avoid double-handling
     _processed_ids: set
 

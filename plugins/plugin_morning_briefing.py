@@ -80,6 +80,12 @@ class MorningBriefingPlugin(AgentPlugin):
     ICON        = "🌅"
     SCHEDULE    = Schedule.daily_at(8)
 
+    name        = NAME
+    description = DESCRIPTION
+    version     = VERSION
+    icon        = ICON
+    default_schedule = SCHEDULE
+
     DEFAULT_SETTINGS = {
         "briefing_hour":         "8",
         "briefing_minute":       "0",

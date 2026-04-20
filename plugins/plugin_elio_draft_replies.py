@@ -13,6 +13,12 @@ class ElioEailDraftReplies(AgentPlugin):
     Skips emails already handled by Email Triage and no-reply addresses.
     """
 
+    name        = "Elio Draft Replies (deprecated)"
+    description = ("Deprecated — superseded by Email Reply with staff_profile='elio'. "
+                   "Drafts Claude-generated replies to emails addressed to Elio.")
+    icon        = "📨"
+    version     = "1.0.0"
+
     def run(self, context: PluginContext) -> PluginResult:
         context.log("[ElioEmailDraftReplies] Starting plugin...")
         

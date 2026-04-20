@@ -52,6 +52,12 @@ class MeetingPrepPlugin(AgentPlugin):
     ICON        = "📋"
     SCHEDULE    = Schedule.daily_at(8)  # Every morning at 08:00
 
+    name        = NAME
+    description = DESCRIPTION
+    version     = VERSION
+    icon        = ICON
+    default_schedule = SCHEDULE
+
     DEFAULT_SETTINGS = {
         "send_to_teams": "1",
         "send_email":    "0",

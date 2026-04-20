@@ -62,6 +62,12 @@ class EngagementLetterPlugin(AgentPlugin):
     ICON        = "📝"
     SCHEDULE    = Schedule.every_minutes(10)
 
+    name        = NAME
+    description = DESCRIPTION
+    version     = VERSION
+    icon        = ICON
+    default_schedule = SCHEDULE
+
     DEFAULT_SETTINGS = {
         "use_fusesign":       "1",
         "draft_only":         "0",   # if 1, only draft — don't send
