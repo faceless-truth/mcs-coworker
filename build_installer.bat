@@ -10,8 +10,8 @@ echo.
 :: ---------------------------------------------------------------------------
 :: CONFIGURATION
 :: ---------------------------------------------------------------------------
-set REPO_DIR=C:\Users\ElioScarton\mcs-coworker
-set FRONTEND_DIR=C:\Users\ElioScarton\mcs-coworker-demo
+set REPO_DIR=%~dp0
+set FRONTEND_DIR=%~dp0..\mcs-coworker-demo
 set BUILD_DIR=%REPO_DIR%\installer_build
 set OUTPUT_DIR=%REPO_DIR%\installer_output
 set PYTHON_EMBED_URL=https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip
@@ -122,11 +122,7 @@ del "%BUILD_DIR%\get-pip.py" >nul 2>&1
 ::       reliably without .NET dependencies. Also install tkinter deps via tk.
 echo [2/6] Installing Python packages (this takes a few minutes)...
 "%PYTHON_DIR%\python.exe" -m pip install --no-warn-script-location --quiet ^
-    anthropic flask flask-cors requests ^
-    pywebview pythonnet ^
-    pdfminer.six pillow openpyxl pandas beautifulsoup4 ^
-    schedule python-dateutil holidays ^
-    msal
+    -r "%REPO_DIR%\requirements.txt"
 if errorlevel 1 (
     echo [ERROR] pip install failed. Check internet connection.
     pause & exit /b 1
@@ -286,8 +282,8 @@ goto :eof
 if exist "%FRONTEND_DIR%\package.json" goto :eof
 :: Try sibling folder names
 for %%D in (
-    "C:\Users\ElioScarton\mcs-coworker-demo"
-    "C:\Users\ElioScarton\mcs-coworker-frontend"
+    "%~dp0..\mcs-coworker-demo"
+    "%~dp0..\mcs-coworker-frontend"
     "%REPO_DIR%\..\mcs-coworker-demo"
     "%REPO_DIR%\..\mcs-coworker-frontend"
 ) do (

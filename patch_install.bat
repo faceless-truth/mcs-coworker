@@ -5,10 +5,10 @@
 :: ============================================================
 setlocal
 
-set INSTALL_DIR=C:\Users\ElioScarton\AppData\Local\Programs\MCS CoWorker
+set INSTALL_DIR=%LOCALAPPDATA%\Programs\MCS CoWorker
 set PYTHON=%INSTALL_DIR%\python\python.exe
 set APP_DIR=%INSTALL_DIR%\app
-set REPO_DIR=C:\Users\ElioScarton\mcs-coworker
+set REPO_DIR=%~dp0
 
 echo ============================================================
 echo  MCS CoWorker — Install Patcher

@@ -5,8 +5,28 @@ Minimises to system tray when closed. Registers itself to start with Windows.
 """
 from __future__ import annotations
 
+# ── Emergency crash catcher (must be first — before any imports can fail) ─────
+import sys as _sys, traceback as _tb, os as _os
+from pathlib import Path as _Path
+try:
+    _startup_log = _Path(__file__).parent.parent / "data" / "startup_error.log"
+    _startup_log.parent.mkdir(parents=True, exist_ok=True)
+except Exception:
+    _startup_log = _Path(_os.environ.get("TEMP", ".")) / "mcs_startup_error.log"
+
+def _log_fatal(exc_type, exc_val, exc_tb):
+    try:
+        from datetime import datetime
+        with open(_startup_log, "a", encoding="utf-8") as f:
+            f.write(f"\n=== FATAL {datetime.now().isoformat()} ===\n")
+            _tb.print_exception(exc_type, exc_val, exc_tb, file=f)
+    except Exception:
+        pass
+
+_sys.excepthook = _log_fatal
+# ── End crash catcher ─────────────────────────────────────────────────────────
+
 # ── Force UTF-8 output on Windows (prevents UnicodeEncodeError with emoji) ───
-import sys as _sys
 if hasattr(_sys.stdout, "reconfigure"):
     try:
         _sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -30,6 +50,9 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("coworker")
+
+# Force EdgeChromium backend — avoids .NET/pythonnet init failures in embeddable Python
+os.environ.setdefault("PYWEBVIEW_GUI", "edgechromium")
 
 # ── Resolve paths ──────────────────────────────────────────────────────────────
 if getattr(sys, "frozen", False):
@@ -106,6 +129,10 @@ def _wait_for_server(host="127.0.0.1", port=7842, timeout=10.0):
 def _get_frontend_url() -> str:
     if FRONTEND_DIR.exists():
         return "http://127.0.0.1:7842/"
+    log.warning(
+        "frontend_dist not found at %s — falling back to Vite dev server (port 3000). "
+        "This will show a blank window on production installs.", FRONTEND_DIR
+    )
     return "http://127.0.0.1:3000/"
 
 

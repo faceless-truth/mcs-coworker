@@ -4,7 +4,7 @@
 :: Double-click this to patch the installed app.
 :: ============================================================
 
-set INSTALL_APP=C:\Users\ElioScarton\AppData\Local\Programs\MCS CoWorker\app
+set INSTALL_APP=%LOCALAPPDATA%\Programs\MCS CoWorker\app
 
 echo Patching main.py...
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^

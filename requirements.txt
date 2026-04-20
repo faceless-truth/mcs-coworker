@@ -1,9 +1,39 @@
-customtkinter>=5.2.0
-msal>=1.26.0
-requests>=2.31.0
+# === MCS CoWorker Python Dependencies ===
+# This file is the SINGLE SOURCE OF TRUTH for all packages.
+# - build_installer.bat reads this file
+# - auto_updater.py runs pip install -r this file on each update
+# - Accountants never see this — packages are pre-bundled in the installer
+#
+# DO NOT add chromadb — it pulls 40+ transitive deps and is not used.
+# If needed later, make it a separate optional install.
+
+# Core app framework
+flask>=3.0.0
+flask-cors>=4.0.0
+pywebview>=5.0
+pythonnet>=3.0.3
+cffi>=1.17
+
+# AI & auth
 anthropic>=0.34.0
+msal>=1.26.0
+
+# HTTP & networking
+requests>=2.31.0
+
+# Data processing & parsing
+pdfminer.six>=20221105
+openpyxl>=3.1.0
+pandas>=2.0.0
+beautifulsoup4>=4.12.0
+
+# Scheduling & time
+schedule>=1.2.0
+python-dateutil>=2.8.0
+holidays>=0.40
 pytz>=2024.1
+
+# Desktop UI & system tray
 pystray>=0.19.5
 Pillow>=10.0.0
-chromadb>=0.4.0
-# Stream 6 (approval_queue) uses stdlib sqlite3 — no extra package needed
+customtkinter>=5.2.0

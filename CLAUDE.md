@@ -1,190 +1,161 @@
-# MC & S Desktop Agent — Claude Code Context
+# MC & S CoWorker — Claude Code Context
 
 ## Project Overview
 Windows desktop automation agent for **MC & S Pty Ltd**, an accounting practice in
-Keysborough, Victoria, Australia. The app runs in the background and automates
-routine tasks (starting with email triage) on a configurable schedule — without
-staff needing to be present.
+Keysborough, Victoria, Australia. Runs in the background and automates routine
+tasks (email triage, NOA processing, debtor follow-up, FuseSign nudges, meeting
+prep, etc.) on configurable schedules — without staff needing to be present.
 
 ---
 
 ## Tech Stack
 | Component | Detail |
 |-----------|--------|
-| UI | Python + CustomTkinter (modern tkinter wrapper) |
-| Database | SQLite at `~/.mcs_email_automation/config.db` |
-| Auth | Microsoft MSAL — OAuth2 device code flow, tokens cached |
+| Frontend | React + Vite (built into `frontend/dist/public`) |
+| Native window | pywebview — **EdgeChromium backend** (WebView2) |
+| API server | Flask + flask-cors on `127.0.0.1:7842` |
+| Backend | Python 3.11 (embeddable runtime in production) |
+| Database | SQLite — production path resolved via `MCS_DATA_DIR` env var |
+| Auth | Microsoft MSAL (single-tenant, OAuth2) |
 | AI | Anthropic API — `claude-haiku-4-5-20251001` |
 | Email | Microsoft Graph API — `Mail.ReadWrite` + `Mail.Send` |
+| System tray | pystray + Pillow |
 | Timezone | pytz — Melbourne (AUS Eastern Standard Time) |
 | Architecture | Plugin-based — each automation is a self-contained module |
+
+---
+
+## Distribution Model (read this before changing anything)
+Accountants are non-technical. They never run pip, cmd, or python. The delivery is:
+
+1. Dev (Elio) runs `build_installer.bat` → produces `installer_output\MCSCoWorker_Setup.exe`
+2. Installer is uploaded to SharePoint
+3. Accountants download and double-click the .exe
+4. Inno Setup installs to `%LOCALAPPDATA%\Programs\MCS CoWorker\` (no admin needed)
+5. Bundled embeddable Python 3.11 + all packages from `requirements.txt` are pre-installed
+6. On every launch, `auto_updater.py` does `git pull` + `pip install -r requirements.txt`
+   — so code/package updates flow without rebuilding the installer
+7. Only when adding a brand-new BINARY dependency (rare) is an installer rebuild required
+
+`requirements.txt` is the **single source of truth**. Both `build_installer.bat` and
+`auto_updater.py` read it. Never hardcode a package list anywhere else.
+
+---
+
+## Launch Chain (Production)
+```
+Desktop shortcut
+  → wscript.exe MCSCoWorker.vbs           (no console window)
+    → pythonw.exe app\launcher.py         (auto_updater: git pull + pip install)
+      → pythonw.exe app\main.py           (Flask + pywebview + tray icon)
+```
+
+Install layout:
+```
+%LOCALAPPDATA%\Programs\MCS CoWorker\
+  MCSCoWorker.vbs
+  python\          ← embeddable Python 3.11 + all packages pre-installed
+  app\             ← git clone of this repo (auto-updates via git pull)
+    main.py
+    api_server.py
+    plugins\
+    frontend_dist\ ← built React app
+  data\            ← SQLite DB, logs, startup_error.log (never touched by updates)
+  assets\
+```
+
+---
+
+## Launch Chain (Dev — Elio's machine only)
+```
+cd C:\Users\Elio\mcs-coworker
+venv\Scripts\activate
+set PYWEBVIEW_GUI=edgechromium
+python main.py
+```
 
 ---
 
 ## File Structure
 ```
 mcs-coworker/
-├── app.py                          # Main UI — CustomTkinter, 6 nav tabs
-├── config.py                       # SQLite DB manager + all CRUD functions
-├── graph_client.py                 # Microsoft Graph API wrapper
-├── plugin_base.py                  # AgentPlugin base class + Schedule + PluginResult + PluginContext
-├── plugin_loader.py                # Plugin discovery, scheduling, execution engine
-├── requirements.txt                # pip dependencies
-├── launch.bat                      # Windows launcher (creates venv on first run)
-├── CLAUDE.md                       # This file
-└── plugins/
-    ├── __init__.py
-    ├── plugin_email_triage.py      # ACTIVE: email classification + auto-response
-    └── plugin_template.py          # Template only — never runs (in TEMPLATE_PLUGIN_IDS)
+├── main.py                           # Entry point: Flask + pywebview + tray
+├── launcher.py                       # Pre-launch: runs auto_updater, then main.py
+├── auto_updater.py                   # git pull + pip install -r requirements.txt
+├── api_server.py                     # Flask routes — all UI <-> backend traffic
+├── api_server_standalone.py          # Variant for headless/test runs
+├── config.py                         # SQLite schema + CRUD
+├── plugin_base.py                    # AgentPlugin base + Schedule + PluginResult + PluginContext
+├── plugin_loader.py                  # Plugin discovery, scheduling, execution
+├── graph_client.py                   # Microsoft Graph API wrapper (tenant/client IDs hardcoded)
+├── gateway_client.py                 # Outbound gateway for downstream services
+├── event_bus.py                      # In-process pub/sub
+├── event_wiring.py                   # Wires plugins to event_bus topics
+├── token_meter.py                    # Anthropic token usage tracker
+├── memory_store.py                   # Vector / KB style memory for plugins
+├── approval_queue.py                 # Human-in-loop approvals (SQLite-backed)
+├── kpi_monitor.py                    # KPI snapshot/aggregation singleton
+├── xero_oauth.py                     # Xero OAuth2 flow
+├── app.py                            # LEGACY CustomTkinter UI — not the entry point
+├── requirements.txt                  # SINGLE SOURCE OF TRUTH for packages
+├── build_installer.bat               # Dev only — builds MCSCoWorker_Setup.exe
+├── installer.iss                     # Inno Setup script
+├── update.bat                        # Dev convenience — git pull + pip + frontend build + copy
+├── patch_install.bat / fix_launch.bat # One-off remediation scripts
+├── launch.bat / launch_silent.vbs    # Local dev launchers
+├── frontend/                         # React + Vite source
+├── plugins/                          # ~18 plugins (see below)
+├── assets/                           # Icons, images, templates
+└── tests/
 ```
 
 ---
 
-## UI Layout (app.py)
-**Colour scheme:**
-- `BRAND_BLUE` = `#1565C0`
-- `BRAND_DARK` = `#0D47A1`
-- `ACCENT_GREEN` = `#2E7D32`
-- `ACCENT_AMBER` = `#E65100`
-- `BG_LIGHT` = `#F5F7FA`
-- `CARD_BG` = `#FFFFFF`
-
-**Layout:** Dark left nav (210px) + content area. Header bar (64px) shows app title,
-scheduler status pill, and auth status.
-
-**Nav tabs (in order):**
-1. Dashboard — scheduler start/stop, live log, stat counters
-2. Plugins — per-plugin cards with enable/disable, draft mode, schedule, Run Now
-3. Email Rules — CRUD editor for categories, keywords, response templates
-4. Staff & Notify — staff who receive draft notification emails
-5. Settings — MS365 credentials, Anthropic API key, business hours
-6. Activity Log — timestamped audit trail
+## Plugins (in `plugins/`)
+| File | Purpose |
+|------|---------|
+| `plugin_email_triage.py` | Classify unread email, draft replies, notify staff |
+| `plugin_email_reply.py` | Reply-drafting helper |
+| `plugin_auto_reply_ross.py` | Per-staff auto-reply (Ross) |
+| `plugin_auto_response_elio_claude.py` | Per-staff auto-reply (Elio, Claude-driven) |
+| `plugin_elio_draft_replies.py` | Draft replies routed to Elio |
+| `plugin_noa_processor.py` | Notice of Assessment detection + cover email |
+| `plugin_tax_return_processor.py` | Tax-return workflow automation |
+| `plugin_asic_returns.py` | Parse ASIC reminder emails, log/calendar |
+| `plugin_bas_reminder.py` | BAS reminders |
+| `plugin_debtor_followup.py` | Aged-debtor progressive follow-up |
+| `plugin_fusesign_monitor.py` | Nudge clients on unsigned FuseSign bundles |
+| `plugin_meeting_prep.py` | Pre-meeting client brief |
+| `plugin_morning_briefing.py` | Daily morning summary |
+| `plugin_engagement_letter.py` | Engagement letter generator |
+| `plugin_annual_review.py` | Annual review workflow |
+| `plugin_client_outreach.py` | Periodic client check-ins |
+| `plugin_correspondence_logger.py` | Correspondence logging |
+| `plugin_template.py` | TEMPLATE — listed in `TEMPLATE_PLUGIN_IDS`, never runs |
 
 ---
 
-## Plugin Architecture
-
-### plugin_base.py defines:
-- `class Schedule` — classmethods: `every_minutes(n)`, `every_hours(n)`, `daily_at(hour)`, `manual_only()`
+## Plugin Architecture (`plugin_base.py`)
+- `class Schedule` — `every_minutes(n)`, `every_hours(n)`, `daily_at(hour)`, `manual_only()`
 - `dataclass PluginResult` — `success`, `summary`, `error`, `actions_taken`, `drafts_created`, `items_skipped`, `extra`
-- `dataclass PluginContext` — `graph`, `claude`, `log` callable, `notify` callable, `settings` dict, `draft_mode` bool
+- `dataclass PluginContext` — `graph`, `claude`, `log`, `notify`, `settings`, `draft_mode`
 - `abstract class AgentPlugin` — class attributes: `name`, `description`, `detail`, `version`, `icon`, `author`, `requires_graph`, `requires_claude`, `default_schedule`
   - `classmethod settings_schema() -> list[dict]`
   - `def load(context) -> bool`
   - `abstract def run(context) -> PluginResult`
-  - `def stop()`
   - helpers: `get_plugin_setting(key)`, `set_plugin_setting(key, value)`, `log_activity(...)`
 
-### plugin_loader.py:
-- Scans `plugins/` for `plugin_*.py` files on startup
-- Auto-discovers and registers any `AgentPlugin` subclass
-- `LoadedPlugin` wrapper per plugin: `plugin_id`, `enabled`, `draft_mode`, `schedule_seconds`, `last_run`, `last_result`, `last_summary`, `is_ready`, `_next_run_at`
-- Persists all plugin state to `plugin_registry` table in SQLite
-- `TEMPLATE_PLUGIN_IDS` set — templates shown in UI but NEVER run
-- Scheduler loop runs every 10 seconds in a background thread
-
----
-
-## Database Schema (config.py)
-| Table | Key columns |
-|-------|-------------|
-| `settings` | key, value — all app-wide config |
-| `plugin_registry` | plugin_id, enabled, draft_mode, schedule_seconds, last_run, last_result |
-| `email_rules` | id, category, keywords, subject_template, body_template, enabled, sort_order |
-| `staff_notifications` | id, name, email, receives_drafts, enabled |
-| `activity_log` | id, timestamp, from_email, subject, classification, action, draft_created, notification_sent |
-
-**Default settings seeded on first run:**
-`draft_mode=1`, `business_hours_enabled=1`, `business_hours_start=8`,
-`business_hours_end=18`, `business_days=1,2,3,4,5`, `polling_interval=60`,
-`ms_tenant_id=''`, `ms_client_id=''`, `anthropic_api_key=''`,
-`ms_account_email=''`, `monitor_folder=Inbox`, `practice_name=MC & S`,
-`timezone=AUS Eastern Standard Time`
-
----
-
-## Email Triage Plugin (plugins/plugin_email_triage.py)
-- `name = 'Email Triage & Auto-Response'`
-- `default_schedule = Schedule.every_minutes(1)`
-- `requires_graph = True`, `requires_claude = True`
-- Settings schema: `folder` (default: Inbox), `max_per_run` (default: 25)
-
-**Run logic:**
-1. Fetch unread emails from configured folder
-2. Strip HTML from body
-3. Call Claude (haiku) — returns JSON: `{category, confidence, reasoning, sender_name}`
-4. `OTHER` → leave in inbox, log no_action
-5. Matched → apply template (replace `{client_name}`, `{date}`, `{subject}`)
-6. `draft_mode ON` → `create_draft()` + send staff notification email
-7. `draft_mode OFF` → `send_email()` directly
-8. `DOCUMENTS_RECEIVED` → also `flag_email()` for follow-up
-9. `mark_as_read()` on processed emails
-10. Track processed message IDs in a set to avoid reprocessing
-
-**Seeded email rules:**
-- `PRICING_ENQUIRY` — keywords: how much, price, cost, fee, rates, quote
-- `CHECKLIST_REQUEST` — keywords: what do i need, checklist, what to bring
-- `DOCUMENTS_RECEIVED` — keywords: please find attached, here are my documents
-
----
-
-## Draft Mode Behaviour (applies to ALL plugins)
-- **ON** → create Outlook draft + send HTML notification email to all staff with `receives_drafts=1`
-- **OFF** → send/action automatically, no notification
-- **Default is always ON** — auto-send requires a conscious decision to flip
-
-**Staff notification email format:**
-- Blue header: "Draft Email Ready for Review"
-- Table rows: From, Subject, Category (blue pill badge)
-- Amber box: "Action Required — open Outlook Drafts, review, then send"
-- Practice name footer
-
----
-
-## Business Hours Logic
-- Runs before every plugin execution cycle
-- Convert UTC → Melbourne time (pytz)
-- Check weekday (Mon–Fri) and hour (`start_hour <= hour < end_hour`)
-- If outside hours: log message, skip cycle entirely
-- Configurable from Settings tab
-
----
-
-## Scheduler Behaviour
-- **Start** requires: MS365 auth + Anthropic API key — shows warning if missing
-- Calls `loader.set_graph()`, `loader.set_claude()`, `loader.load_all()`, `loader.start_scheduler()`
-- Loop checks every 10s: if `time.time() >= _next_run_at` → `run_plugin()`
-- Next run scheduled as: `_next_run_at = time.time() + schedule_seconds`
-
----
-
-## Non-Negotiable Code Rules
-- **Never block the main thread** — all network/API calls go in background threads
-- **All UI updates from threads** use `self.after(0, ...)` — never touch widgets directly from threads
-- **All DB writes** use parameterised queries — no string formatting in SQL
-- **Plugin settings** namespaced as `plugin_{ClassName}_{key}` in the settings table
-- **`init_db()` must be idempotent** — safe to run multiple times
-- **Plugin loader** handles import errors gracefully — log, skip, continue
-- **Claude classification prompt** requests ONLY valid JSON, strip markdown code fences before parsing
-- **Graph client `authenticate()`** uses a daemon thread for the callback wait
-
----
-
-## Microsoft Graph Client (graph_client.py)
-- `PublicClientApplication` with `SerializableTokenCache`
-- Scopes: `Mail.ReadWrite`, `Mail.Send`, `offline_access`
-- Redirect URI: `http://localhost:8765` (captured by local HTTPServer)
-- Required methods: `authenticate(callback)`, `is_authenticated()`, `get_user_info()`,
-  `fetch_unread_emails(folder, max_count)`, `mark_as_read(message_id)`,
-  `send_email(to, subject, body_html, reply_to_id)`, `create_draft(to, subject, body_html, reply_to_id)`,
-  `flag_email(message_id)`, `add_category(message_id, category)`
+`plugin_loader.py` scans `plugins/plugin_*.py` on startup, registers any
+`AgentPlugin` subclass, persists state to `plugin_registry`, and runs a 10-second
+scheduler tick in a background thread. Templates listed in `TEMPLATE_PLUGIN_IDS`
+are visible in the UI but never execute.
 
 ---
 
 ## Adding a New Plugin
 **Only create `plugins/plugin_{name}.py` — do not modify any other files.**
+The loader auto-discovers it on next launch.
 
-Template pattern:
 ```python
 from plugin_base import AgentPlugin, Schedule, PluginResult, PluginContext
 
@@ -199,28 +170,77 @@ class MyPlugin(AgentPlugin):
 
     @classmethod
     def settings_schema(cls):
-        return []  # Add field defs if needed
+        return []
 
     def load(self, context: PluginContext) -> bool:
-        return True  # Return False if not ready
+        return True
 
     def run(self, context: PluginContext) -> PluginResult:
-        # Your automation logic here
         return PluginResult(success=True, summary="Done", actions_taken=0)
 ```
 
 ---
 
-## Planned Plugins (backlog)
-| Plugin | Schedule | Description |
-|--------|----------|-------------|
-| `plugin_noa_workflow.py` | Daily 8am | Detect Notice of Assessment emails, extract refund/payable amounts, draft personalised cover email |
-| `plugin_fusesign_monitor.py` | Every 4hrs | Check FuseSign bundles unsigned >X days, draft polite nudge to client |
-| `plugin_meeting_prep.py` | Scheduled | 30min before calendar appointment: pull last invoice + recent emails, compile one-page brief |
-| `plugin_monthly_invoicing.py` | 1st of month | Pull retainer clients from Xero, generate invoice list, email to billing staff |
-| `plugin_debtor_followup.py` | Daily | Pull debtors aged >45 days, draft progressive follow-up sequence |
-| `plugin_asic_reminder.py` | Daily | Parse ASIC reminder emails, extract company + due date, create calendar reminder |
-| `plugin_client_checkin.py` | Weekly | Surface companies/trusts not contacted in 6+ months, draft check-in email |
+## Microsoft Graph Client (`graph_client.py`)
+- `PublicClientApplication` with `SerializableTokenCache`
+- Scopes: `Mail.ReadWrite`, `Mail.Send`, `offline_access`
+- Tenant ID and Client ID are **hardcoded** in this file — intentional for
+  single-tenant MC & S deployment. Do not parameterise.
+- Methods: `authenticate(callback)`, `is_authenticated()`, `get_user_info()`,
+  `fetch_unread_emails(folder, max_count)`, `mark_as_read(message_id)`,
+  `send_email(to, subject, body_html, reply_to_id)`, `create_draft(...)`,
+  `flag_email(message_id)`, `add_category(message_id, category)`
+
+---
+
+## Draft Mode (applies to ALL plugins)
+- **ON** → create Outlook draft + send HTML notification email to all staff with `receives_drafts=1`
+- **OFF** → send/action automatically, no notification
+- **Default is always ON** — auto-send requires a conscious flip
+
+---
+
+## Business Hours Logic
+- Runs before every plugin execution cycle
+- Convert UTC → Melbourne time (pytz)
+- Check weekday (Mon–Fri) and hour (`start_hour <= hour < end_hour`)
+- If outside hours: log message, skip the cycle entirely
+- Configurable from the Settings tab in the UI
+
+---
+
+## Non-Negotiable Code Rules
+- **`requirements.txt` is the single source of truth.** Never hardcode package
+  lists in `build_installer.bat`, `update.bat`, or anywhere else.
+- **pywebview backend must be edgechromium** — set via
+  `os.environ.setdefault("PYWEBVIEW_GUI", "edgechromium")` in `main.py`. The
+  default winforms/.NET backend crashes on embeddable Python (cffi init failure).
+- **Never block the main thread** — all network/API calls go in background threads.
+- **All UI updates from threads** use `self.after(0, ...)` — never touch widgets
+  directly from a thread (legacy CustomTkinter rule, still applies if `app.py`
+  is touched).
+- **All DB writes** use parameterised queries — no string formatting in SQL.
+- **Plugin settings** namespaced as `plugin_{ClassName}_{key}` in the settings table.
+- **`init_db()` must be idempotent** — safe to run multiple times.
+- **Plugin loader** handles import errors gracefully — log, skip, continue.
+- **Claude classification prompt** requests ONLY valid JSON, strip markdown
+  fences before parsing.
+- **`main.py` has a top-of-file `_log_fatal` excepthook** that writes any uncaught
+  exception to `data\startup_error.log`. Do not move it lower or import anything
+  before it.
+
+---
+
+## Known Issues / Gotchas
+- **`config.py` DB path:** the legacy default is `~/.mcs_email_automation/config.db`,
+  which does NOT match the installer's data path (`%INSTALL_DIR%\data\`).
+  `launcher.py` sets `MCS_DATA_DIR` but `config.py` currently ignores it. Resolve
+  by reading `os.environ["MCS_DATA_DIR"]` in `config.py` before falling back.
+- **Frontend fallback:** if `frontend_dist\` is missing, `main.py` falls back to
+  `http://127.0.0.1:3000/` (Vite dev server). On accountant machines that's a
+  blank window — `_get_frontend_url()` now logs a warning when this happens.
+- **`app.py` (CustomTkinter)** is legacy and not the production entry point.
+  Still in the repo for reference / fallback. Don't add features there.
 
 ---
 
