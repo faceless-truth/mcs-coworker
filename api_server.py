@@ -16,6 +16,7 @@ from typing import Any
 
 import queue
 import time
+from collections import deque
 from flask import Flask, Response, jsonify, request, stream_with_context, send_from_directory
 from flask_cors import CORS
 
@@ -55,6 +56,26 @@ CORS(app, origins=[
 # Electron uses file:// or app:// — handle via wildcard on those routes separately
 
 API_PORT = 7842
+
+# ── /api/chat rate limiting ────────────────────────────────────────────────────
+# Even with Fix 2 auth, the webview itself is trusted to forward requests, so a
+# buggy or compromised frontend could still drain the Anthropic budget. These
+# bounds put a hard ceiling on cost exposure per minute and per call.
+_chat_timestamps: deque = deque()
+CHAT_RATE_LIMIT = 30       # max requests
+CHAT_RATE_WINDOW = 60      # per N seconds
+CHAT_MAX_MESSAGE_LEN = 50000  # characters per user message
+CHAT_MAX_HISTORY = 50      # conversation turns retained
+
+
+def _check_chat_rate() -> bool:
+    now = time.time()
+    while _chat_timestamps and _chat_timestamps[0] < now - CHAT_RATE_WINDOW:
+        _chat_timestamps.popleft()
+    if len(_chat_timestamps) >= CHAT_RATE_LIMIT:
+        return False
+    _chat_timestamps.append(now)
+    return True
 
 # Shared state — populated by main.py on startup
 _loader: PluginLoader | None = None
@@ -669,10 +690,30 @@ def xero_disconnect():
 # ── Chat ───────────────────────────────────────────────────────────────────────
 @app.route("/api/chat", methods=["POST"])
 def chat():
+    if not _check_chat_rate():
+        return jsonify({
+            "ok": False,
+            "error": f"Rate limit exceeded. Max {CHAT_RATE_LIMIT} requests per {CHAT_RATE_WINDOW} seconds."
+        }), 429
+
     body = request.get_json(silent=True) or {}
     messages = body.get("messages", [])
     if not messages:
         return err("No messages provided")
+
+    # Cap per-message size to bound token cost per call.
+    for m in messages:
+        content = m.get("content", "")
+        if isinstance(content, str) and len(content) > CHAT_MAX_MESSAGE_LEN:
+            return jsonify({
+                "ok": False,
+                "error": f"Message too long. Max {CHAT_MAX_MESSAGE_LEN} characters."
+            }), 413
+
+    # Truncate history to the most recent N turns so runaway conversations
+    # don't balloon the context window every call.
+    if len(messages) > CHAT_MAX_HISTORY:
+        messages = messages[-CHAT_MAX_HISTORY:]
 
     try:
         import anthropic as anthropic_lib
