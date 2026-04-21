@@ -4,6 +4,7 @@ MC & S Desktop Agent - Configuration & Database Manager
 import sqlite3
 import json
 import os
+import secrets
 from pathlib import Path
 
 DB_PATH = Path.home() / ".mcs_email_automation" / "config.db"
@@ -228,6 +229,24 @@ def set_setting(key, value):
     )
     conn.commit()
     conn.close()
+
+
+def save_setting(key, value):
+    """Alias for set_setting — kept for naming consistency with get_setting."""
+    set_setting(key, value)
+
+
+def ensure_api_token() -> str:
+    """Generate and persist a per-install API token on first run.
+
+    The token gates all /api/* routes so browser tabs, other apps, or malware
+    cannot silently drive the Flask server running on 127.0.0.1:7842.
+    """
+    token = get_setting("local_api_token", "")
+    if not token:
+        token = secrets.token_urlsafe(48)
+        set_setting("local_api_token", token)
+    return token
 
 
 def get_claude_model() -> str:

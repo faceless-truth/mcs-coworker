@@ -74,6 +74,11 @@ for _p in [str(BASE_DIR), str(APP_DIR)]:
 import config
 config.init_db()
 
+# Generate the per-install API token (idempotent — only writes on first run).
+# The token gates all /api/* routes; it is injected into the webview below so
+# the React frontend can authenticate without prompting the user.
+API_TOKEN = config.ensure_api_token()
+
 # ── Initialise plugin loader ───────────────────────────────────────────────────
 from graph_client import GraphClient
 from plugin_loader import PluginLoader
@@ -216,10 +221,16 @@ def main():
         confirm_close=False,
     )
 
-    # Inject desktop flag for React app
+    # Inject desktop flag + API token for React app.
+    # The token must be JSON-encoded to escape safely (it's a URL-safe base64
+    # string, so no real risk, but belt-and-braces).
     def on_loaded():
         try:
-            window.evaluate_js("window.__pywebview__ = true;")
+            import json as _json
+            token_js = _json.dumps(API_TOKEN)
+            window.evaluate_js(
+                f"window.__pywebview__ = true; window.__API_TOKEN__ = {token_js};"
+            )
         except Exception:
             pass
 

@@ -84,6 +84,48 @@ def set_graph_client(gc):
     _graph_client = gc
 
 
+# ── API token auth ─────────────────────────────────────────────────────────────
+# All /api/* routes require a per-install token. The webview injects the token
+# into window.__API_TOKEN__ on load so the React frontend can send it as a
+# Bearer header (or ?token= query param for EventSource, which cannot set
+# custom headers). Static assets served from "/" are not gated — they have no
+# side effects and gating them would break initial page load.
+AUTH_EXEMPT_API_PATHS = {
+    "/api/health",  # liveness probe — never sensitive
+}
+AUTH_EXEMPT_PREFIXES = (
+    "/oauth/callback",  # external IdP redirects (cannot carry our token)
+    "/xero/callback",
+    "/auth/callback",
+)
+
+
+@app.before_request
+def require_api_token():
+    # Allow CORS preflight without auth — flask-cors handles the reply
+    if request.method == "OPTIONS":
+        return None
+    path = request.path
+    # Non-/api/ routes (frontend static assets, root) are not gated.
+    if not path.startswith("/api/"):
+        return None
+    if path in AUTH_EXEMPT_API_PATHS:
+        return None
+    if any(path.startswith(p) for p in AUTH_EXEMPT_PREFIXES):
+        return None
+    # Accept token from Authorization header or ?token= query param (SSE).
+    token = None
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        token = auth_header[7:]
+    else:
+        token = request.args.get("token")
+    expected = get_setting("local_api_token", "")
+    if not expected or not token or token != expected:
+        return jsonify({"ok": False, "error": "Unauthorized"}), 401
+    return None
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 def ok(data: Any = None, **kwargs):
     payload = {"ok": True}
