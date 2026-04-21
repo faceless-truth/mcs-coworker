@@ -423,6 +423,24 @@ export default function Settings() {
 
       {/* Xero XPM — OAuth */}
       <Section title="XPM / Xero Practice Manager" description="Connect via OAuth 2.0 to enable WIP summaries, job lookups, client notes, and meeting prep">
+        <Field label="Xero Client ID" hint="From your Xero app in developer.xero.com (leave blank to use XERO_CLIENT_ID env var)">
+          <input
+            type="text"
+            className={inputClass}
+            value={settings.xeroClientId}
+            placeholder="Not configured"
+            onChange={e => setSettings(s => ({ ...s, xeroClientId: e.target.value }))}
+          />
+        </Field>
+        <Field label="Xero Client Secret" hint="Stored per-install. Rotate in the Xero developer portal after setting.">
+          <input
+            type="password"
+            className={inputClass}
+            value={settings.xeroClientSecret}
+            placeholder="Not configured"
+            onChange={e => setSettings(s => ({ ...s, xeroClientSecret: e.target.value }))}
+          />
+        </Field>
         <div className="flex items-center justify-between p-4 rounded-lg border border-border bg-slate-50">
           <div className="flex items-center gap-3">
             {/* Xero logo placeholder */}

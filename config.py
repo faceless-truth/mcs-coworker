@@ -146,8 +146,10 @@ def init_db():
         "user_email":             "",
         "user_setup_complete":    "0",
         # Stream 4 — Gateway integrations (Xero OAuth)
-        "xero_client_id":         "76454701D582444F9EA5F11A835A6E91",
-        "xero_client_secret":     "c8slT8k09aTZKDnXNkrgAhCz9BAsXDjfZZS4lkLVXAca6cWt",
+        # Credentials are NOT hardcoded here — populate via environment
+        # variables (XERO_CLIENT_ID / XERO_CLIENT_SECRET) or the Settings UI.
+        "xero_client_id":         "",
+        "xero_client_secret":     "",
         "xero_refresh_token":     "",
         "xero_access_token":      "",
         "xero_token_expiry":      "",
@@ -178,16 +180,6 @@ def init_db():
             "INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)",
             (key, value),
         )
-
-    # Force-update Xero app credentials so they are always current
-    # (INSERT OR IGNORE won't overwrite existing empty values on upgrades)
-    for key, value in [
-        ("xero_client_id",     "76454701D582444F9EA5F11A835A6E91"),
-        ("xero_client_secret", "c8slT8k09aTZKDnXNkrgAhCz9BAsXDjfZZS4lkLVXAca6cWt"),
-    ]:
-        current = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-        if current is None or current[0] == "":
-            c.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
 
     # No default email rules — accountant builds their own from scratch
 

@@ -304,6 +304,8 @@ export const mockSettings = {
   reasoningModel: "claude-sonnet-4-6",
   outlookEmail: "elio@mcsaccountants.com.au",
   xpmApiKey: "",
+  xeroClientId: "",
+  xeroClientSecret: "",
   fuseSignApiKey: "fs-••••••••••••••••••••••••",
   teamsWebhook: "https://mcsaccountants.webhook.office.com/webhookb2/••••••••••••••••••",
   confidenceThreshold: 0.75,

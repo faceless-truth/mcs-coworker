@@ -66,10 +66,11 @@ SCOPES          = (
 # ── Credentials helpers ───────────────────────────────────────────────────────
 
 def get_client_id() -> str:
-    return get_setting("xero_client_id", "")
+    # Env var takes priority so ops can supply credentials without touching the DB
+    return os.environ.get("XERO_CLIENT_ID") or get_setting("xero_client_id", "")
 
 def get_client_secret() -> str:
-    return get_setting("xero_client_secret", "")
+    return os.environ.get("XERO_CLIENT_SECRET") or get_setting("xero_client_secret", "")
 
 def is_configured() -> bool:
     """Return True if client ID and secret are stored."""
