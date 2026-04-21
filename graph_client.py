@@ -22,8 +22,18 @@ GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 REDIRECT_URI = "http://localhost:7842/auth/callback"
 
 # Hardcoded MC&S Entra ID credentials — accountants don't need Azure setup
-MCS_TENANT_ID = "88ea4eb1-1dce-414e-bbfe-ce0c51a5bd98"   
-MCS_CLIENT_ID = "0bad4828-f05f-4580-8e6f-ede96c098642"  
+MCS_TENANT_ID = "88ea4eb1-1dce-414e-bbfe-ce0c51a5bd98"
+MCS_CLIENT_ID = "0bad4828-f05f-4580-8e6f-ede96c098642"
+
+
+def _odata_escape(value: str) -> str:
+    """Escape a string for safe use inside an OData $filter single-quoted literal.
+
+    In OData v4, a single quote inside a string literal is escaped by doubling
+    it. Without this, a sender address like ``o'brien@example.com`` breaks the
+    filter query, and a crafted value could manipulate the filter logic.
+    """
+    return value.replace("'", "''")
 
 
 class GraphClient:
@@ -428,7 +438,7 @@ class GraphClient:
                                  unread_only: bool = True,
                                  max_count: int = 50) -> list[dict]:
         """Fetch emails from a specific sender address."""
-        filter_str = f"from/emailAddress/address eq '{sender_email}'"
+        filter_str = f"from/emailAddress/address eq '{_odata_escape(sender_email)}'"
         if unread_only:
             filter_str += " and isRead eq false"
         url = f"{GRAPH_BASE}/me/mailFolders/{folder}/messages"
@@ -659,7 +669,7 @@ class GraphClient:
             return folder_name
         # Otherwise search for the folder
         url = f"{GRAPH_BASE}/me/mailFolders"
-        params = {"$filter": f"displayName eq '{folder_name}'"}
+        params = {"$filter": f"displayName eq '{_odata_escape(folder_name)}'"}
         r = requests.get(url, headers=self._headers(), timeout=30, params=params)
         r.raise_for_status()
         folders = r.json().get("value", [])
