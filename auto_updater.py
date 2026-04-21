@@ -1,20 +1,23 @@
 """
 MCS CoWorker — Auto-Update System (Hybrid Installer Edition)
 =============================================================
-Performs a silent git pull + pip install on every launch so that
-pushing a fix to GitHub is all that is needed to update every
-accountant's machine.  No reinstall required.
+Performs a silent fetch + author-verified reset + pip install on every launch
+so that pushing a fix to GitHub is all that is needed to update every
+accountant's machine. No reinstall required.
 
 BEHAVIOUR
 ---------
 1. On launch, check if a newer commit exists on GitHub main branch.
 2. If yes (or if forced):
-   a. Back up the current app folder (Python files only).
-   b. Run `git pull origin main --ff-only`.
-   c. Run `pip install -r requirements.txt --quiet`.
-   d. Write the new commit hash to VERSION.
-   e. Set restart_flag so the launcher can restart the app.
-3. If git pull fails, restore the backup and continue with the
+   a. Back up the current app folder (full tree, excluding venv/.git/caches).
+   b. `git fetch origin main`, verify commit author is in
+      ALLOWED_UPDATE_AUTHORS, then `git reset --hard origin/main`.
+   c. Post-update sanity check on critical files — if any are missing or
+      empty, restore from backup immediately.
+   d. Run `pip install -r requirements.txt --quiet`.
+   e. Write the new commit hash to VERSION.
+   f. Set restart_flag so the launcher can restart the app.
+3. If fetch/verify/reset fails, restore the backup and continue with the
    existing version — the accountant always has a working app.
 4. Every 6 hours while the app is running, re-check and apply
    updates silently in the background (takes effect on next restart).
@@ -45,6 +48,23 @@ logger = logging.getLogger(__name__)
 
 GITHUB_REPO      = "faceless-truth/mcs-coworker"
 CHECK_INTERVAL_H = 6   # hours between background checks
+
+# Only apply commits authored by these emails. If a pushed commit has a
+# different author (e.g. a compromised GitHub account pushing via a PR merge),
+# refuse the update so we don't roll malicious code out to every accountant
+# machine in the next 6h cycle.
+ALLOWED_UPDATE_AUTHORS = {"elio@mcands.com.au"}
+
+# Post-update sanity check: if any of these are missing or empty after the
+# reset, we assume the update corrupted the tree and roll back to the backup.
+CRITICAL_FILES = ("main.py", "api_server.py", "config.py", "plugin_loader.py")
+
+# Backup directory excludes — keep the backup small and skip anything that
+# shouldn't be restored (vendored deps, build artefacts, caches).
+_BACKUP_IGNORE = shutil.ignore_patterns(
+    ".git", "venv", "__pycache__", "node_modules", "*.pyc",
+    "dist", "build", "*.log", "*.db", "coworker.db",
+)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -130,6 +150,64 @@ def _pip_install(cwd: Path):
 
 # ── Core update logic ─────────────────────────────────────────────────────────
 
+def _fetch_and_verify(cwd: Path) -> tuple[bool, str]:
+    """Fetch from origin/main, verify the latest commit's author, and fast-forward
+    via reset --hard.
+
+    Returns (applied, notes). ``applied`` is True only when a new commit was
+    actually moved to. Returns (False, reason) when refused, already up to
+    date, or on any failure.
+    """
+    # Step 1 — fetch the latest refs without touching the working tree
+    ok, out = _run(["git", "fetch", "origin", "main"], cwd=cwd)
+    if not ok:
+        return False, f"git fetch failed: {out}"
+
+    # Step 2 — check the author of origin/main's tip before touching anything
+    ok, out = _run(
+        ["git", "log", "--format=%ae", "origin/main", "-1"], cwd=cwd, timeout=15
+    )
+    if not ok:
+        return False, f"git log failed: {out}"
+    author_email = out.strip().lower()
+    if author_email not in ALLOWED_UPDATE_AUTHORS:
+        return False, (
+            f"Update BLOCKED — commit author '{author_email}' not in "
+            f"allowed list. Refusing to roll out."
+        )
+
+    # Step 3 — compare local HEAD against origin/main; skip if no-op
+    ok, local_head = _run(["git", "rev-parse", "HEAD"], cwd=cwd, timeout=10)
+    if not ok:
+        return False, f"git rev-parse HEAD failed: {local_head}"
+    ok, remote_head = _run(
+        ["git", "rev-parse", "origin/main"], cwd=cwd, timeout=10
+    )
+    if not ok:
+        return False, f"git rev-parse origin/main failed: {remote_head}"
+    local_head = local_head.strip()
+    remote_head = remote_head.strip()
+    if local_head == remote_head:
+        return False, "Already up to date"
+
+    # Step 4 — atomic fast-forward to origin/main
+    logger.info(f"[AutoUpdater] Updating {local_head[:8]} -> {remote_head[:8]}")
+    ok, out = _run(["git", "reset", "--hard", "origin/main"], cwd=cwd)
+    if not ok:
+        return False, f"git reset failed: {out}"
+
+    # Step 5 — sanity check the tree before declaring success
+    for f in CRITICAL_FILES:
+        p = cwd / f
+        if not p.exists() or p.stat().st_size == 0:
+            return False, (
+                f"Post-update sanity check FAILED: {f} missing or empty "
+                f"after reset"
+            )
+
+    return True, f"Updated {local_head[:8]} -> {remote_head[:8]}"
+
+
 def check_for_update() -> Optional[dict]:
     """
     Check if a newer commit is available on GitHub main.
@@ -178,28 +256,30 @@ def apply_update(force: bool = False) -> dict:
             logger.info(f"[AutoUpdater] {result['notes']}")
             return result
 
-    # Backup
+    # Backup — copy the full app tree (excluding vendor/build dirs) so the
+    # restore path can put the tree back even after a bad `git reset --hard`.
     backup_dir = cwd.parent / f"mcs-coworker-backup-{version_before}"
     try:
         if backup_dir.exists():
-            import shutil as _sh
-            _sh.rmtree(backup_dir)
-        shutil.copytree(cwd, backup_dir,
-                        ignore=shutil.ignore_patterns(
-                            "__pycache__", "*.pyc", "venv", "*.db",
-                            "coworker.db", "dist", "build", "*.log"))
+            shutil.rmtree(backup_dir)
+        shutil.copytree(cwd, backup_dir, ignore=_BACKUP_IGNORE)
         logger.info(f"[AutoUpdater] Backup at {backup_dir}")
     except Exception as e:
         logger.warning(f"[AutoUpdater] Backup failed (continuing): {e}")
 
-    # git pull
-    ok, out = _run(["git", "pull", "origin", "main", "--ff-only"], cwd=cwd)
-    if not ok:
-        logger.error(f"[AutoUpdater] git pull failed: {out}")
-        _restore_backup(cwd, backup_dir)
-        result["notes"] = f"git pull failed: {out}"
+    # Fetch, verify author, and fast-forward atomically
+    applied, notes = _fetch_and_verify(cwd)
+    if not applied:
+        # If the sanity check fired, the tree may already be damaged — try to
+        # restore before reporting failure.
+        if "sanity check FAILED" in notes:
+            logger.critical(f"[AutoUpdater] {notes} — restoring backup")
+            _restore_backup(cwd, backup_dir)
+        logger.info(f"[AutoUpdater] {notes}")
+        result["notes"]   = notes
+        result["success"] = (notes == "Already up to date")
         return result
-    logger.info(f"[AutoUpdater] git pull: {out}")
+    logger.info(f"[AutoUpdater] {notes}")
 
     # pip install
     ok, out = _pip_install(cwd)
@@ -225,19 +305,20 @@ def apply_update(force: bool = False) -> dict:
 
 
 def _restore_backup(cwd: Path, backup_dir: Path) -> None:
+    """Copy every file from backup_dir back into cwd, overwriting whatever is
+    there. Anything under the backup-ignore patterns (venv, .git, caches, DBs)
+    is left untouched in cwd since we never backed it up in the first place.
+    """
     if not backup_dir.exists():
         return
     try:
-        for f in cwd.rglob("*.py"):
-            try:
-                f.unlink()
-            except Exception:
-                pass
-        for f in backup_dir.rglob("*.py"):
-            rel  = f.relative_to(backup_dir)
+        for src in backup_dir.rglob("*"):
+            if src.is_dir():
+                continue
+            rel  = src.relative_to(backup_dir)
             dest = cwd / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(f, dest)
+            shutil.copy2(src, dest)
         logger.info("[AutoUpdater] Backup restored.")
     except Exception as e:
         logger.error(f"[AutoUpdater] Restore failed: {e}")
