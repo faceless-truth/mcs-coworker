@@ -7,6 +7,8 @@ import os
 import secrets
 from pathlib import Path
 
+from crypto_utils import SENSITIVE_KEYS, encrypt_value, decrypt_value
+
 DB_PATH = Path.home() / ".mcs_email_automation" / "config.db"
 
 
@@ -218,14 +220,24 @@ def get_setting(key, default=""):
     conn = get_db()
     row = conn.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
     conn.close()
-    return row["value"] if row else default
+    if not row:
+        return default
+    value = row["value"]
+    # Transparently decrypt sensitive keys. Legacy plaintext values (no DPAPI:
+    # prefix) pass through unchanged and get re-encrypted on next save.
+    if key in SENSITIVE_KEYS and value is not None:
+        value = decrypt_value(value)
+    return value
 
 
 def set_setting(key, value):
+    stored = str(value)
+    if key in SENSITIVE_KEYS:
+        stored = encrypt_value(stored)
     conn = get_db()
     conn.execute(
         "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
-        (key, str(value)),
+        (key, stored),
     )
     conn.commit()
     conn.close()
@@ -338,7 +350,13 @@ def get_all_settings():
     conn = get_db()
     rows = conn.execute("SELECT key, value FROM settings").fetchall()
     conn.close()
-    return {r["key"]: r["value"] for r in rows}
+    result = {}
+    for r in rows:
+        k, v = r["key"], r["value"]
+        if k in SENSITIVE_KEYS and v is not None:
+            v = decrypt_value(v)
+        result[k] = v
+    return result
 
 
 # ── Email Rules ───────────────────────────────────────────────────────────────

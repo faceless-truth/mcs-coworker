@@ -37,3 +37,6 @@ pytz>=2024.1
 pystray>=0.19.5
 Pillow>=10.0.0
 customtkinter>=5.2.0
+
+# Windows-specific: DPAPI for at-rest encryption of sensitive settings
+pywin32>=306
