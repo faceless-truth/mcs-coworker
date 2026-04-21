@@ -49,11 +49,17 @@ from kpi_monitor import KPIMonitor
 
 # ── App setup ──────────────────────────────────────────────────────────────────
 app = Flask(__name__)
-CORS(app, origins=[
+
+# Origins permitted to call the API. Used for both the general flask-cors
+# config and the SSE stream's per-response Access-Control-Allow-Origin echo.
+# Keep the SSE stream tight — it carries live client names/subjects, which we
+# don't want any random site the accountant visits to be able to subscribe to.
+ALLOWED_ORIGINS = [
     "http://localhost:7842", "http://127.0.0.1:7842",
     "http://localhost:3000", "http://127.0.0.1:3000",
     "http://localhost:5173", "http://127.0.0.1:5173",
-], supports_credentials=True)
+]
+CORS(app, origins=ALLOWED_ORIGINS, supports_credentials=True)
 # Electron uses file:// or app:// — handle via wildcard on those routes separately
 
 API_PORT = 7842
@@ -326,14 +332,23 @@ def activity_stream():
                 if client_q in _sse_subscribers:
                     _sse_subscribers.remove(client_q)
 
+    # Only echo back the Origin header if the caller's origin is in our
+    # allowlist. Same-origin (no Origin header, e.g. EventSource from our own
+    # frontend) works normally — the header only matters to cross-origin
+    # callers, and we refuse to grant them access to the activity stream.
+    origin = request.headers.get("Origin", "")
+    allow_origin = origin if origin in ALLOWED_ORIGINS else ""
+    headers = {
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",
+    }
+    if allow_origin:
+        headers["Access-Control-Allow-Origin"] = allow_origin
+        headers["Vary"] = "Origin"
     return Response(
         stream_with_context(generate()),
         mimetype="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",
-            "Access-Control-Allow-Origin": "*",
-        },
+        headers=headers,
     )
 
 
