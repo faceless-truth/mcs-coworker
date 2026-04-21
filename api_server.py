@@ -5,6 +5,7 @@ Runs on localhost:7842 — not exposed externally.
 """
 from __future__ import annotations
 
+import html
 import json
 import os
 import sys
@@ -656,13 +657,14 @@ def xero_oauth_callback():
         from xero_oauth import notify_oauth_callback
         notify_oauth_callback(code=code, state=state, error=error)
     except Exception as e:
-        return f"<h1>Error</h1><p>{e}</p>", 500
+        return f"<h1>Error</h1><p>{html.escape(str(e))}</p>", 500
 
     if error:
+        safe_error = html.escape(error)
         return (
             "<!DOCTYPE html><html><head><title>Xero — Error</title>"
             "<style>body{font-family:sans-serif;text-align:center;padding:60px}</style></head>"
-            f"<body><h1>\u274c Xero Connection Failed</h1><p>{error}</p>"
+            f"<body><h1>\u274c Xero Connection Failed</h1><p>{safe_error}</p>"
             "<p>You can close this window.</p></body></html>"
         ), 400
 
@@ -1157,18 +1159,19 @@ def auth_callback():
     if _graph_client is not None:
         _graph_client.receive_auth_code(code=code, error=error)
     if error:
-        html = f"""<html><body style='font-family:Arial;text-align:center;padding:60px'>
+        safe_error = html.escape(error)
+        body = f"""<html><body style='font-family:Arial;text-align:center;padding:60px'>
 <h2 style='color:#c0392b'>Authentication Failed</h2>
-<p>{error}</p>
+<p>{safe_error}</p>
 <p>You can close this tab.</p>
 </body></html>"""
-        return html, 400
-    html = """<html><body style='font-family:Arial;text-align:center;padding:60px'>
+        return body, 400
+    body = """<html><body style='font-family:Arial;text-align:center;padding:60px'>
 <h2 style='color:#2E7D32'>&#10003; Authentication Successful</h2>
 <p>You can close this tab and return to MC&amp;S CoWorker.</p>
 <script>setTimeout(function(){window.close();},2000);</script>
 </body></html>"""
-    return html, 200
+    return body, 200
 
 
 # ── Frontend static file serving ──────────────────────────────────────────────────────────────
