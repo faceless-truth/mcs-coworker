@@ -125,11 +125,14 @@ def health():
 @app.route("/api/plugins")
 @require_loader
 def list_plugins():
-    from plugin_loader import _is_plugin_allowed_in_mode
+    from plugin_loader import _is_plugin_allowed_in_mode, TEMPLATE_PLUGIN_IDS
     plugins = []
     states = get_all_plugin_states()
     for lp in _loader.get_plugins():
         inst = lp.instance
+        # Hide template plugins — they exist as scaffolding only
+        if lp.plugin_id in TEMPLATE_PLUGIN_IDS:
+            continue
         # Hide plugins that don't belong to the current reception_mode
         if not _is_plugin_allowed_in_mode(inst):
             continue
