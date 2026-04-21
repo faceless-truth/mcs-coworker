@@ -106,6 +106,16 @@ def init_db():
             source    TEXT,
             active    INTEGER DEFAULT 1
         );
+
+        CREATE TABLE IF NOT EXISTS knowledge_base (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            category   TEXT NOT NULL,
+            title      TEXT NOT NULL,
+            content    TEXT NOT NULL,
+            enabled    INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT (datetime('now','localtime')),
+            updated_at TEXT DEFAULT (datetime('now','localtime'))
+        );
     """)
 
     # Add display_name column if upgrading from older schema
@@ -190,6 +200,19 @@ def init_db():
         c.executemany(
             "INSERT INTO links_forms (name, tag, url) VALUES (?, ?, ?)",
             default_links,
+        )
+
+    # Seed starter knowledge base entries — accountant fills in the content
+    existing_kb = c.execute("SELECT COUNT(*) FROM knowledge_base").fetchone()[0]
+    if existing_kb == 0:
+        starter_kb = [
+            ("Pricing",    "Standard Fees",              ""),
+            ("Checklists", "Tax Return Checklist Link",  ""),
+            ("Procedures", "BAS Lodgement Policy",       ""),
+        ]
+        c.executemany(
+            "INSERT INTO knowledge_base (category, title, content) VALUES (?, ?, ?)",
+            starter_kb,
         )
 
     conn.commit()
@@ -650,3 +673,66 @@ def get_plugin_template(plugin_id: str, key: str, default: str = None) -> str:
     ).fetchone()
     conn.close()
     return row["template_value"] if row else default
+
+
+# ── Knowledge Base ────────────────────────────────────────────────────────────
+
+def get_knowledge_entries(only_enabled: bool = False) -> list[dict]:
+    """Return every knowledge base entry, optionally filtered to enabled only."""
+    conn = get_db()
+    sql = "SELECT * FROM knowledge_base"
+    if only_enabled:
+        sql += " WHERE enabled=1"
+    sql += " ORDER BY category, id"
+    rows = conn.execute(sql).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def add_knowledge_entry(category: str, title: str, content: str,
+                        enabled: int = 1) -> int:
+    """Insert a new knowledge base entry and return its ID."""
+    conn = get_db()
+    cur = conn.execute(
+        """INSERT INTO knowledge_base (category, title, content, enabled)
+           VALUES (?, ?, ?, ?)""",
+        (category, title, content, enabled),
+    )
+    entry_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return entry_id
+
+
+def update_knowledge_entry(entry_id: int, category: str = None,
+                           title: str = None, content: str = None,
+                           enabled: int = None):
+    """Update any subset of fields on a knowledge base entry."""
+    fields, values = [], []
+    if category is not None:
+        fields.append("category=?"); values.append(category)
+    if title is not None:
+        fields.append("title=?"); values.append(title)
+    if content is not None:
+        fields.append("content=?"); values.append(content)
+    if enabled is not None:
+        fields.append("enabled=?"); values.append(int(enabled))
+    if not fields:
+        return
+    fields.append("updated_at=datetime('now','localtime')")
+    values.append(entry_id)
+    conn = get_db()
+    conn.execute(
+        f"UPDATE knowledge_base SET {', '.join(fields)} WHERE id=?",
+        values,
+    )
+    conn.commit()
+    conn.close()
+
+
+def delete_knowledge_entry(entry_id: int):
+    """Delete a knowledge base entry by ID."""
+    conn = get_db()
+    conn.execute("DELETE FROM knowledge_base WHERE id=?", (entry_id,))
+    conn.commit()
+    conn.close()

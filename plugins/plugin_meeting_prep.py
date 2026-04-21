@@ -29,7 +29,7 @@ Default: daily at 08:00 — scans for today's meetings each morning.
 
 import re
 from datetime import datetime
-from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
+from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity, get_active_lessons
 
 
@@ -57,6 +57,7 @@ class MeetingPrepPlugin(AgentPlugin):
     version     = VERSION
     icon        = ICON
     default_schedule = SCHEDULE
+    category    = PluginCategory.ACCOUNTANT
 
     DEFAULT_SETTINGS = {
         "send_to_teams": "1",

@@ -28,7 +28,7 @@ Default: 1st of every month at 08:00.
 """
 
 from datetime import datetime, date
-from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
+from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity
 
 
@@ -48,6 +48,7 @@ class DebtorFollowUpPlugin(AgentPlugin):
     version     = VERSION
     icon        = ICON
     default_schedule = SCHEDULE
+    category    = PluginCategory.RECEPTION
 
     DEFAULT_SETTINGS = {
         "overdue_threshold_days": "14", # start following up after 14 days

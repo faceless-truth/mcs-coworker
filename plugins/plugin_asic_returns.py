@@ -43,7 +43,7 @@ from pathlib import Path
 
 import anthropic
 
-from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
+from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity, get_db, get_style_preferences, get_active_lessons
 
 
@@ -209,6 +209,7 @@ class ASICReturnPlugin(AgentPlugin):
 
     requires_graph  = True
     requires_claude = True
+    category        = PluginCategory.RECEPTION
 
     default_schedule = Schedule.every_minutes(5)
 

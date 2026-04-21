@@ -18,8 +18,72 @@ import {
 } from "lucide-react";
 import { useState, useEffect } from "react";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { fetchSettings, saveSettings } from "@/lib/api";
+import { toast } from "sonner";
 
 const API = "http://127.0.0.1:7842";
+
+function CompactModePill() {
+  const [mode, setMode] = useState<"reception" | "accountant" | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const s: any = await fetchSettings();
+        setMode(s.reception_mode === "1" ? "reception" : "accountant");
+      } catch {
+        setMode("accountant");
+      }
+    })();
+    const listener = (e: Event) => {
+      const detail = (e as CustomEvent).detail as "reception" | "accountant";
+      if (detail === "reception" || detail === "accountant") setMode(detail);
+    };
+    window.addEventListener("reception-mode-changed", listener);
+    return () => window.removeEventListener("reception-mode-changed", listener);
+  }, []);
+
+  const change = async (next: "reception" | "accountant") => {
+    if (mode === next || saving) return;
+    setSaving(true);
+    const prev = mode;
+    setMode(next);
+    try {
+      await saveSettings({ reception_mode: next === "reception" ? "1" : "0" });
+      window.dispatchEvent(new CustomEvent("reception-mode-changed", { detail: next }));
+    } catch (e: any) {
+      setMode(prev);
+      toast.error("Failed to change mode", { description: e.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (mode === null) return null;
+
+  const base = "px-2.5 py-1 text-xs font-medium rounded-full transition-all";
+  return (
+    <div className="inline-flex items-center gap-0.5 p-0.5 rounded-full bg-slate-100 border border-border">
+      <button
+        onClick={() => change("reception")}
+        disabled={saving}
+        className={`${base} ${mode === "reception" ? "text-white shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+        style={mode === "reception" ? { background: "oklch(0.5 0.2 250)" } : undefined}
+      >
+        Reception
+      </button>
+      <button
+        onClick={() => change("accountant")}
+        disabled={saving}
+        className={`${base} ${mode === "accountant" ? "text-white shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+        style={mode === "accountant" ? { background: "oklch(0.5 0.2 250)" } : undefined}
+      >
+        Accountant
+      </button>
+    </div>
+  );
+}
 
 function useDashboardData() {
   const [plugins, setPlugins] = useState<any[]>([]);
@@ -164,6 +228,7 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex items-center gap-3">
+          <CompactModePill />
           <button
             onClick={() => setShowBriefing(true)}
             className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium border border-border bg-white hover:bg-slate-50 transition-colors shadow-sm"

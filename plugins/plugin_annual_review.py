@@ -27,7 +27,7 @@ Default: every Monday at 8:30 AM.
 """
 
 from datetime import datetime, date, timedelta
-from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
+from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity
 
 
@@ -47,6 +47,7 @@ class AnnualReviewPlugin(AgentPlugin):
     version     = VERSION
     icon        = ICON
     default_schedule = SCHEDULE
+    category    = PluginCategory.ACCOUNTANT
 
     DEFAULT_SETTINGS = {
         "run_day":              "1",     # Monday

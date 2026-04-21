@@ -47,7 +47,7 @@ Covers both monthly (due 21st) and quarterly windows in a single pass.
 """
 
 from datetime import datetime, date, timedelta
-from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
+from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity
 
 
@@ -87,6 +87,7 @@ class BASReminderPlugin(AgentPlugin):
     version     = VERSION
     icon        = ICON
     default_schedule = SCHEDULE
+    category    = PluginCategory.RECEPTION
 
     DEFAULT_SETTINGS = {
         "lead_days":             "14",    # send reminder N days before due date

@@ -34,7 +34,7 @@ import os
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
+from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity, get_db
 
 
@@ -223,6 +223,7 @@ class CorrespondenceLoggerPlugin(AgentPlugin):
 
     requires_graph  = True
     requires_claude = False
+    category        = PluginCategory.UNIVERSAL
 
     default_schedule = Schedule.every_minutes(10)
 

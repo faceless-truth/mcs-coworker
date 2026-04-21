@@ -27,7 +27,7 @@ import anthropic
 import requests
 
 from config import get_setting
-from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
+from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 
 
 # ── Prompt templates for Claude ──────────────────────────────────────────────
@@ -167,6 +167,7 @@ class ClientOutreachPlugin(AgentPlugin):
 
     requires_graph  = True
     requires_claude = True
+    category        = PluginCategory.ACCOUNTANT
 
     # ── Schedule ──────────────────────────────────────────────────────────────
 

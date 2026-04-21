@@ -31,7 +31,12 @@ export default function Plugins() {
     };
     fetchPlugins();
     const interval = setInterval(fetchPlugins, 30000);
-    return () => clearInterval(interval);
+    const onModeChanged = () => fetchPlugins();
+    window.addEventListener("reception-mode-changed", onModeChanged);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener("reception-mode-changed", onModeChanged);
+    };
   }, []);
 
   const filtered = filter === "All" ? plugins : plugins.filter((p: any) => p.category === filter);

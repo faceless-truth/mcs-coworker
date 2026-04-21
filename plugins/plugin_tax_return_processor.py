@@ -23,7 +23,7 @@ from io import BytesIO
 
 import anthropic
 
-from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
+from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, get_active_lessons
 
 
@@ -90,6 +90,7 @@ class TaxReturnProcessorPlugin(AgentPlugin):
     icon    = "📋"
     requires_graph  = True
     requires_claude = True
+    category        = PluginCategory.ACCOUNTANT
     default_schedule = Schedule.every_minutes(5)
     _processed_ids: set
 

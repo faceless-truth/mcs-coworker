@@ -36,6 +36,8 @@ from config import (
     get_active_lessons, add_lesson, delete_lesson, toggle_lesson,
     get_style_preferences, save_style_preferences,
     add_feedback_message, get_feedback_history, clear_feedback_history,
+    get_knowledge_entries, add_knowledge_entry,
+    update_knowledge_entry, delete_knowledge_entry,
 )
 from plugin_loader import PluginLoader
 from approval_queue import ApprovalQueue
@@ -123,10 +125,14 @@ def health():
 @app.route("/api/plugins")
 @require_loader
 def list_plugins():
+    from plugin_loader import _is_plugin_allowed_in_mode
     plugins = []
     states = get_all_plugin_states()
     for lp in _loader.get_plugins():
         inst = lp.instance
+        # Hide plugins that don't belong to the current reception_mode
+        if not _is_plugin_allowed_in_mode(inst):
+            continue
         state = states.get(lp.plugin_id, {})
         plugins.append({
             "id": lp.plugin_id,
@@ -140,7 +146,7 @@ def list_plugins():
             "runsToday": state.get("runs_today", 0),
             "successRate": state.get("success_rate", 100),
             "model": getattr(inst, "MODEL_TIER", "haiku"),
-            "category": getattr(inst, "CATEGORY", "Core"),
+            "category": getattr(inst, "category", "universal"),
         })
     return ok(plugins)
 
@@ -1007,6 +1013,44 @@ def save_style():
     data = request.get_json(force=True)
     save_style_preferences(data.get("content", ""))
     return ok()
+
+# ── Knowledge Base ────────────────────────────────────────────────────────────
+@app.route("/api/knowledge")
+def list_knowledge():
+    return ok(get_knowledge_entries())
+
+
+@app.route("/api/knowledge", methods=["POST"])
+def create_knowledge():
+    data = request.get_json(force=True) or {}
+    category = (data.get("category") or "").strip()
+    title    = (data.get("title") or "").strip()
+    content  = data.get("content") or ""
+    if not category or not title:
+        return err("'category' and 'title' are required")
+    enabled = int(data.get("enabled", 1))
+    entry_id = add_knowledge_entry(category, title, content, enabled)
+    return ok({"id": entry_id})
+
+
+@app.route("/api/knowledge/<int:entry_id>", methods=["PUT"])
+def update_knowledge(entry_id):
+    data = request.get_json(force=True) or {}
+    update_knowledge_entry(
+        entry_id,
+        category=data.get("category"),
+        title=data.get("title"),
+        content=data.get("content"),
+        enabled=data.get("enabled"),
+    )
+    return ok({"id": entry_id, "updated": True})
+
+
+@app.route("/api/knowledge/<int:entry_id>", methods=["DELETE"])
+def remove_knowledge(entry_id):
+    delete_knowledge_entry(entry_id)
+    return ok({"id": entry_id, "deleted": True})
+
 
 # ── Chat history ──────────────────────────────────────────────────────────────
 @app.route("/api/chat/history")

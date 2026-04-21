@@ -3,9 +3,277 @@
 
 import { mockSettings } from "@/lib/mockData";
 import { useEffect, useState } from "react";
-import { CheckCircle2, Eye, EyeOff, Save, TestTube, ExternalLink, Unlink, Loader2 } from "lucide-react";
+import { CheckCircle2, Eye, EyeOff, Save, TestTube, ExternalLink, Unlink, Loader2, Plus, Trash2, Pencil, X } from "lucide-react";
 import { toast } from "sonner";
-import { fetchXeroStatus, startXeroAuth, disconnectXero, testConnection } from "@/lib/api";
+import {
+  fetchXeroStatus, startXeroAuth, disconnectXero, testConnection,
+  fetchSettings, saveSettings,
+  fetchKnowledge, createKnowledge, updateKnowledge, deleteKnowledge,
+  type KnowledgeEntry,
+} from "@/lib/api";
+
+const KB_CATEGORIES = ["Pricing", "Checklists", "Procedures", "Firm Policies", "Staff Info", "Other"];
+
+function ModeToggle() {
+  const [mode, setMode] = useState<"reception" | "accountant" | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const s: any = await fetchSettings();
+        setMode(s.reception_mode === "1" ? "reception" : "accountant");
+      } catch {
+        setMode("accountant");
+      }
+    })();
+  }, []);
+
+  const change = async (next: "reception" | "accountant") => {
+    if (next === mode || saving) return;
+    setSaving(true);
+    const prev = mode;
+    setMode(next);
+    try {
+      await saveSettings({ reception_mode: next === "reception" ? "1" : "0" });
+      toast.success(`Mode set to ${next === "reception" ? "Reception" : "Accountant"}`, {
+        description: "The Plugins page will refresh to show only the relevant plugins.",
+      });
+      window.dispatchEvent(new CustomEvent("reception-mode-changed", { detail: next }));
+    } catch (e: any) {
+      setMode(prev);
+      toast.error("Failed to change mode", { description: e.message });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (mode === null) {
+    return (
+      <div className="bg-white rounded-lg border border-border shadow-sm p-5 flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading mode...
+      </div>
+    );
+  }
+
+  const pillBase = "flex-1 px-4 py-2 text-sm font-medium rounded-md transition-all";
+  const active = "text-white shadow-sm";
+  const inactive = "bg-transparent text-muted-foreground hover:text-foreground";
+
+  return (
+    <div className="bg-white rounded-lg border border-border shadow-sm overflow-hidden">
+      <div className="px-5 py-3.5 border-b border-border bg-slate-50">
+        <div className="text-sm font-semibold text-foreground">Mode</div>
+        <div className="text-xs text-muted-foreground mt-0.5">
+          Reception mode shows plugins for the front desk (ASIC, NOA, BAS, etc). Accountant mode shows plugins for individual accountants (meeting prep, client outreach, etc). Universal plugins like Morning Briefing run in both modes.
+        </div>
+      </div>
+      <div className="p-5">
+        <div className="inline-flex items-center p-1 rounded-lg bg-slate-100 w-full max-w-md">
+          <button
+            onClick={() => change("reception")}
+            disabled={saving}
+            className={`${pillBase} ${mode === "reception" ? active : inactive}`}
+            style={mode === "reception" ? { background: "oklch(0.5 0.2 250)" } : undefined}
+            data-testid="mode-toggle-reception"
+          >
+            Reception
+          </button>
+          <button
+            onClick={() => change("accountant")}
+            disabled={saving}
+            className={`${pillBase} ${mode === "accountant" ? active : inactive}`}
+            style={mode === "accountant" ? { background: "oklch(0.5 0.2 250)" } : undefined}
+            data-testid="mode-toggle-accountant"
+          >
+            Accountant
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function KnowledgeBaseSection() {
+  const [entries, setEntries] = useState<KnowledgeEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [editing, setEditing] = useState<KnowledgeEntry | null>(null);
+  const [showForm, setShowForm] = useState(false);
+
+  const load = async () => {
+    try {
+      const rows = await fetchKnowledge();
+      setEntries(rows || []);
+    } catch (e: any) {
+      toast.error("Failed to load knowledge base", { description: e.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const startAdd = () => {
+    setEditing({ id: 0, category: KB_CATEGORIES[0], title: "", content: "", enabled: 1 });
+    setShowForm(true);
+  };
+
+  const startEdit = (entry: KnowledgeEntry) => {
+    setEditing({ ...entry });
+    setShowForm(true);
+  };
+
+  const save = async () => {
+    if (!editing) return;
+    const { id, category, title, content, enabled } = editing;
+    if (!category.trim() || !title.trim()) {
+      toast.error("Category and title are required");
+      return;
+    }
+    try {
+      if (id === 0) {
+        await createKnowledge({ category, title, content, enabled });
+        toast.success("Knowledge entry added");
+      } else {
+        await updateKnowledge(id, { category, title, content, enabled });
+        toast.success("Knowledge entry updated");
+      }
+      setShowForm(false);
+      setEditing(null);
+      load();
+    } catch (e: any) {
+      toast.error("Save failed", { description: e.message });
+    }
+  };
+
+  const remove = async (entry: KnowledgeEntry) => {
+    if (!confirm(`Delete "${entry.title}"?`)) return;
+    try {
+      await deleteKnowledge(entry.id);
+      toast.success("Deleted");
+      load();
+    } catch (e: any) {
+      toast.error("Delete failed", { description: e.message });
+    }
+  };
+
+  const grouped = entries.reduce<Record<string, KnowledgeEntry[]>>((acc, e) => {
+    (acc[e.category] ||= []).push(e);
+    return acc;
+  }, {});
+  const categories = Object.keys(grouped).sort();
+
+  return (
+    <div className="bg-white rounded-lg border border-border shadow-sm overflow-hidden">
+      <div className="px-5 py-3.5 border-b border-border bg-slate-50 flex items-center justify-between">
+        <div>
+          <div className="text-sm font-semibold text-foreground">Knowledge Base</div>
+          <div className="text-xs text-muted-foreground mt-0.5">
+            The Smart Email Responder uses these entries to answer client questions about pricing, checklists, and procedures.
+          </div>
+        </div>
+        <button
+          onClick={startAdd}
+          className="flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-medium text-white hover:opacity-90"
+          style={{ background: "oklch(0.5 0.2 250)" }}
+        >
+          <Plus className="w-3.5 h-3.5" /> Add Knowledge
+        </button>
+      </div>
+      <div className="p-5 space-y-4">
+        {loading ? (
+          <div className="text-sm text-muted-foreground">Loading...</div>
+        ) : categories.length === 0 ? (
+          <div className="text-sm text-muted-foreground">No entries yet. Click "Add Knowledge" to create one.</div>
+        ) : (
+          categories.map(cat => (
+            <div key={cat}>
+              <div className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-2">{cat}</div>
+              <div className="space-y-2">
+                {grouped[cat].map(e => (
+                  <div key={e.id} className="flex items-start gap-3 p-3 rounded-md border border-border bg-slate-50">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-sm font-medium text-foreground">{e.title}</div>
+                      <div className="text-xs text-muted-foreground mt-1 line-clamp-2 whitespace-pre-wrap">
+                        {e.content || <span className="italic">(empty — click edit to fill in)</span>}
+                      </div>
+                    </div>
+                    <button onClick={() => startEdit(e)} className="p-1.5 rounded hover:bg-slate-200" title="Edit">
+                      <Pencil className="w-3.5 h-3.5 text-muted-foreground" />
+                    </button>
+                    <button onClick={() => remove(e)} className="p-1.5 rounded hover:bg-rose-50" title="Delete">
+                      <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))
+        )}
+      </div>
+
+      {showForm && editing && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: "rgba(0,0,0,0.45)" }}
+          onClick={e => { if (e.target === e.currentTarget) { setShowForm(false); setEditing(null); } }}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3.5 border-b border-border bg-slate-50">
+              <div className="text-sm font-semibold text-foreground">
+                {editing.id === 0 ? "Add Knowledge" : "Edit Knowledge"}
+              </div>
+              <button onClick={() => { setShowForm(false); setEditing(null); }}
+                className="p-1 rounded hover:bg-slate-200">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-5 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-foreground mb-1">Category</label>
+                <select
+                  value={editing.category}
+                  onChange={e => setEditing({ ...editing, category: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-border rounded-md bg-white"
+                >
+                  {KB_CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-foreground mb-1">Title</label>
+                <input
+                  value={editing.title}
+                  onChange={e => setEditing({ ...editing, title: e.target.value })}
+                  className="w-full px-3 py-2 text-sm border border-border rounded-md bg-white"
+                  placeholder="e.g. Standard Fees"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-foreground mb-1">Content</label>
+                <textarea
+                  value={editing.content}
+                  onChange={e => setEditing({ ...editing, content: e.target.value })}
+                  rows={8}
+                  className="w-full px-3 py-2 text-sm border border-border rounded-md bg-white font-mono"
+                  placeholder="Multi-line content that Claude will use as context when replying to emails..."
+                />
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-border flex items-center justify-end gap-2 bg-slate-50">
+              <button onClick={() => { setShowForm(false); setEditing(null); }}
+                className="px-4 py-2 text-xs font-medium rounded-md border border-border hover:bg-white">
+                Cancel
+              </button>
+              <button onClick={save}
+                className="px-4 py-2 text-xs font-medium rounded-md text-white hover:opacity-90"
+                style={{ background: "oklch(0.5 0.2 250)" }}>
+                Save
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 interface XeroStatus {
   configured: boolean;
@@ -114,6 +382,12 @@ export default function Settings() {
           {saved ? "Saved!" : "Save Changes"}
         </button>
       </div>
+
+      {/* Mode toggle — gates which plugins show up */}
+      <ModeToggle />
+
+      {/* Knowledge base — used by the Smart Email Responder */}
+      <KnowledgeBaseSection />
 
       {/* Claude AI */}
       <Section title="Claude AI — Dual Model" description="Configure the AI models used for fast triage and deep reasoning">

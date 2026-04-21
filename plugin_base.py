@@ -37,6 +37,20 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+# ── Plugin categories ─────────────────────────────────────────────────────────
+
+class PluginCategory:
+    """Controls which installation mode a plugin runs in.
+
+    UNIVERSAL  → runs on every machine regardless of reception_mode
+    RECEPTION  → only when reception_mode = "1" (front desk)
+    ACCOUNTANT → only when reception_mode = "0" (individual accountants)
+    """
+    UNIVERSAL = "universal"
+    RECEPTION = "reception"
+    ACCOUNTANT = "accountant"
+
+
 # ── Schedule helpers ──────────────────────────────────────────────────────────
 
 class Schedule:
@@ -181,6 +195,12 @@ class AgentPlugin(ABC):
 
     #: Whether this plugin needs the Claude/Anthropic API
     requires_claude: bool = False
+
+    #: Installation mode gate. One of PluginCategory.{UNIVERSAL, RECEPTION, ACCOUNTANT}.
+    #: - UNIVERSAL  runs on every machine
+    #: - RECEPTION  runs only when reception_mode = "1"
+    #: - ACCOUNTANT runs only when reception_mode = "0"
+    category: str = PluginCategory.UNIVERSAL
 
     # ── Schedule ──────────────────────────────────────────────────────────────
 

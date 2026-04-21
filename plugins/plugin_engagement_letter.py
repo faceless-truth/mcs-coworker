@@ -29,7 +29,7 @@ Default: every 10 minutes (event-driven via email scan).
 """
 
 from datetime import datetime
-from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
+from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity
 
 
@@ -67,6 +67,7 @@ class EngagementLetterPlugin(AgentPlugin):
     version     = VERSION
     icon        = ICON
     default_schedule = SCHEDULE
+    category    = PluginCategory.RECEPTION
 
     DEFAULT_SETTINGS = {
         "use_fusesign":       "1",

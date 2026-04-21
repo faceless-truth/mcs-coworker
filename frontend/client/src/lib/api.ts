@@ -228,6 +228,37 @@ export async function clearChatHistory() {
   return apiFetch("/api/chat/history", { method: "DELETE" });
 }
 
+// ── Knowledge Base ────────────────────────────────────────────────────────────
+export interface KnowledgeEntry {
+  id: number;
+  category: string;
+  title: string;
+  content: string;
+  enabled: number;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export async function fetchKnowledge(): Promise<KnowledgeEntry[]> {
+  if (!IS_DESKTOP) return [];
+  return apiFetch<KnowledgeEntry[]>("/api/knowledge");
+}
+
+export async function createKnowledge(entry: Omit<KnowledgeEntry, "id" | "created_at" | "updated_at">) {
+  if (!IS_DESKTOP) return { id: 0 };
+  return apiFetch("/api/knowledge", { method: "POST", body: JSON.stringify(entry) });
+}
+
+export async function updateKnowledge(id: number, entry: Partial<KnowledgeEntry>) {
+  if (!IS_DESKTOP) return { id, updated: true };
+  return apiFetch(`/api/knowledge/${id}`, { method: "PUT", body: JSON.stringify(entry) });
+}
+
+export async function deleteKnowledge(id: number) {
+  if (!IS_DESKTOP) return { id, deleted: true };
+  return apiFetch(`/api/knowledge/${id}`, { method: "DELETE" });
+}
+
 // ── Lessons ───────────────────────────────────────────────────────────────────
 export async function fetchLessons() {
   if (!IS_DESKTOP) return [];

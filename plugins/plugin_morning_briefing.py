@@ -36,7 +36,7 @@ import re
 import time
 import requests
 from datetime import datetime, date, timedelta
-from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
+from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity, get_active_lessons
 
 
@@ -85,6 +85,7 @@ class MorningBriefingPlugin(AgentPlugin):
     version     = VERSION
     icon        = ICON
     default_schedule = SCHEDULE
+    category    = PluginCategory.UNIVERSAL
 
     DEFAULT_SETTINGS = {
         "briefing_hour":         "8",

@@ -72,29 +72,25 @@ else:
 TEMPLATE_PLUGIN_IDS = {
     "plugin_template",
     "plugin_noa_workflow",
-    "plugin_meeting_prep",
     "plugin_monthly_invoicing",
     "plugin_client_checkin",
-    "plugin_client_outreach",
-    # Retired — replaced by plugin_email_reply
-    "plugin_auto_reply_ross",
-    "plugin_elio_draft_replies",
-    # Retired — replaced by plugin_email_reply (reception profile)
-    "plugin_email_triage",
 }
 
-# Plugins that only run when reception_mode = "1"
-RECEPTION_ONLY_PLUGIN_IDS = {
-    "plugin_noa_processor",
-    "plugin_asic_returns",
-    "plugin_debtor_followup",
-    "plugin_fusesign_monitor",
-}
 
-# Plugins that only run when reception_mode = "0" (accountant mode)
-ACCOUNTANT_ONLY_PLUGIN_IDS = {
-    "plugin_kpi_monitor",
-}
+def _is_plugin_allowed_in_mode(plugin_instance) -> bool:
+    """Return True if a plugin's category matches the current reception_mode.
+
+    - Universal plugins run everywhere.
+    - Reception plugins run only when reception_mode = "1".
+    - Accountant plugins run only when reception_mode = "0".
+    """
+    category = getattr(plugin_instance, "category", "universal")
+    reception_mode = get_setting("reception_mode", "0") == "1"
+    if category == "reception" and not reception_mode:
+        return False
+    if category == "accountant" and reception_mode:
+        return False
+    return True
 
 
 class LoadedPlugin:
@@ -211,13 +207,8 @@ class LoadedPlugin:
                 and is_scheduled and self._next_run_at > 0
                 and time.time() >= self._next_run_at):
             return False
-        # Mode gate: reception-only plugins only run in reception_mode
-        reception_mode = get_setting("reception_mode", "0") == "1"
-        if self.plugin_id in RECEPTION_ONLY_PLUGIN_IDS and not reception_mode:
-            return False
-        if self.plugin_id in ACCOUNTANT_ONLY_PLUGIN_IDS and reception_mode:
-            return False
-        return True
+        # Mode gate: category must match the current reception_mode
+        return _is_plugin_allowed_in_mode(self.instance)
 
 
 class PluginLoader:

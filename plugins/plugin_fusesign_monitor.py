@@ -28,7 +28,7 @@ Default: every 15 minutes.
 """
 
 from datetime import datetime, date, timedelta
-from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule
+from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity
 
 
@@ -48,6 +48,7 @@ class FuseSignMonitorPlugin(AgentPlugin):
     version     = VERSION
     icon        = ICON
     default_schedule = SCHEDULE
+    category    = PluginCategory.RECEPTION
 
     DEFAULT_SETTINGS = {
         "overdue_days":     "7",    # days before a pending bundle is considered overdue
