@@ -49,6 +49,7 @@ from config import (
     get_setting, log_activity,
     get_style_preferences, get_active_lessons,
 )
+from prompt_utils import wrap_untrusted_content, UNTRUSTED_CONTENT_SYSTEM_PROMPT
 
 _NOA_DB_PATH = str(Path.home() / ".mcs_email_automation" / "noa_processed.db")
 
@@ -462,6 +463,12 @@ class NOAProcessorPlugin(AgentPlugin):
             memory_block += "\n".join(f"- {l['lesson']}" for l in lessons)
             memory_block += "\n"
 
+        # Email body is attacker-controlled. Wrap the whole email in an
+        # email_body tag and pass the anti-injection addendum as a system
+        # prompt so the model extracts fields without obeying in-body commands.
+        wrapped_email = wrap_untrusted_content(
+            f"Subject: {subject}\n\n{body[:2000]}", "email_body"
+        )
         prompt = f"""You are an assistant for MC & S, an accounting firm. Analyse this email about a Notice of Assessment (NOA) from the ATO.
 
 Extract the following details:
@@ -475,8 +482,7 @@ Extract the following details:
 - taxable_income: The taxable income amount if mentioned
 - confidence: high, medium, or low
 
-Email Subject: {subject}
-Email Body: {body[:2000]}
+{wrapped_email}
 
 Attachments:
 {attachment_info}
@@ -487,6 +493,7 @@ Respond ONLY with valid JSON. If you cannot determine a field, use a reasonable 
             response = claude_client.messages.create(
                 model=self.get_claude_model(),
                 max_tokens=500,
+                system=UNTRUSTED_CONTENT_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": prompt}],
             )
             text = response.content[0].text.strip()

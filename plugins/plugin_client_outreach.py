@@ -28,6 +28,7 @@ import requests
 
 from config import get_setting
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
+from prompt_utils import wrap_untrusted_content, UNTRUSTED_CONTENT_SYSTEM_PROMPT
 
 
 # ── Prompt templates for Claude ──────────────────────────────────────────────
@@ -447,6 +448,13 @@ class ClientOutreachPlugin(AgentPlugin):
         """
         try:
             import re
+            # client_history is derived from prior emails in the memory store,
+            # so treat it as untrusted — wrap it and append the anti-injection
+            # addendum to the system prompt.
+            safe_history = wrap_untrusted_content(
+                client_history or "No prior history available.",
+                "document_content",
+            )
             extraction_prompt = EMPATHY_EXTRACTION_USER_TEMPLATE.format(
                 entity_name=item.get("entity_name", "Client"),
                 entity_type=item.get("entity_type", "entity"),
@@ -454,12 +462,12 @@ class ClientOutreachPlugin(AgentPlugin):
                 reason_detail=item.get("reason_detail", ""),
                 priority=item.get("priority", "medium"),
                 context_json=json.dumps(item.get("context", {}), indent=2),
-                client_history=client_history or "No prior history available.",
+                client_history=safe_history,
             )
             response = claude_client.messages.create(
                 model=self.get_claude_model(),
                 max_tokens=300,
-                system=EMPATHY_EXTRACTION_SYSTEM,
+                system=EMPATHY_EXTRACTION_SYSTEM + "\n\n" + UNTRUSTED_CONTENT_SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": extraction_prompt}],
             )
             raw = response.content[0].text.strip()

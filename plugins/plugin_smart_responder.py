@@ -40,6 +40,7 @@ from plugin_base import (
 from config import (
     get_setting, log_activity, get_knowledge_entries,
 )
+from prompt_utils import wrap_untrusted_content, UNTRUSTED_CONTENT_SYSTEM_PROMPT
 
 
 NO_REPLY_TOKEN = "NO_REPLY"
@@ -280,10 +281,15 @@ class SmartEmailResponderPlugin(AgentPlugin):
         if staff_profile:
             system += f"\n\nStaff profile hint: {staff_profile}"
 
+        # The email body is attacker-controlled — wrap it in a tag and add a
+        # system-prompt addendum that marks the tag as DATA, not instructions.
+        system += "\n\n" + UNTRUSTED_CONTENT_SYSTEM_PROMPT
+        wrapped_body = wrap_untrusted_content(body or "(empty body)", "email_body")
+
         user_prompt = (
             f"From: {sender}\n"
             f"Subject: {subject}\n\n"
-            f"Body:\n{body or '(empty body)'}"
+            f"Body:\n{wrapped_body}"
         )
 
         response = self.call_claude_with_retry(
