@@ -36,6 +36,7 @@ Default: every 5 minutes during business hours.
 """
 
 import json
+import logging
 import re
 import os
 from datetime import datetime, timedelta
@@ -45,6 +46,17 @@ import anthropic
 
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity, get_db, get_style_preferences, get_active_lessons
+
+logger = logging.getLogger(__name__)
+
+# Columns that update_asic_return is allowed to write. Callers that pass any
+# other key get dropped before the SET clause is built.
+ALLOWED_ASIC_COLUMNS = {
+    "company_name", "acn", "client_name", "client_email",
+    "asic_fee", "mcs_fee", "due_date",
+    "status", "solvency_signed", "asic_paid", "mcs_invoiced", "email_sent",
+    "reminder_count", "last_reminder", "source_email_id", "notes",
+}
 
 
 # ── Database setup for ASIC tracking ────────────────────────────────────────
@@ -122,14 +134,23 @@ def get_overdue_asic_returns(days: int = 14) -> list[dict]:
 
 
 def update_asic_return(return_id: int, **kwargs):
-    """Update fields on an ASIC return record."""
+    """Update fields on an ASIC return record.
+
+    Column names flow into the SQL string, so any caller that supplies a key
+    outside ALLOWED_ASIC_COLUMNS has their update dropped.
+    """
+    unsafe_keys = set(kwargs.keys()) - ALLOWED_ASIC_COLUMNS
+    if unsafe_keys:
+        logger.warning(
+            f"update_asic_return rejected disallowed columns for id={return_id}: "
+            f"{sorted(unsafe_keys)}"
+        )
+    safe_kwargs = {k: v for k, v in kwargs.items() if k in ALLOWED_ASIC_COLUMNS}
+    if not safe_kwargs:
+        return
     conn = get_db()
-    updates = []
-    params = []
-    for key, value in kwargs.items():
-        updates.append(f"{key}=?")
-        params.append(value)
-    params.append(return_id)
+    updates = [f"{k}=?" for k in safe_kwargs]
+    params = list(safe_kwargs.values()) + [return_id]
     conn.execute(
         f"UPDATE asic_returns SET {', '.join(updates)} WHERE id=?",
         params,

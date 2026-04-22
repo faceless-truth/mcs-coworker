@@ -3,11 +3,22 @@ MC & S Desktop Agent - Configuration & Database Manager
 """
 import sqlite3
 import json
+import logging
 import os
 import secrets
 from pathlib import Path
 
 from crypto_utils import SENSITIVE_KEYS, encrypt_value, decrypt_value
+
+logger = logging.getLogger(__name__)
+
+# Columns that save_plugin_state is allowed to write. Callers that pass any
+# other key get dropped before the SET clause is built — this prevents a
+# crafted kwarg like ``"; DROP TABLE..."`` from ever reaching the SQL string.
+ALLOWED_PLUGIN_COLUMNS = {
+    "enabled", "draft_mode", "schedule_seconds",
+    "last_run", "last_result", "last_summary", "display_name",
+}
 
 DB_PATH = Path.home() / ".mcs_email_automation" / "config.db"
 
@@ -500,25 +511,40 @@ def get_plugin_state(plugin_id: str) -> dict:
 
 
 def save_plugin_state(plugin_id: str, **kwargs):
-    """Upsert plugin state in the registry."""
+    """Upsert plugin state in the registry.
+
+    Column names from kwargs flow into the SQL string, so any caller that
+    supplies an unknown key has their update dropped — only values keyed by
+    ALLOWED_PLUGIN_COLUMNS reach the query.
+    """
+    unsafe_keys = set(kwargs.keys()) - ALLOWED_PLUGIN_COLUMNS
+    if unsafe_keys:
+        logger.warning(
+            f"save_plugin_state rejected disallowed columns for {plugin_id}: "
+            f"{sorted(unsafe_keys)}"
+        )
+    safe_kwargs = {k: v for k, v in kwargs.items() if k in ALLOWED_PLUGIN_COLUMNS}
+    if not safe_kwargs:
+        return
+
     conn = get_db()
     existing = conn.execute(
         "SELECT id FROM plugin_registry WHERE plugin_id=?", (plugin_id,)
     ).fetchone()
 
     if existing:
-        sets = ", ".join(f"{k}=?" for k in kwargs)
-        vals = list(kwargs.values()) + [plugin_id]
+        sets = ", ".join(f"{k}=?" for k in safe_kwargs)
+        vals = list(safe_kwargs.values()) + [plugin_id]
         conn.execute(
             f"UPDATE plugin_registry SET {sets} WHERE plugin_id=?", vals
         )
     else:
-        kwargs["plugin_id"] = plugin_id
-        cols = ", ".join(kwargs.keys())
-        placeholders = ", ".join("?" * len(kwargs))
+        safe_kwargs["plugin_id"] = plugin_id
+        cols = ", ".join(safe_kwargs.keys())
+        placeholders = ", ".join("?" * len(safe_kwargs))
         conn.execute(
             f"INSERT INTO plugin_registry ({cols}) VALUES ({placeholders})",
-            list(kwargs.values()),
+            list(safe_kwargs.values()),
         )
 
     conn.commit()
