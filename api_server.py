@@ -7,12 +7,15 @@ from __future__ import annotations
 
 import html
 import json
+import logging
 import os
 import re
 import sys
 import threading
 import traceback
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 from datetime import datetime
 from functools import wraps
 from typing import Any
@@ -428,8 +431,11 @@ def list_memory():
             {"content": doc, "metadata": meta or {}, "distance": dist}
             for doc, meta, dist in results
         ])
-    except Exception:
-        return ok([])  # graceful degradation if ChromaDB not ready
+    except Exception as e:
+        logger.error(f"API error in {request.path}: {e}", exc_info=True)
+        return jsonify({
+            "ok": True, "data": [], "degraded": True, "error": str(e),
+        }), 200
 
 
 @app.route("/api/memory/<record_id>", methods=["DELETE"])
@@ -494,8 +500,11 @@ def kpi():
                 "last_alert": latest.get("timestamp", ""),
             })
         return ok(metrics)
-    except Exception:
-        return ok([])
+    except Exception as e:
+        logger.error(f"API error in {request.path}: {e}", exc_info=True)
+        return jsonify({
+            "ok": True, "data": [], "degraded": True, "error": str(e),
+        }), 200
 
 
 # ── Usage ──────────────────────────────────────────────────────────────────────
@@ -521,10 +530,15 @@ def usage():
                 for r in (s.get("by_day") or [])
             ],
         })
-    except Exception:
-        return ok({"todayCost": 0, "monthlyCost": 0, "monthlyBudget": 100,
-                   "totalCalls": 0, "totalTokensIn": 0, "totalTokensOut": 0,
-                   "byPlugin": [], "byDay": []})
+    except Exception as e:
+        logger.error(f"API error in {request.path}: {e}", exc_info=True)
+        return jsonify({
+            "ok": True,
+            "data": {"todayCost": 0, "monthlyCost": 0, "monthlyBudget": 100,
+                     "totalCalls": 0, "totalTokensIn": 0, "totalTokensOut": 0,
+                     "byPlugin": [], "byDay": []},
+            "degraded": True, "error": str(e),
+        }), 200
 
 
 # ── Settings ───────────────────────────────────────────────────────────────────

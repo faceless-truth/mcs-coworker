@@ -9,14 +9,18 @@ import importlib
 import importlib.util
 import inspect
 import calendar
+import logging
 import os
 import sys
 import threading
 import time
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, date
 from pathlib import Path
 from typing import Callable
+
+logger = logging.getLogger(__name__)
 
 try:
     import anthropic
@@ -378,6 +382,26 @@ class PluginLoader:
         try:
             result = lp.instance.run(ctx)
         except Exception as e:
+            # Log the full traceback via the logging framework (visible in
+            # stdout) AND append it to a dedicated file so remote accountants'
+            # crashes are diagnosable without shelling in.
+            logger.error(
+                f"Plugin {lp.name} failed: {e}", exc_info=True
+            )
+            try:
+                error_log_path = Path(
+                    os.environ.get(
+                        "MCS_DATA_DIR",
+                        str(Path.home() / ".mcs_email_automation"),
+                    )
+                ) / "plugin_errors.log"
+                error_log_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(error_log_path, "a", encoding="utf-8") as f:
+                    f.write(f"\n{'=' * 60}\n")
+                    f.write(f"[{datetime.now().isoformat()}] Plugin: {lp.name}\n")
+                    traceback.print_exc(file=f)
+            except Exception:
+                pass
             result = PluginResult(success=False, error=str(e))
             # Publish failure event
             EventBus.emit(
