@@ -556,7 +556,11 @@ Respond ONLY with valid JSON. If you cannot determine a field, use a reasonable 
             text = response.content[0].text.strip()
             text = re.sub(r"```json\s*|```", "", text).strip()
             return json.loads(text)
-        except Exception:
+        except Exception as e:
+            logger.error(
+                f"[ASIC] Claude extraction failed for subject={subject!r}: {e}",
+                exc_info=True,
+            )
             return None
 
     def _send_reminder(self, context: PluginContext, ret: dict, draft_mode: bool):

@@ -329,32 +329,48 @@ class AgentPlugin(ABC):
         """
         Call claude.messages.create(**kwargs) with exponential backoff retry
         on Anthropic rate-limit (429) and overloaded (529) errors.
-        Fix 12: prevents plugins crashing when Anthropic is temporarily overloaded.
+
+        If every retry fails the function raises RuntimeError — never returns
+        None silently. Callers that ignored the None used to proceed with
+        garbage downstream; now they must handle the exception explicitly.
         """
         import time
         import anthropic as _anthropic
+        import logging
+        log = logging.getLogger(__name__)
         delay = base_delay
+        last_error: Exception | None = None
         for attempt in range(1, max_retries + 1):
             try:
                 return claude.messages.create(**kwargs)
             except _anthropic.RateLimitError as e:
+                last_error = e
                 if attempt == max_retries:
-                    raise
+                    break
                 wait = delay * (2 ** (attempt - 1))
-                import logging; logging.getLogger(__name__).warning(
+                log.warning(
                     f"Anthropic rate limit (attempt {attempt}/{max_retries}) — retrying in {wait:.0f}s"
                 )
                 time.sleep(wait)
             except _anthropic.APIStatusError as e:
-                # 529 = Anthropic overloaded
+                last_error = e
+                # 529 = Anthropic overloaded — same retry strategy as 429.
                 if getattr(e, 'status_code', 0) == 529 and attempt < max_retries:
                     wait = delay * (2 ** (attempt - 1))
-                    import logging; logging.getLogger(__name__).warning(
+                    log.warning(
                         f"Anthropic overloaded (attempt {attempt}/{max_retries}) — retrying in {wait:.0f}s"
                     )
                     time.sleep(wait)
                 else:
                     raise
+        # Fell through the retry loop — raise so the caller can't silently
+        # continue with a None result.
+        log.error(
+            f"Claude API call failed after {max_retries} retries. Last error: {last_error}"
+        )
+        raise RuntimeError(
+            f"Claude API call failed after {max_retries} retries: {last_error}"
+        )
 
     def log_activity(self, source: str, subject: str, category: str,
                      action: str, draft_created: int = 0,

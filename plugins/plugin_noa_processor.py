@@ -36,6 +36,7 @@ Default: every 5 minutes during business hours.
 """
 
 import json
+import logging
 import re
 import os
 import sqlite3
@@ -50,6 +51,8 @@ from config import (
     get_style_preferences, get_active_lessons,
 )
 from prompt_utils import wrap_untrusted_content, UNTRUSTED_CONTENT_SYSTEM_PROMPT
+
+logger = logging.getLogger(__name__)
 
 _NOA_DB_PATH = str(Path.home() / ".mcs_email_automation" / "noa_processed.db")
 
@@ -501,7 +504,14 @@ Respond ONLY with valid JSON. If you cannot determine a field, use a reasonable 
             text = response.content[0].text.strip()
             text = re.sub(r"```json\s*|```", "", text).strip()
             return json.loads(text)
-        except Exception:
+        except Exception as e:
+            # Log the full traceback so a remote accountant's failure is
+            # diagnosable. Returning None is still the contract — the caller
+            # flags the email for human review when extraction fails.
+            logger.error(
+                f"[NOA] Claude extraction failed for subject={subject!r}: {e}",
+                exc_info=True,
+            )
             return None
 
     def _build_email_body(self, template: str, client_name: str,
