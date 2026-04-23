@@ -51,6 +51,8 @@ def init_kpi_db(db_path: Optional[Path] = None) -> None:
     path = db_path or _get_kpi_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
+    from config import apply_wal_pragmas
+    apply_wal_pragmas(conn)
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS kpi_alerts (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -82,6 +84,8 @@ def init_kpi_db(db_path: Optional[Path] = None) -> None:
 def _get_kpi_conn(db_path: Optional[Path] = None) -> sqlite3.Connection:
     path = db_path or _get_kpi_db_path()
     conn = sqlite3.connect(str(path))
+    from config import apply_wal_pragmas
+    apply_wal_pragmas(conn)
     conn.row_factory = sqlite3.Row
     return conn
 

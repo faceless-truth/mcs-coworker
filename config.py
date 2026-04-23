@@ -23,9 +23,29 @@ ALLOWED_PLUGIN_COLUMNS = {
 DB_PATH = Path.home() / ".mcs_email_automation" / "config.db"
 
 
+def apply_wal_pragmas(conn: sqlite3.Connection) -> None:
+    """Enable WAL mode + busy_timeout on a SQLite connection.
+
+    Shared helper for every module that opens its own SQLite connection
+    (auto_updater, approval_queue, kpi_monitor, token_meter, etc.) so each
+    database file gets consistent concurrency behaviour.
+
+    WAL lets readers and writers coexist without blocking each other.
+    busy_timeout (5s) means concurrent waiters retry instead of immediately
+    raising 'database is locked'.
+    """
+    try:
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA busy_timeout=5000")
+    except sqlite3.Error:
+        # Some platforms / in-memory DBs may reject these — not fatal.
+        pass
+
+
 def get_db():
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(DB_PATH))
+    apply_wal_pragmas(conn)
     conn.row_factory = sqlite3.Row
     return conn
 

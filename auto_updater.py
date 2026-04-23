@@ -333,6 +333,8 @@ def _get_db_path() -> Path:
 def log_update_result(result: dict) -> None:
     try:
         con = sqlite3.connect(_get_db_path())
+        from config import apply_wal_pragmas
+        apply_wal_pragmas(con)
         con.execute("""
             CREATE TABLE IF NOT EXISTS update_history (
                 id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -365,6 +367,8 @@ def get_update_history(limit: int = 10) -> list:
         if not db.exists():
             return []
         con  = sqlite3.connect(db)
+        from config import apply_wal_pragmas
+        apply_wal_pragmas(con)
         rows = con.execute(
             "SELECT timestamp, version_before, version_after, success, notes "
             "FROM update_history ORDER BY id DESC LIMIT ?", (limit,)

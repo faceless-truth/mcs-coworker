@@ -124,6 +124,8 @@ class ApprovalQueue:
     def _get_db(self):
         Path(self._db_path).parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(self._db_path))
+        from config import apply_wal_pragmas
+        apply_wal_pragmas(conn)
         conn.row_factory = sqlite3.Row
         return conn
 

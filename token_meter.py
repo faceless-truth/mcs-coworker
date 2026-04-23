@@ -88,6 +88,8 @@ def init_meter_db(db_path: Optional[Path] = None) -> None:
     path = db_path or _get_meter_db_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
+    from config import apply_wal_pragmas
+    apply_wal_pragmas(conn)
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS token_usage (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -133,6 +135,8 @@ def log_usage(
 
     try:
         conn = sqlite3.connect(str(path))
+        from config import apply_wal_pragmas
+        apply_wal_pragmas(conn)
         conn.execute(
             """INSERT INTO token_usage
                (plugin_id, model, tier, input_tokens, output_tokens,
@@ -173,6 +177,8 @@ def get_usage_summary(
 
     try:
         conn = sqlite3.connect(str(path))
+        from config import apply_wal_pragmas
+        apply_wal_pragmas(conn)
         conn.row_factory = sqlite3.Row
 
         totals = conn.execute(

@@ -57,6 +57,8 @@ _NOA_DB_PATH = str(Path.home() / ".mcs_email_automation" / "noa_processed.db")
 def _noa_db() -> sqlite3.Connection:
     os.makedirs(os.path.dirname(_NOA_DB_PATH), exist_ok=True)
     conn = sqlite3.connect(_NOA_DB_PATH)
+    from config import apply_wal_pragmas
+    apply_wal_pragmas(conn)
     conn.execute(
         "CREATE TABLE IF NOT EXISTS processed_emails "
         "(msg_id TEXT PRIMARY KEY, processed_at TEXT DEFAULT (datetime('now','localtime')))"
