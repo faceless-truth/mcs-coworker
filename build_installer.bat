@@ -117,9 +117,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '
 del "%BUILD_DIR%\get-pip.py" >nul 2>&1
 
 :: Install all required packages
-:: NOTE: pywebview on Windows requires pythonnet + clr-loader for the WebBrowser backend.
-::       We install pywebview[cef] to get the CEF (Chromium Embedded) backend which works
-::       reliably without .NET dependencies. Also install tkinter deps via tk.
+:: NOTE: pywebview is forced to the EdgeChromium (WebView2) backend in main.py —
+::       pythonnet/cffi are NOT installed because the .NET backend crashes on the
+::       embeddable Python bundled here.
 echo [2/6] Installing Python packages (this takes a few minutes)...
 "%PYTHON_DIR%\python.exe" -m pip install --no-warn-script-location --quiet ^
     -r "%REPO_DIR%\requirements.txt"
