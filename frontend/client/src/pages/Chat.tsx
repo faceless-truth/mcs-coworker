@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect } from "react";
 import { Bot, Send, Sparkles, User, Zap } from "lucide-react";
+import { toast } from "sonner";
+import { sendChatMessage } from "@/lib/api";
 
 interface Message {
   id: number;
@@ -16,10 +18,6 @@ const examples = [
   { label: "Client onboarding", prompt: "Create a plugin that detects new client emails and automatically drafts an engagement letter using XPM data", tier: 2 },
   { label: "Debtor reminder", prompt: "Build a plugin that checks XPM for invoices over 30 days and drafts polite follow-up emails", tier: 2 },
 ];
-
-const mockResponses: Record<string, string> = {
-  default: `I'll build that plugin for you. Let me analyse the requirements...\n\n**Tier 2 Plugin: XPM WIP Report**\n\nHere's what I'll create:\n\n\`\`\`python\nclass WIPReportPlugin(AgentPlugin):\n    PLUGIN_ID = "plugin_wip_report"\n    NAME = "WIP Report"\n    SCHEDULE = Schedule.weekly_on(0, 8)  # Monday 8am\n    \n    def run(self, context: PluginContext) -> PluginResult:\n        # 1. Fetch jobs from XPM\n        if not context.gateway.xpm.is_configured:\n            return PluginResult(success=False, message="XPM not configured")\n        \n        jobs = context.gateway.xpm.list_jobs(status="active")\n        stale = [j for j in jobs if j["days_since_update"] > 14]\n        \n        # 2. Use Sonnet to draft summary\n        summary = context.claude_reason.messages.create(\n            model=self.get_claude_model_reasoning(),\n            messages=[{"role": "user", "content": f"Summarise these stale jobs: {stale}"}]\n        )\n        \n        # 3. Send via Teams\n        context.gateway.teams.send_alert(\n            title="Weekly WIP Report",\n            body=summary.content[0].text\n        )\n        \n        return PluginResult(success=True, message=f"Reported {len(stale)} stale jobs")\n\`\`\`\n\n✅ Plugin created and saved to \`plugins/plugin_wip_report.py\`\n✅ Will run automatically next Monday at 8:00am\n✅ Uses Sonnet for intelligent summarisation\n✅ Sends to Teams via configured webhook`,
-};
 
 export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([
@@ -43,24 +41,27 @@ export default function Chat() {
     setInput("");
 
     const userMsg: Message = { id: Date.now(), role: "user", content: msg };
-    setMessages(prev => [...prev, userMsg]);
+    const nextMessages = [...messages, userMsg];
+    setMessages(nextMessages);
     setLoading(true);
 
-    // Detect tier
-    const tier2Keywords = ["xpm", "fusesign", "teams", "memory", "workflow", "report", "wip", "debtor", "engagement", "onboard"];
-    const isTier2 = tier2Keywords.some(k => msg.toLowerCase().includes(k));
-
-    await new Promise(r => setTimeout(r, 1800));
-
-    const response = mockResponses.default;
-    const assistantMsg: Message = {
-      id: Date.now() + 1,
-      role: "assistant",
-      content: response,
-      tier: isTier2 ? 2 : 1,
-    };
-    setMessages(prev => [...prev, assistantMsg]);
-    setLoading(false);
+    try {
+      // Send the full conversation so Claude has prior turns as context.
+      // /api/chat enforces rate limits and 50-char-window history caps itself.
+      const history = nextMessages.map(m => ({ role: m.role, content: m.content }));
+      const resp: any = await sendChatMessage(history);
+      const assistantMsg: Message = {
+        id: Date.now() + 1,
+        role: "assistant",
+        content: resp?.content ?? "(no response)",
+        tier: resp?.tier === 2 ? 2 : 1,
+      };
+      setMessages(prev => [...prev, assistantMsg]);
+    } catch (e: any) {
+      toast.error("Chat failed", { description: e?.message ?? "Check your Anthropic API key in Settings." });
+    } finally {
+      setLoading(false);
+    }
   };
 
   const renderContent = (content: string) => {

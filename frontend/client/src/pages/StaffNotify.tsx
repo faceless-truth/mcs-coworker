@@ -112,12 +112,12 @@ export default function StaffNotify() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <div>
               <label className="block text-xs font-medium text-foreground mb-1">Full Name</label>
-              <input className={inputClass} placeholder="e.g. Sarah Chen" value={form.name}
+              <input className={inputClass} placeholder="Staff member name" value={form.name}
                 onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
             </div>
             <div>
               <label className="block text-xs font-medium text-foreground mb-1">Email</label>
-              <input className={inputClass} type="email" placeholder="sarah@mcs.com.au" value={form.email}
+              <input className={inputClass} type="email" placeholder="name@example.com" value={form.email}
                 onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
             </div>
             <div>

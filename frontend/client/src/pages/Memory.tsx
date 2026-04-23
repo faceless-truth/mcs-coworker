@@ -1,13 +1,60 @@
 // Design: Refined Dark Professional — Memory Browser page
 
-import { mockMemory } from "@/lib/mockData";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Brain, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { fetchMemory, deleteMemory } from "@/lib/api";
+
+interface ServerMemory {
+  content: string;
+  metadata: Record<string, any>;
+  distance: number;
+}
+
+interface ViewMemory {
+  id: string;
+  client: string;
+  type: string;
+  summary: string;
+  date: string;
+  relevance: number;
+}
+
+function normalise(raw: ServerMemory, idx: number): ViewMemory {
+  const meta = raw.metadata || {};
+  return {
+    id: String(meta.id ?? meta.doc_id ?? idx),
+    client: String(meta.client_name ?? meta.client_email ?? meta.client ?? "Unknown"),
+    type: String(meta.type ?? meta.interaction_type ?? "entry"),
+    summary: raw.content || "",
+    date: String(meta.date ?? meta.stored_at ?? ""),
+    // distance is 0 (identical) → 2 (opposite). Invert to a 0..1 relevance.
+    relevance: Math.max(0, Math.min(1, 1 - (raw.distance ?? 0) / 2)),
+  };
+}
 
 export default function Memory() {
-  const [records, setRecords] = useState(mockMemory);
+  const [records, setRecords] = useState<ViewMemory[]>([]);
+  const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const rows = (await fetchMemory(search || "recent client interactions", 50)) as ServerMemory[] | null;
+        if (!cancelled) {
+          setRecords(Array.isArray(rows) ? rows.map(normalise) : []);
+        }
+      } catch {
+        if (!cancelled) setRecords([]);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [search]);
 
   const filtered = records.filter(r =>
     search === "" ||
@@ -15,9 +62,14 @@ export default function Memory() {
     r.summary.toLowerCase().includes(search.toLowerCase())
   );
 
-  const deleteRecord = (id: string) => {
-    setRecords(prev => prev.filter(r => r.id !== id));
-    toast("Memory record deleted", { description: "Record removed from the vector store." });
+  const deleteRecord = async (id: string) => {
+    try {
+      await deleteMemory(id);
+      setRecords(prev => prev.filter(r => r.id !== id));
+      toast("Memory record deleted");
+    } catch (e: any) {
+      toast.error("Delete failed", { description: e?.message });
+    }
   };
 
   return (
@@ -26,7 +78,7 @@ export default function Memory() {
         <div>
           <h1 className="text-xl font-semibold text-foreground">Memory</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {records.length} client interactions stored in the vector memory (ChromaDB)
+            {loading ? "Loading…" : `${records.length} client interactions stored in the vector memory`}
           </p>
         </div>
       </div>
@@ -70,8 +122,12 @@ export default function Memory() {
             </div>
           </div>
         ))}
-        {filtered.length === 0 && (
-          <div className="py-12 text-center text-sm text-muted-foreground">No records match your search.</div>
+        {!loading && filtered.length === 0 && (
+          <div className="py-12 text-center text-sm text-muted-foreground">
+            {search
+              ? "No records match your search."
+              : "No memory records yet — plugins will populate this as they run."}
+          </div>
         )}
       </div>
     </div>

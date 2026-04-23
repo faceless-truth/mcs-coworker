@@ -1,25 +1,99 @@
 // Design: Refined Dark Professional — Approvals page
 
-import { mockApprovals } from "@/lib/mockData";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { CheckCircle2, ChevronDown, ChevronUp, XCircle } from "lucide-react";
 import { toast } from "sonner";
+import { fetchApprovals, approveAction, rejectAction } from "@/lib/api";
+
+interface ServerApproval {
+  action_id: number | string;
+  plugin_id: string;
+  action_type: string;
+  description: string;
+  payload: Record<string, any>;
+  confidence: number;
+  status: string;
+  created_at: string;
+  expires_at?: string;
+}
+
+interface ViewApproval {
+  id: string;
+  plugin: string;
+  action: string;
+  detail: string;
+  confidence: number;
+  created: string;
+  priority: "high" | "medium" | "low";
+  draftPreview: string;
+}
+
+function normalise(raw: ServerApproval): ViewApproval {
+  const payload = raw.payload || {};
+  const detailParts: string[] = [];
+  if (payload.recipient || payload.to) detailParts.push(String(payload.recipient || payload.to));
+  if (payload.subject) detailParts.push(String(payload.subject));
+  if (payload.balance) detailParts.push(`$${payload.balance}`);
+  if (payload.days_overdue) detailParts.push(`${payload.days_overdue} days overdue`);
+  const priority: "high" | "medium" | "low" =
+    raw.confidence < 0.5 ? "high" : raw.confidence < 0.75 ? "medium" : "low";
+  return {
+    id: String(raw.action_id),
+    plugin: raw.plugin_id || raw.action_type || "unknown",
+    action: raw.description || raw.action_type || "Pending action",
+    detail: detailParts.join(" · ") || "—",
+    confidence: typeof raw.confidence === "number" ? raw.confidence : 0,
+    created: raw.created_at || "",
+    priority,
+    draftPreview:
+      String(payload.body_preview || payload.body || payload.draft || "(no preview available)"),
+  };
+}
 
 export default function Approvals() {
-  const [approvals, setApprovals] = useState(mockApprovals);
+  const [approvals, setApprovals] = useState<ViewApproval[]>([]);
+  const [loading, setLoading] = useState(true);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [threshold, setThreshold] = useState(0.75);
 
-  const approve = (id: string) => {
-    const a = approvals.find(x => x.id === id);
-    toast.success(`Approved: ${a?.action}`, { description: "Email will be sent within 60 seconds." });
-    setApprovals(prev => prev.filter(x => x.id !== id));
+  const load = async () => {
+    try {
+      const rows = (await fetchApprovals()) as ServerApproval[] | null;
+      setApprovals(Array.isArray(rows) ? rows.map(normalise) : []);
+    } catch (e: any) {
+      toast.error("Failed to load approvals", { description: e?.message });
+      setApprovals([]);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const reject = (id: string) => {
+  useEffect(() => {
+    load();
+    const id = setInterval(load, 15000);
+    return () => clearInterval(id);
+  }, []);
+
+  const approve = async (id: string) => {
     const a = approvals.find(x => x.id === id);
-    toast(`Rejected: ${a?.action}`, { description: "Action discarded." });
-    setApprovals(prev => prev.filter(x => x.id !== id));
+    try {
+      await approveAction(id);
+      toast.success(`Approved: ${a?.action ?? id}`, { description: "Action will execute shortly." });
+      setApprovals(prev => prev.filter(x => x.id !== id));
+    } catch (e: any) {
+      toast.error("Approve failed", { description: e?.message });
+    }
+  };
+
+  const reject = async (id: string) => {
+    const a = approvals.find(x => x.id === id);
+    try {
+      await rejectAction(id);
+      toast(`Rejected: ${a?.action ?? id}`, { description: "Action discarded." });
+      setApprovals(prev => prev.filter(x => x.id !== id));
+    } catch (e: any) {
+      toast.error("Reject failed", { description: e?.message });
+    }
   };
 
   return (
@@ -42,7 +116,9 @@ export default function Approvals() {
         </div>
       </div>
 
-      {approvals.length === 0 ? (
+      {loading ? (
+        <div className="py-12 text-center text-sm text-muted-foreground">Loading approvals…</div>
+      ) : approvals.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-center">
           <CheckCircle2 className="w-12 h-12 text-emerald-400 mb-4" />
           <div className="text-lg font-semibold text-foreground">All clear</div>
@@ -88,7 +164,6 @@ export default function Approvals() {
                     <div className="text-xs font-medium text-muted-foreground mb-2">Draft preview</div>
                     <pre className="text-xs text-foreground bg-slate-50 rounded-md p-3 whitespace-pre-wrap font-mono leading-relaxed border border-border">
                       {a.draftPreview}
-                      {"\n\n[... full draft available in CoWorker app]"}
                     </pre>
                   </div>
                 )}

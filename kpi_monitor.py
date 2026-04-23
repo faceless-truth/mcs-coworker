@@ -164,7 +164,12 @@ def seed_default_kpis(db_path: Optional[Path] = None) -> None:
 
 
 def get_kpi_config(db_path: Optional[Path] = None) -> list[dict]:
-    """Return all KPI config rows merged with DEFAULT_KPIS metadata."""
+    """Return all KPI config rows merged with DEFAULT_KPIS metadata.
+
+    Lazy-init the table on the first call so `/api/kpi` doesn't 500 before
+    `_KPIMonitor.start()` has had a chance to run.
+    """
+    init_kpi_db(db_path)
     conn = _get_kpi_conn(db_path)
     rows = {r["kpi_id"]: dict(r) for r in
             conn.execute("SELECT * FROM kpi_config").fetchall()}
@@ -196,7 +201,8 @@ def update_kpi_threshold(kpi_id: str, threshold: float,
 
 
 def get_recent_alerts(limit: int = 50, db_path: Optional[Path] = None) -> list[dict]:
-    """Return the most recent KPI alerts."""
+    """Return the most recent KPI alerts. Lazy-inits the DB on cold start."""
+    init_kpi_db(db_path)
     conn = _get_kpi_conn(db_path)
     rows = conn.execute(
         "SELECT * FROM kpi_alerts ORDER BY timestamp DESC LIMIT ?", (limit,)

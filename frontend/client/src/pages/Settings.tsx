@@ -1,7 +1,6 @@
 // Design: Refined Dark Professional — Settings page
 // Configure AI models, integrations, business hours, and behaviour
 
-import { mockSettings } from "@/lib/mockData";
 import { useEffect, useState } from "react";
 import { CheckCircle2, Eye, EyeOff, Save, TestTube, ExternalLink, Unlink, Loader2, Plus, Trash2, Pencil, X } from "lucide-react";
 import { toast } from "sonner";
@@ -282,21 +281,90 @@ interface XeroStatus {
   staff_name: string | null;
 }
 
+// Empty defaults — real values flow in from /api/settings on mount. Sensitive
+// fields come back masked from the backend; only non-masked edits are saved.
+const EMPTY_SETTINGS = {
+  anthropicApiKey: "",
+  fastModel: "",
+  reasoningModel: "",
+  outlookEmail: "",
+  xpmApiKey: "",
+  xeroClientId: "",
+  xeroClientSecret: "",
+  fuseSignApiKey: "",
+  teamsWebhook: "",
+  confidenceThreshold: 0.75,
+  heartbeatInterval: 300,
+  autoUpdate: false,
+  draftMode: false,
+};
+
 export default function Settings() {
-  const [settings, setSettings] = useState(mockSettings);
+  const [settings, setSettings] = useState(EMPTY_SETTINGS);
   const [showKey, setShowKey] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [xero, setXero] = useState<XeroStatus>({ configured: false, authorised: false, tenant_id: null, staff_name: null });
   const [xeroLoading, setXeroLoading] = useState(false);
 
+  // Load real settings once on mount.
   useEffect(() => {
+    (async () => {
+      try {
+        const s: any = await fetchSettings();
+        if (s && typeof s === "object") {
+          setSettings(prev => ({
+            ...prev,
+            anthropicApiKey:     s.anthropic_api_key     ?? prev.anthropicApiKey,
+            fastModel:           s.fast_model            ?? prev.fastModel,
+            reasoningModel:      s.reasoning_model       ?? prev.reasoningModel,
+            outlookEmail:        s.outlook_email         ?? prev.outlookEmail,
+            xeroClientId:        s.xero_client_id        ?? prev.xeroClientId,
+            xeroClientSecret:    s.xero_client_secret    ?? prev.xeroClientSecret,
+            fuseSignApiKey:      s.fusesign_api_key      ?? prev.fuseSignApiKey,
+            teamsWebhook:        s.teams_webhook_url     ?? prev.teamsWebhook,
+            confidenceThreshold: s.confidence_threshold !== undefined ? parseFloat(s.confidence_threshold) : prev.confidenceThreshold,
+            heartbeatInterval:   s.heartbeat_interval_seconds !== undefined ? parseInt(s.heartbeat_interval_seconds, 10) : prev.heartbeatInterval,
+            autoUpdate:          s.auto_update_enabled === "1" || s.auto_update_enabled === true,
+            draftMode:           s.draft_mode === "1" || s.draft_mode === true,
+          }));
+        }
+      } catch {
+        // Backend not ready — keep empty defaults.
+      }
+    })();
     fetchXeroStatus().then(s => setXero(s as XeroStatus)).catch(() => {});
   }, []);
 
-  const save = () => {
-    setSaved(true);
-    toast.success("Settings saved", { description: "Changes will take effect on the next plugin run." });
-    setTimeout(() => setSaved(false), 2000);
+  const save = async () => {
+    setSaving(true);
+    // Map camelCase UI keys to the snake_case keys the /api/settings POST
+    // handler whitelists. Any field still containing bullets ("••••") is a
+    // masked placeholder — the backend's own handler filters those out too.
+    const payload: Record<string, string> = {
+      anthropic_api_key:           settings.anthropicApiKey,
+      outlook_email:               settings.outlookEmail,
+      fusesign_api_key:            settings.fuseSignApiKey,
+      teams_webhook_url:           settings.teamsWebhook,
+      fast_model:                  settings.fastModel,
+      reasoning_model:             settings.reasoningModel,
+      confidence_threshold:        String(settings.confidenceThreshold),
+      heartbeat_interval_seconds:  String(settings.heartbeatInterval),
+      draft_mode:                  settings.draftMode ? "1" : "0",
+      auto_update_enabled:         settings.autoUpdate ? "1" : "0",
+      xero_client_id:              settings.xeroClientId,
+      xero_client_secret:          settings.xeroClientSecret,
+    };
+    try {
+      await saveSettings(payload);
+      setSaved(true);
+      toast.success("Settings saved", { description: "Changes will take effect on the next plugin run." });
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e: any) {
+      toast.error("Save failed", { description: e?.message });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleConnectXero = async () => {
@@ -375,11 +443,12 @@ export default function Settings() {
         </div>
         <button
           onClick={save}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-all hover:opacity-90"
+          disabled={saving}
+          className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium text-white transition-all hover:opacity-90 disabled:opacity-60"
           style={{ background: "oklch(0.5 0.2 250)" }}
         >
           {saved ? <CheckCircle2 className="w-4 h-4" /> : <Save className="w-4 h-4" />}
-          {saved ? "Saved!" : "Save Changes"}
+          {saving ? "Saving…" : saved ? "Saved!" : "Save Changes"}
         </button>
       </div>
 

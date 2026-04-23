@@ -15,11 +15,29 @@ import Settings from "./pages/Settings";
 import Chat from "./pages/Chat";
 import EmailRules from "./pages/EmailRules";
 import StaffNotify from "./pages/StaffNotify";
-import { mockApprovals } from "./lib/mockData";
+import { fetchApprovals } from "./lib/api";
 
 function App() {
   const [activePage, setActivePage] = useState("dashboard");
-  const [pendingApprovals] = useState(mockApprovals.length);
+  const [pendingApprovals, setPendingApprovals] = useState(0);
+
+  // Keep the sidebar badge in sync with the real approval queue.
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const rows = await fetchApprovals();
+        if (!cancelled) {
+          setPendingApprovals(Array.isArray(rows) ? rows.length : 0);
+        }
+      } catch {
+        if (!cancelled) setPendingApprovals(0);
+      }
+    };
+    load();
+    const id = setInterval(load, 30000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
 
   // Wire Electron tray navigation events
   useEffect(() => {
