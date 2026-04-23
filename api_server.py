@@ -20,8 +20,11 @@ from datetime import datetime
 from functools import wraps
 from typing import Any
 
+import base64
+import mimetypes
 import queue
 import time
+import uuid
 from collections import deque
 from flask import Flask, Response, jsonify, request, stream_with_context, send_from_directory
 from flask_cors import CORS
@@ -88,6 +91,39 @@ def _check_chat_rate() -> bool:
         return False
     _chat_timestamps.append(now)
     return True
+
+
+# ── /api/chat file uploads ─────────────────────────────────────────────────────
+# Specialists (GST, SMSF, Net Wealth, etc.) accept source documents — PDFs,
+# spreadsheets, Word docs, images — alongside the conversation. Each upload is
+# saved under DATA_DIR / "chat_uploads" keyed by a random id and referenced
+# from /api/chat via {"files": [{"id", "name", "type", ...}]}.
+CHAT_UPLOAD_DIR = config.DATA_DIR / "chat_uploads"
+CHAT_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+MAX_UPLOAD_SIZE = 25 * 1024 * 1024   # 25 MB per file
+MAX_UPLOADS_PER_MESSAGE = 5
+ALLOWED_UPLOAD_EXTENSIONS = {
+    ".pdf", ".docx", ".xlsx", ".csv", ".txt",
+    ".jpg", ".jpeg", ".png", ".gif",
+}
+
+
+def _cleanup_old_uploads():
+    """Remove chat uploads older than 24 hours. Called once at module load."""
+    try:
+        cutoff = time.time() - 86400
+        for f in CHAT_UPLOAD_DIR.iterdir():
+            try:
+                if f.is_file() and f.stat().st_mtime < cutoff:
+                    f.unlink(missing_ok=True)
+            except Exception:
+                pass
+    except Exception as e:
+        logger.warning(f"chat_uploads cleanup skipped: {e}")
+
+
+_cleanup_old_uploads()
 
 # Shared state — populated by main.py on startup
 _loader: PluginLoader | None = None
@@ -814,6 +850,143 @@ def xero_disconnect():
 
 
 # ── Chat ───────────────────────────────────────────────────────────────────────
+@app.route("/api/chat/upload", methods=["POST"])
+def upload_chat_file():
+    """Upload a file for use in the current chat conversation.
+
+    Stored under DATA_DIR / "chat_uploads" keyed by a random id. The returned
+    `{id, name, type, size}` payload is what the frontend should echo back in
+    the `files` array of the next POST to /api/chat.
+    """
+    if "file" not in request.files:
+        return jsonify({"ok": False, "error": "No file provided"}), 400
+
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"ok": False, "error": "No filename"}), 400
+
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+        return jsonify({"ok": False, "error": f"File type {ext} not supported"}), 400
+
+    file_id = uuid.uuid4().hex[:12]
+    safe_name = f"{file_id}{ext}"
+    file_path = CHAT_UPLOAD_DIR / safe_name
+    file.save(str(file_path))
+
+    size = file_path.stat().st_size
+    if size > MAX_UPLOAD_SIZE:
+        file_path.unlink(missing_ok=True)
+        return jsonify({"ok": False, "error": "File too large (max 25MB)"}), 413
+
+    return jsonify({
+        "ok": True,
+        "file": {
+            "id": file_id,
+            "name": file.filename,
+            "path": str(file_path),
+            "size": size,
+            "type": ext,
+        },
+    })
+
+
+def _build_file_content_blocks(file_refs: list) -> list:
+    """Convert frontend file references into Anthropic content blocks.
+
+    PDFs → `document` blocks (Claude's native PDF understanding).
+    Images → `image` blocks (base64).
+    Spreadsheets / CSV / Word / text → inline `text` blocks wrapped in
+    <uploaded_file name="..."> tags.
+
+    Capped at MAX_UPLOADS_PER_MESSAGE and 100 KB of extracted text per file to
+    bound token spend per call.
+    """
+    blocks: list = []
+    for file_ref in (file_refs or [])[:MAX_UPLOADS_PER_MESSAGE]:
+        file_id = file_ref.get("id")
+        ext = (file_ref.get("type") or "").lower()
+        if not file_id or not ext:
+            continue
+
+        file_path = CHAT_UPLOAD_DIR / f"{file_id}{ext}"
+        if not file_path.exists():
+            logger.warning(f"Chat file ref missing on disk: {file_path}")
+            continue
+
+        name = file_ref.get("name", file_path.name)
+
+        try:
+            if ext == ".pdf":
+                with open(file_path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("ascii")
+                blocks.append({
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "application/pdf",
+                        "data": b64,
+                    },
+                })
+
+            elif ext in (".jpg", ".jpeg", ".png", ".gif"):
+                with open(file_path, "rb") as f:
+                    b64 = base64.b64encode(f.read()).decode("ascii")
+                media_type = mimetypes.guess_type(f"file{ext}")[0] or "image/png"
+                blocks.append({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": b64,
+                    },
+                })
+
+            elif ext == ".csv":
+                content = file_path.read_text(encoding="utf-8", errors="replace")
+                blocks.append({
+                    "type": "text",
+                    "text": f'<uploaded_file name="{name}">\n{content[:100000]}\n</uploaded_file>',
+                })
+
+            elif ext == ".xlsx":
+                import openpyxl
+                wb = openpyxl.load_workbook(str(file_path), data_only=True)
+                sheets = []
+                for sheet_name in wb.sheetnames:
+                    ws = wb[sheet_name]
+                    rows = []
+                    for row in ws.iter_rows(values_only=True):
+                        rows.append("\t".join(str(c) if c is not None else "" for c in row))
+                    sheets.append(f"=== Sheet: {sheet_name} ===\n" + "\n".join(rows))
+                content = "\n\n".join(sheets)
+                blocks.append({
+                    "type": "text",
+                    "text": f'<uploaded_file name="{name}">\n{content[:100000]}\n</uploaded_file>',
+                })
+
+            elif ext == ".docx":
+                from docx import Document as DocxDocument
+                doc = DocxDocument(str(file_path))
+                content = "\n".join(p.text for p in doc.paragraphs)
+                blocks.append({
+                    "type": "text",
+                    "text": f'<uploaded_file name="{name}">\n{content[:100000]}\n</uploaded_file>',
+                })
+
+            elif ext == ".txt":
+                content = file_path.read_text(encoding="utf-8", errors="replace")
+                blocks.append({
+                    "type": "text",
+                    "text": f'<uploaded_file name="{name}">\n{content[:100000]}\n</uploaded_file>',
+                })
+
+        except Exception as e:
+            logger.error(f"Failed to read {ext} file {name}: {e}", exc_info=True)
+
+    return blocks
+
+
 @app.route("/api/chat", methods=["POST"])
 def chat():
     if not _check_chat_rate():
@@ -841,6 +1014,19 @@ def chat():
     if len(messages) > CHAT_MAX_HISTORY:
         messages = messages[-CHAT_MAX_HISTORY:]
 
+    # Build file content blocks from any attachments referenced in this call.
+    attached_files = body.get("files", []) or []
+    file_content_blocks = _build_file_content_blocks(attached_files)
+
+    # If there are file blocks, attach them to the LAST user message by
+    # converting its string content into a list of blocks: [files..., text].
+    if file_content_blocks and messages:
+        last = messages[-1]
+        if last.get("role") == "user":
+            orig = last.get("content", "")
+            text = orig if isinstance(orig, str) else ""
+            last["content"] = file_content_blocks + [{"type": "text", "text": text}]
+
     try:
         import anthropic as anthropic_lib
         api_key = get_setting("anthropic_api_key", "")
@@ -849,8 +1035,17 @@ def chat():
 
         client = anthropic_lib.Anthropic(api_key=api_key)
 
-        # Detect tier
-        last_msg = messages[-1].get("content", "").lower()
+        # Detect tier — inspect only the text portion of the last message so
+        # the keyword scan works whether content is a plain string or a mixed
+        # list of file/text blocks.
+        raw_last = messages[-1].get("content", "")
+        if isinstance(raw_last, list):
+            last_text = " ".join(
+                b.get("text", "") for b in raw_last if isinstance(b, dict) and b.get("type") == "text"
+            )
+        else:
+            last_text = raw_last
+        last_msg = last_text.lower()
         tier2_keywords = ["xpm", "fusesign", "teams", "memory", "workflow",
                           "report", "wip", "debtor", "engagement", "onboard",
                           "gateway", "event", "heartbeat", "kpi"]
