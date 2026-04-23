@@ -83,7 +83,6 @@ mcs-coworker/
 ├── launcher.py                       # Pre-launch: runs auto_updater, then main.py
 ├── auto_updater.py                   # git pull + pip install -r requirements.txt
 ├── api_server.py                     # Flask routes — all UI <-> backend traffic
-├── api_server_standalone.py          # Variant for headless/test runs
 ├── config.py                         # SQLite schema + CRUD
 ├── plugin_base.py                    # AgentPlugin base + Schedule + PluginResult + PluginContext
 ├── plugin_loader.py                  # Plugin discovery, scheduling, execution
@@ -96,12 +95,10 @@ mcs-coworker/
 ├── approval_queue.py                 # Human-in-loop approvals (SQLite-backed)
 ├── kpi_monitor.py                    # KPI snapshot/aggregation singleton
 ├── xero_oauth.py                     # Xero OAuth2 flow
-├── app.py                            # LEGACY CustomTkinter UI — not the entry point
 ├── requirements.txt                  # SINGLE SOURCE OF TRUTH for packages
 ├── build_installer.bat               # Dev only — builds MCSCoWorker_Setup.exe
 ├── installer.iss                     # Inno Setup script
 ├── update.bat                        # Dev convenience — git pull + pip + frontend build + copy
-├── patch_install.bat / fix_launch.bat # One-off remediation scripts
 ├── launch.bat / launch_silent.vbs    # Local dev launchers
 ├── frontend/                         # React + Vite source
 ├── plugins/                          # ~18 plugins (see below)
@@ -216,9 +213,6 @@ class MyPlugin(AgentPlugin):
   `os.environ.setdefault("PYWEBVIEW_GUI", "edgechromium")` in `main.py`. The
   default winforms/.NET backend crashes on embeddable Python (cffi init failure).
 - **Never block the main thread** — all network/API calls go in background threads.
-- **All UI updates from threads** use `self.after(0, ...)` — never touch widgets
-  directly from a thread (legacy CustomTkinter rule, still applies if `app.py`
-  is touched).
 - **All DB writes** use parameterised queries — no string formatting in SQL.
 - **Plugin settings** namespaced as `plugin_{ClassName}_{key}` in the settings table.
 - **`init_db()` must be idempotent** — safe to run multiple times.
@@ -239,8 +233,6 @@ class MyPlugin(AgentPlugin):
 - **Frontend fallback:** if `frontend_dist\` is missing, `main.py` falls back to
   `http://127.0.0.1:3000/` (Vite dev server). On accountant machines that's a
   blank window — `_get_frontend_url()` now logs a warning when this happens.
-- **`app.py` (CustomTkinter)** is legacy and not the production entry point.
-  Still in the repo for reference / fallback. Don't add features there.
 
 ---
 
