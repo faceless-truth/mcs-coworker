@@ -8,9 +8,11 @@ from __future__ import annotations
 import html
 import json
 import os
+import re
 import sys
 import threading
 import traceback
+from pathlib import Path
 from datetime import datetime
 from functools import wraps
 from typing import Any
@@ -1071,11 +1073,27 @@ def disable_plugin(plugin_id):
 @app.route("/api/plugins/<plugin_id>", methods=["DELETE"])
 @require_loader
 def delete_plugin(plugin_id):
+    # Plugin IDs are always of the form plugin_<snake_case>. Reject anything
+    # else up front so a crafted id like "../../main" or one containing a
+    # path separator can't slip through into the file path.
+    if not re.match(r"^[a-z0-9_]+$", plugin_id):
+        return err("Invalid plugin ID format", 400)
+
     lp = _loader.get_plugin(plugin_id)
     if not lp:
         return err("Plugin not found", 404)
+
     from plugin_loader import PLUGINS_DIR
-    plugin_file = PLUGINS_DIR / f"{plugin_id}.py"
+    plugins_root = Path(PLUGINS_DIR).resolve()
+    plugin_file = (plugins_root / f"{plugin_id}.py").resolve()
+
+    # Belt-and-braces: even if the regex is satisfied, verify the resolved
+    # path still lives inside plugins/ before we unlink it.
+    try:
+        plugin_file.relative_to(plugins_root)
+    except ValueError:
+        return err("Invalid plugin ID", 400)
+
     try:
         if plugin_file.exists():
             plugin_file.unlink()
