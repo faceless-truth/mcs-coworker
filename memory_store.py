@@ -46,7 +46,13 @@ class MemoryStore:
         self._client = chromadb.PersistentClient(path=persist_dir)
 
         # ChromaDB's default embedding function (all-MiniLM-L6-v2 via ONNX)
-        # is used automatically. Model is ~80MB and downloaded on first use.
+        # is used automatically. The model is ~80MB and downloaded on first
+        # use to ~/.cache/chroma/onnx_models/ — warn the user so a blank
+        # startup log isn't mistaken for a hang.
+        model_cache = Path.home() / ".cache" / "chroma" / "onnx_models" / "all-MiniLM-L6-v2"
+        if not model_cache.exists():
+            logger.info("Downloading embedding model (first run only, ~80MB)...")
+
         self._interactions = self._client.get_or_create_collection(
             name="client_interactions",
             metadata={"description": "Client emails, NOAs, debtor follow-ups, correspondence"},

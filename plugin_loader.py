@@ -248,6 +248,16 @@ class PluginLoader:
         # previous run completes (cheap guard in addition to _run_lock).
         self._inflight: set[str] = set()
         self._inflight_lock = threading.Lock()
+        # Semantic memory store (one shared ChromaDB instance across all plugin
+        # runs). Instantiated once here rather than per-run to avoid re-opening
+        # the vector DB on every scheduled tick. If init fails (disk full,
+        # model download blocked, etc.) plugins gracefully skip memory calls.
+        try:
+            from memory_store import MemoryStore
+            self._memory = MemoryStore()
+        except Exception as e:
+            self._log(f"⚠ MemoryStore unavailable: {e}")
+            self._memory = None
         # Subscribe to heartbeat ticks so the scheduler wakes up on each tick
         EventBus.subscribe("heartbeat.tick", self._on_heartbeat_tick, async_dispatch=False)
 
@@ -733,13 +743,8 @@ class PluginLoader:
                 except Exception as e:
                     self._log(f"⚠ Notify failed: {e}")
 
-        # Lazy-load MemoryStore — gracefully degrades if chromadb not installed
-        memory = None
-        try:
-            from memory_store import MemoryStore
-            memory = MemoryStore
-        except Exception as e:
-            self._log(f"⚠ MemoryStore unavailable: {e}")
+        # MemoryStore is initialised once in __init__ and reused across runs
+        memory = self._memory
 
         # Lazy-load GatewayClient — gracefully degrades if credentials not set
         gateway = None
