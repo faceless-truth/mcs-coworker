@@ -35,14 +35,14 @@ python --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Python not found. Install Python 3.11+ from https://python.org/downloads
     echo         Tick "Add Python to PATH" during install, then re-run this script.
-    pause & exit /b 1
+    goto :abort
 )
 
 :: Check Git
 git --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Git not found. Install from https://git-scm.com then re-run.
-    pause & exit /b 1
+    goto :abort
 )
 
 :: Auto-install Inno Setup if missing
@@ -51,14 +51,14 @@ if not exist "%INNO_SETUP_DIR%\iscc.exe" (
     powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '%INNO_INSTALLER_URL%' -OutFile '%INNO_INSTALLER_TMP%' -UseBasicParsing"
     if errorlevel 1 (
         echo [ERROR] Could not download Inno Setup. Check internet connection.
-        pause & exit /b 1
+        goto :abort
     )
     "%INNO_INSTALLER_TMP%" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
     del "%INNO_INSTALLER_TMP%" >nul 2>&1
     ver >nul
     if not exist "%INNO_SETUP_DIR%\iscc.exe" (
         echo [ERROR] Inno Setup install failed.
-        pause & exit /b 1
+        goto :abort
     )
     echo [0/6] Inno Setup installed.
 ) else (
@@ -102,7 +102,7 @@ echo [2/6] Setting up Python 3.11 runtime...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '%PYTHON_EMBED_URL%' -OutFile '%PYTHON_EMBED_ZIP%' -UseBasicParsing"
 if errorlevel 1 (
     echo [ERROR] Failed to download Python runtime. Check internet connection.
-    pause & exit /b 1
+    goto :abort
 )
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Expand-Archive -Path '%PYTHON_EMBED_ZIP%' -DestinationPath '%PYTHON_DIR%' -Force"
@@ -128,7 +128,7 @@ echo [2/6] Installing Python packages (this takes a few minutes)...
     -r "%REPO_DIR%\requirements.txt"
 if errorlevel 1 (
     echo [ERROR] pip install failed. Check internet connection.
-    pause & exit /b 1
+    goto :abort
 )
 
 :: pywebview on Windows needs the WebView2 runtime (Edge-based). Download the
@@ -145,7 +145,7 @@ if exist "%WV2_OUT%" (
     echo [2/6] WebView2 bootstrapper bundled.
 ) else (
     echo [ERROR] Could not download WebView2 bootstrapper. Check internet connection.
-    pause ^& exit /b 1
+    goto :abort
 )
 
 echo [2/6] Python runtime ready.
@@ -157,16 +157,19 @@ echo.
 echo [3/6] Building React frontend...
 if not exist "%FRONTEND_DIR%\package.json" (
     echo [ERROR] Frontend not found at %FRONTEND_DIR%. Check FRONTEND_DIR.
-    pause ^& exit /b 1
+    goto :abort
 )
 pushd "%FRONTEND_DIR%"
 call pnpm install --frozen-lockfile --silent 2>nul
 if errorlevel 1 call pnpm install --silent
-call pnpm build --silent
+:: pnpm forwards trailing args to the build script. Don't pass --silent —
+:: vite rejects unknown options and the whole build aborts. pnpm's own output
+:: is already minimal here.
+call pnpm build
 if errorlevel 1 (
     popd
     echo [ERROR] Frontend build failed.
-    pause ^& exit /b 1
+    goto :abort
 )
 popd
 
@@ -175,7 +178,7 @@ popd
 if not exist "%FRONTEND_DIR%\dist\public\index.html" (
     echo [ERROR] Frontend build output missing at %FRONTEND_DIR%\dist\public\index.html.
     echo         Run "cd frontend ^&^& pnpm build" manually to diagnose.
-    pause ^& exit /b 1
+    goto :abort
 )
 xcopy /E /I /Y /Q "%FRONTEND_DIR%\dist\public" "%APP_DIR%\frontend_dist" >nul
 echo [3/6] Frontend built and copied.
@@ -189,11 +192,15 @@ echo [4/6] Cloning app source (with .git for auto-updates)...
 :: Remove the app dir created in STEP 1 so git clone can create it fresh
 if exist "%APP_DIR%" rmdir /s /q "%APP_DIR%"
 
-:: Clone the local repo — this is fast (local disk) and includes .git
-git clone "%REPO_DIR%" "%APP_DIR%" --quiet
+:: Clone the local repo — this is fast (local disk) and includes .git.
+:: REPO_DIR ends in "\" (from %~dp0). A path like "C:\foo\" inside double
+:: quotes makes the trailing \ escape the closing ", which silently joins
+:: this arg with the next. Strip the trailing slash first.
+set REPO_DIR_NOSLASH=%REPO_DIR:~0,-1%
+git clone "%REPO_DIR_NOSLASH%" "%APP_DIR%" --quiet
 if errorlevel 1 (
     echo [ERROR] git clone failed.
-    pause ^& exit /b 1
+    goto :abort
 )
 
 :: Copy the built frontend dist into the cloned app dir
@@ -211,7 +218,7 @@ if exist "%APP_DIR%\dist"              rmdir /s /q "%APP_DIR%\dist"
 if exist "%APP_DIR%\build"             rmdir /s /q "%APP_DIR%\build"
 
 :: Write a VERSION file with the current git commit hash
-for /f %%i in ('git -C "%REPO_DIR%" rev-parse --short HEAD 2^>nul') do set GIT_HASH=%%i
+for /f %%i in ('git -C "%REPO_DIR_NOSLASH%" rev-parse --short HEAD 2^>nul') do set GIT_HASH=%%i
 if defined GIT_HASH (
     echo %GIT_HASH%> "%APP_DIR%\VERSION"
     echo [4/6] App source copied. Version: %GIT_HASH%
@@ -270,7 +277,7 @@ echo [6/6] Building installer with Inno Setup...
 iscc "%REPO_DIR%\installer.iss" /DMyBuildDir="%BUILD_DIR%" /DMyRepoDir="%REPO_DIR%"
 if errorlevel 1 (
     echo [ERROR] Inno Setup failed. See output above.
-    pause & exit /b 1
+    goto :abort
 )
 echo [6/6] Installer built.
 echo.
@@ -287,3 +294,14 @@ echo  ============================================================
 echo.
 pause
 goto :eof
+
+:: ---------------------------------------------------------------------------
+:: ABORT: jumped to on any hard failure. exit /b at the top level actually
+:: terminates the batch file — unlike exit /b inside an if() block, which
+:: only exits the current command group.
+:: ---------------------------------------------------------------------------
+:abort
+echo.
+echo  BUILD ABORTED — see error above.
+pause
+exit /b 1
