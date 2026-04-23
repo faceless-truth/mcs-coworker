@@ -166,8 +166,43 @@ export async function deleteLink(linkId: number) {
 }
 
 // ── Chat ──────────────────────────────────────────────────────────────────────
-export async function sendChatMessage(messages: { role: string; content: string }[]) {
-  return apiFetch("/api/chat", { method: "POST", body: JSON.stringify({ messages }) });
+export interface ChatFileRef {
+  id: string;
+  name: string;
+  type: string;
+  size: number;
+}
+
+export async function sendChatMessage(
+  messages: { role: string; content: string }[],
+  agentId: string = "plugin_builder",
+  files: ChatFileRef[] = [],
+) {
+  return apiFetch("/api/chat", {
+    method: "POST",
+    body: JSON.stringify({ messages, agent_id: agentId, files }),
+  });
+}
+
+export async function fetchAgents() {
+  const res = await fetch(`${BASE}/api/agents`, {
+    headers: { "Content-Type": "application/json" },
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  return json.agents ?? [];
+}
+
+export async function uploadChatFile(file: File): Promise<ChatFileRef> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await fetch(`${BASE}/api/chat/upload`, { method: "POST", body: form });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Upload failed (HTTP ${res.status})`);
+  }
+  const json = await res.json();
+  return json.file;
 }
 
 export async function fetchChatHistory() {
