@@ -54,6 +54,7 @@ from approval_queue import ApprovalQueue
 from token_meter import get_usage_summary
 from event_bus import EventBus
 from kpi_monitor import KPIMonitor
+from specialists.registry import get_all_agents, get_agent
 
 # ── App setup ──────────────────────────────────────────────────────────────────
 app = Flask(__name__)
@@ -987,6 +988,28 @@ def _build_file_content_blocks(file_refs: list) -> list:
     return blocks
 
 
+@app.route("/api/agents", methods=["GET"])
+def list_agents():
+    """Return all available specialist agents for the Chat tab dropdown."""
+    agents = get_all_agents()
+    return jsonify({
+        "ok": True,
+        "agents": [
+            {
+                "id": a.id,
+                "name": a.name,
+                "description": a.description,
+                "icon": a.icon,
+                "category": a.category,
+                "supports_files": a.supports_files,
+                "file_types": a.file_types,
+                "model_preference": a.model_preference,
+            }
+            for a in agents.values()
+        ],
+    })
+
+
 @app.route("/api/chat", methods=["POST"])
 def chat():
     if not _check_chat_rate():
@@ -999,6 +1022,13 @@ def chat():
     messages = body.get("messages", [])
     if not messages:
         return err("No messages provided")
+
+    # Resolve which specialist agent is answering this turn. Default is the
+    # plugin builder so existing Chat behaviour is preserved.
+    agent_id = body.get("agent_id", "plugin_builder")
+    agent = get_agent(agent_id)
+    if not agent:
+        return jsonify({"ok": False, "error": f"Unknown agent: {agent_id}"}), 400
 
     # Cap per-message size to bound token cost per call.
     for m in messages:
@@ -1035,9 +1065,8 @@ def chat():
 
         client = anthropic_lib.Anthropic(api_key=api_key)
 
-        # Detect tier — inspect only the text portion of the last message so
-        # the keyword scan works whether content is a plain string or a mixed
-        # list of file/text blocks.
+        # Pull the raw text of the last user message. Used below for both
+        # tier detection (plugin_builder only) and memory retrieval.
         raw_last = messages[-1].get("content", "")
         if isinstance(raw_last, list):
             last_text = " ".join(
@@ -1045,30 +1074,72 @@ def chat():
             )
         else:
             last_text = raw_last
-        last_msg = last_text.lower()
-        tier2_keywords = ["xpm", "fusesign", "teams", "memory", "workflow",
-                          "report", "wip", "debtor", "engagement", "onboard",
-                          "gateway", "event", "heartbeat", "kpi"]
-        is_tier2 = any(k in last_msg for k in tier2_keywords)
-        model = get_claude_model_reasoning() if is_tier2 else get_claude_model_fast()
 
-        # Build system prompt
-        system = _build_chat_system_prompt()
+        # Model routing:
+        #   - plugin_builder keeps the legacy tier-keyword scan so heavy
+        #     plugin tasks (XPM, Teams, KPIs, etc.) escalate to the reasoning
+        #     model while simple template jobs stay on Haiku.
+        #   - Every other specialist uses its configured model preference.
+        if agent.id == "plugin_builder":
+            tier2_keywords = ["xpm", "fusesign", "teams", "memory", "workflow",
+                              "report", "wip", "debtor", "engagement", "onboard",
+                              "gateway", "event", "heartbeat", "kpi"]
+            is_tier2 = any(k in last_text.lower() for k in tier2_keywords)
+            model = get_claude_model_reasoning() if is_tier2 else get_claude_model_fast()
+            max_tokens = 4096 if is_tier2 else 2048
+        else:
+            if agent.model_preference == "sonnet":
+                model = get_claude_model_reasoning()
+                max_tokens = 4096
+            else:
+                model = get_claude_model_fast()
+                max_tokens = 2048
+
+        # System prompt:
+        #   - plugin_builder retains its live-data block (pending approvals,
+        #     ASIC, debtors, recent activity) so the builder can answer
+        #     "what's going on in the practice" questions.
+        #   - specialists use their file-loaded prompt verbatim.
+        if agent.id == "plugin_builder":
+            system_prompt = _build_chat_system_prompt()
+        else:
+            system_prompt = agent.system_prompt
+
+        # Tell a file-aware specialist to actually look at the uploads.
+        if agent.supports_files and file_content_blocks:
+            system_prompt += (
+                "\n\nThe user has uploaded files with this message. "
+                "Analyse them according to your specialist instructions."
+            )
+
+        # Inject relevant semantic memory for non-plugin_builder specialists.
+        # Memory contains client interactions, prior advice, and lessons —
+        # useful for tax specialists that need practice-specific context.
+        if agent.id != "plugin_builder":
+            store = _get_memory_store()
+            if store is not None and last_text:
+                try:
+                    memory_context = store.format_for_prompt(last_text, n_results=5)
+                    if memory_context:
+                        system_prompt += f"\n\n{memory_context}"
+                except Exception as e:
+                    logger.warning(f"Memory context injection skipped: {e}")
 
         response = client.messages.create(
             model=model,
-            max_tokens=4096 if is_tier2 else 2048,
-            system=system,
+            max_tokens=max_tokens,
+            system=system_prompt,
             messages=messages,
         )
         return ok({
             "content": response.content[0].text,
             "model": model,
-            "tier": 2 if is_tier2 else 1,
+            "agent_id": agent.id,
+            "agent_name": agent.name,
             "usage": {
                 "input_tokens": response.usage.input_tokens,
                 "output_tokens": response.usage.output_tokens,
-            }
+            },
         })
     except Exception as e:
         return err(f"Chat error: {str(e)}")
