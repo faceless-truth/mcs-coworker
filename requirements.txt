@@ -3,9 +3,6 @@
 # - build_installer.bat reads this file
 # - auto_updater.py runs pip install -r this file on each update
 # - Accountants never see this — packages are pre-bundled in the installer
-#
-# DO NOT add chromadb — it pulls 40+ transitive deps and is not used.
-# If needed later, make it a separate optional install.
 
 # Core app framework
 flask>=3.0.0
@@ -15,6 +12,9 @@ pywebview>=5.0
 # AI & auth
 anthropic>=0.34.0
 msal>=1.26.0
+
+# Semantic memory (vector store)
+chromadb>=0.5.0
 
 # HTTP & networking
 requests>=2.31.0
