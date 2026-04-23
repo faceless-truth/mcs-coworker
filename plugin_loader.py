@@ -13,6 +13,7 @@ import os
 import sys
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, date
 from pathlib import Path
 from typing import Callable
@@ -233,6 +234,16 @@ class PluginLoader:
         # twice because the second path sees its _next_run_at before the first
         # has updated it.
         self._run_lock = threading.Lock()
+        # Pool for concurrent plugin execution. Without this, a slow plugin
+        # (e.g. Smart Email Responder working a busy inbox) blocks every other
+        # plugin behind it on the scheduler thread.
+        self._plugin_executor = ThreadPoolExecutor(
+            max_workers=4, thread_name_prefix="plugin-worker"
+        )
+        # Tracks plugins currently mid-run so we don't resubmit before the
+        # previous run completes (cheap guard in addition to _run_lock).
+        self._inflight: set[str] = set()
+        self._inflight_lock = threading.Lock()
         # Subscribe to heartbeat ticks so the scheduler wakes up on each tick
         EventBus.subscribe("heartbeat.tick", self._on_heartbeat_tick, async_dispatch=False)
 
@@ -405,10 +416,41 @@ class PluginLoader:
         return result
 
     def run_all_due(self):
-        """Check all plugins and run any that are due."""
-        for pid, lp in self._plugins.items():
-            if lp.is_due():
-                self.run_plugin(pid)
+        """Submit every due plugin to the thread pool so slow plugins don't
+        block fast ones. Each run is fire-and-forget; errors are caught inside
+        run_plugin() and logged by _on_plugin_complete.
+        """
+        for pid, lp in list(self._plugins.items()):
+            if not lp.is_due():
+                continue
+            # Skip if we already submitted this plugin and it's still running.
+            # Prevents a long-running plugin from stacking duplicate submissions
+            # if subsequent scheduler ticks see it as "due" before completion.
+            with self._inflight_lock:
+                if pid in self._inflight:
+                    continue
+                self._inflight.add(pid)
+            future = self._plugin_executor.submit(self._run_plugin_inflight, pid)
+            future.add_done_callback(
+                lambda f, _pid=pid: self._on_plugin_complete(f, _pid)
+            )
+
+    def _run_plugin_inflight(self, plugin_id: str) -> PluginResult:
+        """Wrapper around run_plugin that always clears the in-flight marker."""
+        try:
+            return self.run_plugin(plugin_id)
+        finally:
+            with self._inflight_lock:
+                self._inflight.discard(plugin_id)
+
+    def _on_plugin_complete(self, future, plugin_id: str) -> None:
+        """Log any exception that escaped run_plugin's own try/except."""
+        try:
+            exc = future.exception()
+            if exc:
+                self._log(f"⚠ Plugin {plugin_id} raised uncaught exception: {exc}")
+        except Exception:
+            pass
 
     # ── Scheduler ─────────────────────────────────────────────────────────────
 
@@ -437,6 +479,10 @@ class PluginLoader:
         """Stop the background scheduler and heartbeat."""
         self._running = False
         HeartbeatPlugin.stop()
+        # Don't wait for in-flight plugins — if the user is shutting down we
+        # want the window to close immediately. Uncaught errors are already
+        # logged by _on_plugin_complete.
+        self._plugin_executor.shutdown(wait=False)
         EventBus.emit("app.stopping", source="PluginLoader")
         self._log("⏱ Scheduler stopped.")
 
