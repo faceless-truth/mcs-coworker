@@ -2,6 +2,8 @@
 MC & S Email Automation - Microsoft Graph API Client
 Handles OAuth2 authentication and email operations.
 """
+import atexit
+import logging
 import os
 import threading
 import webbrowser
@@ -9,9 +11,45 @@ import requests
 import json
 from datetime import datetime, timezone
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 import msal
+
+logger = logging.getLogger(__name__)
+
+
+def _get_cache_path() -> Path:
+    """Return the on-disk location of the MSAL serialised token cache."""
+    data_dir = Path(
+        os.environ.get("MCS_DATA_DIR", str(Path.home() / ".mcs_email_automation"))
+    )
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir / ".msal_cache.bin"
+
+
+def _load_token_cache() -> msal.SerializableTokenCache:
+    """Load the token cache from disk, or return a fresh one on first run."""
+    cache = msal.SerializableTokenCache()
+    cache_path = _get_cache_path()
+    if cache_path.exists():
+        try:
+            cache.deserialize(cache_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning(f"Failed to load MSAL cache: {e}")
+    return cache
+
+
+def _save_token_cache(cache: msal.SerializableTokenCache) -> None:
+    """Persist the cache to disk when MSAL flags it as dirty."""
+    if cache is None:
+        return
+    if not getattr(cache, "has_state_changed", False):
+        return
+    try:
+        _get_cache_path().write_text(cache.serialize(), encoding="utf-8")
+    except Exception as e:
+        logger.error(f"Failed to save MSAL cache: {e}")
 
 GRAPH_SCOPES = [
     "Mail.ReadWrite",
@@ -41,13 +79,22 @@ class GraphClient:
     def __init__(self, tenant_id: str = None, client_id: str = None):
         self.tenant_id = tenant_id or MCS_TENANT_ID
         self.client_id = client_id or MCS_CLIENT_ID
-        self._token_cache = msal.SerializableTokenCache()
+        # Load cached tokens from disk so the accountant isn't re-prompted to
+        # sign in on every app restart. The refresh token is good for 90 days.
+        self._token_cache = _load_token_cache()
         self._app = None
         self._account = None
         self._access_token = None
         self._auth_code = None
         self._auth_event = threading.Event()
         self._setup_app()
+        # Belt-and-braces: flush the cache on interpreter shutdown. The normal
+        # save points below cover every successful token acquisition.
+        atexit.register(self._persist_cache)
+
+    def _persist_cache(self) -> None:
+        """Write the cache to disk if MSAL has marked it dirty."""
+        _save_token_cache(self._token_cache)
 
     def _setup_app(self):
         if self.tenant_id and self.client_id:
@@ -66,6 +113,8 @@ class GraphClient:
         accounts = self._app.get_accounts()
         if accounts:
             result = self._app.acquire_token_silent(GRAPH_SCOPES, account=accounts[0])
+            # Silent acquisition may have refreshed the token — flush to disk.
+            self._persist_cache()
             if result and "access_token" in result:
                 self._access_token = result["access_token"]
                 self._account = accounts[0]
@@ -106,6 +155,9 @@ class GraphClient:
                     scopes=GRAPH_SCOPES,
                     redirect_uri=REDIRECT_URI,
                 )
+                # Persist regardless of outcome — MSAL may have written
+                # diagnostic state even on failure.
+                self._persist_cache()
                 if "access_token" in result:
                     self._access_token = result["access_token"]
                     accounts = self._app.get_accounts()
@@ -144,6 +196,9 @@ class GraphClient:
             raise ValueError("Not authenticated. Please sign in first.")
 
         result = self._app.acquire_token_silent(GRAPH_SCOPES, account=accounts[0])
+        # Silent acquisition frequently refreshes the token — persist so the
+        # updated refresh token survives the next restart.
+        self._persist_cache()
         if result and "access_token" in result:
             return result["access_token"]
 
