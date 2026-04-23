@@ -420,17 +420,63 @@ def edit_approval(action_id):
 
 
 # ── Memory ─────────────────────────────────────────────────────────────────────
+def _get_memory_store():
+    """Return the live MemoryStore owned by the PluginLoader, or None.
+
+    The loader creates a single MemoryStore in its __init__; sharing that
+    instance here avoids a second ChromaDB PersistentClient pointed at the
+    same on-disk directory (which fails on Windows with a file-lock error).
+    """
+    if _loader is not None and getattr(_loader, "_memory", None) is not None:
+        return _loader._memory
+    return None
+
+
 @app.route("/api/memory")
 def list_memory():
+    """List memory records.
+
+    - If `q` is given → semantic search across client interactions.
+    - If `q` is empty or missing → return the most recent interactions.
+    """
     try:
-        from memory_store import MemoryStore
-        query = request.args.get("q", "recent client interactions")
+        query = (request.args.get("q") or "").strip()
         limit = int(request.args.get("limit", 50))
-        results = MemoryStore.search(query, n_results=limit)
-        return ok([
-            {"content": doc, "metadata": meta or {}, "distance": dist}
-            for doc, meta, dist in results
-        ])
+        store = _get_memory_store()
+        if store is None:
+            return jsonify({"ok": True, "data": [], "total": 0, "degraded": True}), 200
+
+        if query:
+            results = store.search(query, n_results=limit, collection="interactions")
+        else:
+            try:
+                raw = store._interactions.get(limit=limit)
+                results = []
+                if raw and raw.get("ids"):
+                    ids = raw["ids"]
+                    docs = raw.get("documents") or []
+                    metas = raw.get("metadatas") or []
+                    for i, doc_id in enumerate(ids):
+                        results.append({
+                            "id": doc_id,
+                            "content": docs[i] if i < len(docs) else "",
+                            "metadata": metas[i] if i < len(metas) else {},
+                            "distance": 0.0,
+                            "relevance": None,
+                        })
+                    results.sort(
+                        key=lambda x: x.get("metadata", {}).get("epoch", 0),
+                        reverse=True,
+                    )
+            except Exception as e:
+                logger.error(f"Memory fetch failed: {e}", exc_info=True)
+                results = []
+
+        return jsonify({
+            "ok": True,
+            "data": results,
+            "total": store.count("interactions"),
+        })
     except Exception as e:
         logger.error(f"API error in {request.path}: {e}", exc_info=True)
         return jsonify({
@@ -438,12 +484,59 @@ def list_memory():
         }), 200
 
 
+@app.route("/api/memory/search", methods=["POST"])
+def search_memory():
+    """Advanced semantic search with optional metadata filters."""
+    try:
+        body = request.json or {}
+        query = body.get("query", "")
+        collection = body.get("collection", "interactions")
+        filters = body.get("filters")
+        limit = int(body.get("limit", 10))
+
+        store = _get_memory_store()
+        if store is None:
+            return jsonify({"ok": True, "data": []})
+
+        results = store.search(
+            query, n_results=limit, filters=filters, collection=collection,
+        )
+        return jsonify({"ok": True, "data": results})
+    except Exception as e:
+        logger.error(f"API error in {request.path}: {e}", exc_info=True)
+        return err(str(e))
+
+
+@app.route("/api/memory/stats")
+def memory_stats():
+    """Counts for each semantic memory collection."""
+    store = _get_memory_store()
+    if store is None:
+        return jsonify({
+            "ok": True, "interactions": 0, "lessons": 0, "documents": 0,
+        })
+    try:
+        return jsonify({
+            "ok": True,
+            "interactions": store.count("interactions"),
+            "lessons": store.count("lessons"),
+            "documents": store.count("documents"),
+        })
+    except Exception as e:
+        logger.error(f"API error in {request.path}: {e}", exc_info=True)
+        return jsonify({
+            "ok": True, "interactions": 0, "lessons": 0, "documents": 0,
+            "degraded": True, "error": str(e),
+        })
+
+
 @app.route("/api/memory/<record_id>", methods=["DELETE"])
 def delete_memory(record_id):
     try:
-        from memory_store import MemoryStore
-        ms = MemoryStore()
-        ms.delete(record_id)
+        store = _get_memory_store()
+        if store is None:
+            return err("Memory store unavailable")
+        store.delete(record_id)
         return ok({"deleted": record_id})
     except Exception as e:
         return err(str(e))
@@ -793,8 +886,8 @@ def system_status():
     h, rem = divmod(uptime_secs, 3600)
     m, _ = divmod(rem, 60)
     try:
-        from memory_store import MemoryStore
-        mem_count = MemoryStore().count()
+        store = _get_memory_store()
+        mem_count = store.count() if store is not None else 0
     except Exception:
         mem_count = 0
     try:

@@ -72,8 +72,13 @@ export async function rejectAction(actionId: string) {
 }
 
 // ── Memory ────────────────────────────────────────────────────────────────────
-export async function fetchMemory(query = "recent client interactions", limit = 50) {
-  return apiFetch(`/api/memory?q=${encodeURIComponent(query)}&limit=${limit}`);
+export async function fetchMemory(query = "", limit = 50) {
+  const q = query ? `&q=${encodeURIComponent(query)}` : "";
+  return apiFetch(`/api/memory?limit=${limit}${q}`);
+}
+
+export async function fetchMemoryStats() {
+  return apiFetch("/api/memory/stats");
 }
 
 export async function deleteMemory(recordId: string) {
