@@ -167,15 +167,16 @@ class MorningBriefingPlugin(AgentPlugin):
             else:
                 subject = f"Morning Briefing — {today_str}"
 
+            body_html = (
+                f"<pre style='font-family:Calibri,sans-serif;font-size:14px'>"
+                f"{briefing_text}</pre>"
+            )
             for email in [r.strip() for r in recipients_setting.split(",") if r.strip()]:
                 try:
-                    context.graph.send_email(
-                        to=email,
-                        subject=subject,
-                        body=f"<pre style='font-family:Calibri,sans-serif;font-size:14px'>"
-                             f"{briefing_text}</pre>",
-                        draft_mode=context.draft_mode,
-                    )
+                    if context.draft_mode:
+                        context.graph.create_draft(email, subject, body_html)
+                    else:
+                        context.graph.send_email(email, subject, body_html)
                     delivered.append(email)
                     context.log(f"[MorningBriefing] Sent to {email}.")
                 except Exception as e:
@@ -483,7 +484,7 @@ class MorningBriefingPlugin(AgentPlugin):
         if not context.graph:
             return ""
         try:
-            messages = context.graph.get_unread_emails(max_results=20)
+            messages = context.graph.fetch_unread_emails(folder="Inbox", max_count=20)
             if not messages:
                 return ""
             lines = [f"Unread Emails ({len(messages)}):"]

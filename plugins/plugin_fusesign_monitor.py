@@ -131,11 +131,11 @@ class FuseSignMonitorPlugin(AgentPlugin):
                             try:
                                 body = self._draft_reminder(
                                     context, client_name, env_name, days_pending)
-                                context.graph.send_email(
-                                    to=client_email,
-                                    subject=f"Action Required: Please Sign '{env_name}'",
-                                    body=body,
-                                    draft_mode=context.draft_mode)
+                                subj = f"Action Required: Please Sign '{env_name}'"
+                                if context.draft_mode:
+                                    context.graph.create_draft(client_email, subj, body)
+                                else:
+                                    context.graph.send_email(client_email, subj, body)
                                 reminders_sent += 1
                             except Exception as e:
                                 context.log(f"[FuseSignMonitor] Reminder email failed: {e}")

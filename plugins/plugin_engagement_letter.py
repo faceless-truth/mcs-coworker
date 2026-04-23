@@ -83,7 +83,7 @@ class EngagementLetterPlugin(AgentPlugin):
             return result
 
         try:
-            messages = context.graph.get_unread_emails(max_results=30)
+            messages = context.graph.fetch_unread_emails(folder="Inbox", max_count=30)
         except Exception as e:
             result.summary = f"Inbox scan failed: {e}"
             return result
@@ -170,11 +170,12 @@ class EngagementLetterPlugin(AgentPlugin):
 
             elif context.graph:
                 practice = get_setting("practice_name", "MC & S Accounting")
-                context.graph.send_email(
-                    to=client_email,
-                    subject=f"Engagement Letter — {practice}",
-                    body=letter,
-                    draft_mode=True)  # always draft engagement letters
+                # Engagement letters always draft — never auto-send.
+                context.graph.create_draft(
+                    client_email,
+                    f"Engagement Letter — {practice}",
+                    letter,
+                )
 
             # ── Store in memory ───────────────────────────────────────────────
             if context.memory:

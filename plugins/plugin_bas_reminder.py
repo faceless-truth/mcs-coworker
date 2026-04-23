@@ -173,12 +173,14 @@ class BASReminderPlugin(AgentPlugin):
                            f"{due_date.strftime('%d %B %Y')}")
 
                 # ── Submit to approval queue ──────────────────────────────────
+                draft_mode = context.draft_mode
                 if context.approval_queue:
-                    def _send(to=client_email, subj=subject, body=email_body):
+                    def _send(to=client_email, subj=subject, body=email_body, dm=draft_mode):
                         if context.graph:
-                            context.graph.send_email(
-                                to=to, subject=subj, body=body,
-                                draft_mode=context.draft_mode)
+                            if dm:
+                                context.graph.create_draft(to, subj, body)
+                            else:
+                                context.graph.send_email(to, subj, body)
                     context.approval_queue.submit(
                         action_type="send_email",
                         description=(f"BAS reminder ({frequency}) to "
@@ -191,9 +193,10 @@ class BASReminderPlugin(AgentPlugin):
                         execute_callback=_send)
                 elif context.graph:
                     try:
-                        context.graph.send_email(
-                            to=client_email, subject=subject, body=email_body,
-                            draft_mode=context.draft_mode)
+                        if draft_mode:
+                            context.graph.create_draft(client_email, subject, email_body)
+                        else:
+                            context.graph.send_email(client_email, subject, email_body)
                     except Exception as e:
                         context.log(
                             f"[BASReminder] Email failed for {client_name}: {e}")

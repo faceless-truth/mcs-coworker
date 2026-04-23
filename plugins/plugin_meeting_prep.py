@@ -74,7 +74,7 @@ class MeetingPrepPlugin(AgentPlugin):
 
         # ── Scan inbox for meeting-related emails ─────────────────────────────
         try:
-            messages = context.graph.get_unread_emails(max_results=30)
+            messages = context.graph.fetch_unread_emails(folder="Inbox", max_count=30)
         except Exception as e:
             result.summary = f"Inbox scan failed: {e}"
             return result

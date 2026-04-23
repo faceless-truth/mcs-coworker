@@ -162,12 +162,16 @@ class DebtorFollowUpPlugin(AgentPlugin):
 
             # ── Submit to approval queue ──────────────────────────────────────
             subject = f"Outstanding Invoice Reminder — {client_name}"
+            # GraphClient.send_email/create_draft both take positional args
+            # (to_address, subject, body_html). Draft mode picks between them.
+            draft_mode = context.draft_mode
             if context.approval_queue:
-                def _send(to=client_email, subj=subject, body=email_body):
+                def _send(to=client_email, subj=subject, body=email_body, dm=draft_mode):
                     if context.graph:
-                        context.graph.send_email(
-                            to=to, subject=subj, body=body,
-                            draft_mode=context.draft_mode)
+                        if dm:
+                            context.graph.create_draft(to, subj, body)
+                        else:
+                            context.graph.send_email(to, subj, body)
                 approved = context.approval_queue.submit(
                     action_type="send_email",
                     description=f"Debtor follow-up to {client_name} ({client_email})",
@@ -185,9 +189,10 @@ class DebtorFollowUpPlugin(AgentPlugin):
                     drafted += 1  # queued counts as drafted
             elif context.graph:
                 try:
-                    context.graph.send_email(
-                        to=client_email, subject=subject, body=email_body,
-                        draft_mode=context.draft_mode)
+                    if draft_mode:
+                        context.graph.create_draft(client_email, subject, email_body)
+                    else:
+                        context.graph.send_email(client_email, subject, email_body)
                     drafted += 1
                 except Exception as e:
                     context.log(f"[DebtorFollowUp] Email failed for {client_name}: {e}")
