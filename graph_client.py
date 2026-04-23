@@ -21,11 +21,8 @@ logger = logging.getLogger(__name__)
 
 def _get_cache_path() -> Path:
     """Return the on-disk location of the MSAL serialised token cache."""
-    data_dir = Path(
-        os.environ.get("MCS_DATA_DIR", str(Path.home() / ".mcs_email_automation"))
-    )
-    data_dir.mkdir(parents=True, exist_ok=True)
-    return data_dir / ".msal_cache.bin"
+    from config import DATA_DIR
+    return DATA_DIR / ".msal_cache.bin"
 
 
 def _load_token_cache() -> msal.SerializableTokenCache:

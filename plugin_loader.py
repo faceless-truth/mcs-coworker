@@ -389,12 +389,8 @@ class PluginLoader:
                 f"Plugin {lp.name} failed: {e}", exc_info=True
             )
             try:
-                error_log_path = Path(
-                    os.environ.get(
-                        "MCS_DATA_DIR",
-                        str(Path.home() / ".mcs_email_automation"),
-                    )
-                ) / "plugin_errors.log"
+                from config import DATA_DIR as _data_dir
+                error_log_path = _data_dir / "plugin_errors.log"
                 error_log_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(error_log_path, "a", encoding="utf-8") as f:
                     f.write(f"\n{'=' * 60}\n")

@@ -20,7 +20,22 @@ ALLOWED_PLUGIN_COLUMNS = {
     "last_run", "last_result", "last_summary", "display_name",
 }
 
-DB_PATH = Path.home() / ".mcs_email_automation" / "config.db"
+def _get_data_dir() -> Path:
+    """Return the app data directory, respecting ``MCS_DATA_DIR`` if set.
+
+    ``launcher.py`` points MCS_DATA_DIR at ``%INSTALL_DIR%\\data\\`` on
+    production installs. Falling back to ``~/.mcs_email_automation`` keeps dev
+    machines working, but OneDrive/roaming-profile syncing of ``~`` is the
+    reason the env-var path is strongly preferred.
+    """
+    d = os.environ.get("MCS_DATA_DIR")
+    p = Path(d) if d else Path.home() / ".mcs_email_automation"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+DATA_DIR = _get_data_dir()
+DB_PATH = DATA_DIR / "config.db"
 
 
 def apply_wal_pragmas(conn: sqlite3.Connection) -> None:

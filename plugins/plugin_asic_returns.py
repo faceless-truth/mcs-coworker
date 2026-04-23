@@ -45,7 +45,7 @@ from pathlib import Path
 import anthropic
 
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
-from config import get_setting, log_activity, get_db, get_style_preferences, get_active_lessons
+from config import get_setting, log_activity, get_db, get_style_preferences, get_active_lessons, DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -237,9 +237,7 @@ class ASICReturnPlugin(AgentPlugin):
     _download_dir: str
 
     def load(self, context: PluginContext) -> bool:
-        self._download_dir = str(
-            Path.home() / ".mcs_email_automation" / "asic_downloads"
-        )
+        self._download_dir = str(DATA_DIR / "asic_downloads")
         os.makedirs(self._download_dir, exist_ok=True)
         _ensure_asic_tables()
 
