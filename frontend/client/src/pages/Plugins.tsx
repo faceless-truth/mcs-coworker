@@ -7,10 +7,17 @@ import { CheckCircle2, Clock, Pause, Play, XCircle } from "lucide-react";
 import { toast } from "sonner";
 
 const API_BASE = "http://127.0.0.1:7842";
-const categories = ["All", "Core", "Tax", "Compliance", "Practice Mgmt", "Briefings", "Onboarding", "Client Relations"];
+// Backend emits one of these three values on plugin.category — see PluginCategory
+// in plugin_base.py. Keep this list in sync with that enum.
+const CATEGORIES = [
+  { value: "all",        label: "All" },
+  { value: "universal",  label: "Universal" },
+  { value: "reception",  label: "Reception" },
+  { value: "accountant", label: "Accountant" },
+];
 
 export default function Plugins() {
-  const [filter, setFilter] = useState("All");
+  const [filter, setFilter] = useState("all");
   const [plugins, setPlugins] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -39,7 +46,7 @@ export default function Plugins() {
     };
   }, []);
 
-  const filtered = filter === "All" ? plugins : plugins.filter((p: any) => p.category === filter);
+  const filtered = filter === "all" ? plugins : plugins.filter((p: any) => p.category === filter);
 
   const togglePlugin = async (id: string) => {
     const plugin = plugins.find((p: any) => p.id === id);
@@ -87,18 +94,18 @@ export default function Plugins() {
 
       {/* Category filter */}
       <div className="flex flex-wrap gap-2">
-        {categories.map(cat => (
+        {CATEGORIES.map(cat => (
           <button
-            key={cat}
-            onClick={() => setFilter(cat)}
+            key={cat.value}
+            onClick={() => setFilter(cat.value)}
             className={`px-3 py-1.5 rounded-full text-xs font-medium transition-all ${
-              filter === cat
+              filter === cat.value
                 ? "text-white"
                 : "bg-white border border-border text-muted-foreground hover:border-blue-300 hover:text-blue-600"
             }`}
-            style={filter === cat ? { background: "oklch(0.5 0.2 250)" } : {}}
+            style={filter === cat.value ? { background: "oklch(0.5 0.2 250)" } : {}}
           >
-            {cat}
+            {cat.label}
           </button>
         ))}
       </div>
