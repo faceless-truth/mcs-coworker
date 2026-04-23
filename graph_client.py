@@ -144,7 +144,10 @@ class GraphClient:
 
         def wait_and_complete():
             # Wait for /auth/callback to call receive_auth_code()
-            self._auth_event.wait(timeout=120)
+            # 60s — even if offline detection lets us through, we don't want
+            # to block the backend init thread for 2 full minutes if the
+            # Microsoft endpoint is unreachable mid-flow.
+            self._auth_event.wait(timeout=60)
 
             if self._pending_auth_code:
                 result = self._app.acquire_token_by_authorization_code(

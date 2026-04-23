@@ -818,6 +818,7 @@ def system_status():
         "uptime": f"{h}h {m}m",
         "version": get_setting("app_version", "2.4.1"),
         "updateAvailable": False,
+        "offlineMode": get_setting("_offline_mode", "false") == "true",
     })
 
 

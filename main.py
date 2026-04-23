@@ -87,16 +87,34 @@ from kpi_monitor import KPIMonitor
 import api_server
 
 
+def _has_internet(timeout: float = 3.0) -> bool:
+    """Quick connectivity probe used to skip blocking auth flows on offline
+    first-launch (rural/temporary outages, train trips, fresh-imaged laptops
+    sitting on captive Wi-Fi portals)."""
+    import urllib.request
+    try:
+        urllib.request.urlopen("https://login.microsoftonline.com", timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
 def _init_backend():
     """Initialise all backend services and wire them into the API server."""
     log.info("Initialising backend services...")
 
     graph = GraphClient()
-    try:
-        graph.authenticate()
-        log.info("Microsoft Graph authenticated")
-    except Exception as e:
-        log.warning(f"Graph auth failed (will retry): {e}")
+    if not _has_internet():
+        log.warning("No internet connection detected — skipping Microsoft authentication")
+        # Surfaced via /api/system/status so the frontend can show a banner.
+        config.set_setting("_offline_mode", "true")
+    else:
+        config.set_setting("_offline_mode", "false")
+        try:
+            graph.authenticate()
+            log.info("Microsoft Graph authenticated")
+        except Exception as e:
+            log.warning(f"Graph auth failed (will retry): {e}")
 
     loader = PluginLoader()
     loader.set_graph(graph)
