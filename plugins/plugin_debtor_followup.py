@@ -36,26 +36,13 @@ class DebtorFollowUpPlugin(AgentPlugin):
     """Automated debtor follow-up with tiered escalation."""
 
     PLUGIN_ID   = "plugin_debtor_followup"
-    NAME        = "Debtor Follow-Up"
-    DESCRIPTION = ("Finds overdue invoices in XPM, drafts personalised follow-up "
+    name        = "Debtor Follow-Up"
+    description = ("Finds overdue invoices in XPM, drafts personalised follow-up "
                    "emails using AI, and escalates persistent debtors to Teams.")
-    VERSION     = "1.0.0"
-    ICON        = "💰"
-    SCHEDULE    = Schedule.monthly_on_day(1)  # 1st of every month at 08:00
-
-    name        = NAME
-    description = DESCRIPTION
-    version     = VERSION
-    icon        = ICON
-    default_schedule = SCHEDULE
+    version     = "1.0.0"
+    icon        = "💰"
+    default_schedule = Schedule.monthly_on_day(1)  # 1st of every month at 08:00
     category    = PluginCategory.RECEPTION
-
-    DEFAULT_SETTINGS = {
-        "overdue_threshold_days": "14", # start following up after 14 days
-        "escalate_days":         "60",  # escalate to Teams after 60 days
-        "max_follow_ups":        "3",   # max automated follow-ups before manual
-        "confidence_threshold":  "0.7", # approval queue threshold
-    }
 
     def run(self, context: PluginContext) -> PluginResult:
         result = PluginResult()

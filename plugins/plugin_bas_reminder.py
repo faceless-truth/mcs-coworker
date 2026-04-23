@@ -73,28 +73,15 @@ class BASReminderPlugin(AgentPlugin):
     """Drafts BAS reminders with adaptive monthly/quarterly scheduling per client."""
 
     PLUGIN_ID   = "plugin_bas_reminder"
-    NAME        = "BAS Reminder Drafter"
-    DESCRIPTION = ("Calculates BAS due dates per client based on their lodgement "
+    name        = "BAS Reminder Drafter"
+    description = ("Calculates BAS due dates per client based on their lodgement "
                    "frequency (monthly or quarterly), learned from XPM and memory.")
-    VERSION     = "2.0.0"
-    ICON        = "📅"
+    version     = "2.0.0"
+    icon        = "📅"
     # Run on the 21st of every month — catches both monthly (due 21st) and
     # quarterly windows in a single pass
-    SCHEDULE    = Schedule.monthly_on_day(21)
-
-    name        = NAME
-    description = DESCRIPTION
-    version     = VERSION
-    icon        = ICON
-    default_schedule = SCHEDULE
+    default_schedule = Schedule.monthly_on_day(21)
     category    = PluginCategory.RECEPTION
-
-    DEFAULT_SETTINGS = {
-        "lead_days":             "14",    # send reminder N days before due date
-        "confidence_threshold":  "0.75",
-        "default_frequency":     "quarterly",  # safe default if unknown
-        "learn_from_xpm":        "1",     # store detected frequency in memory
-    }
 
     def run(self, context: PluginContext) -> PluginResult:
         result = PluginResult()

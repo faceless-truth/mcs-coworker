@@ -45,25 +45,13 @@ class MeetingPrepPlugin(AgentPlugin):
     """Compiles a client meeting prep brief from XPM and memory."""
 
     PLUGIN_ID   = "plugin_meeting_prep"
-    NAME        = "Meeting Prep Brief"
-    DESCRIPTION = ("Detects meeting emails, pulls client context from XPM and memory, "
+    name        = "Meeting Prep Brief"
+    description = ("Detects meeting emails, pulls client context from XPM and memory, "
                    "and delivers a pre-meeting brief to Teams.")
-    VERSION     = "1.0.0"
-    ICON        = "📋"
-    SCHEDULE    = Schedule.daily_at(8)  # Every morning at 08:00
-
-    name        = NAME
-    description = DESCRIPTION
-    version     = VERSION
-    icon        = ICON
-    default_schedule = SCHEDULE
+    version     = "1.0.0"
+    icon        = "📋"
+    default_schedule = Schedule.daily_at(8)  # Every morning at 08:00
     category    = PluginCategory.ACCOUNTANT
-
-    DEFAULT_SETTINGS = {
-        "send_to_teams": "1",
-        "send_email":    "0",
-        "email_recipients": "",
-    }
 
     def run(self, context: PluginContext) -> PluginResult:
         result = PluginResult()

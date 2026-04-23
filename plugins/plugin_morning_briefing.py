@@ -72,35 +72,14 @@ class MorningBriefingPlugin(AgentPlugin):
     """Compiles and delivers a daily morning briefing to the team."""
 
     PLUGIN_ID   = "plugin_morning_briefing"
-    NAME        = "Morning Briefing"
-    DESCRIPTION = ("Compiles a daily morning briefing by email. Reception mode covers "
+    name        = "Morning Briefing"
+    description = ("Compiles a daily morning briefing by email. Reception mode covers "
                    "ASIC/NOA/debtors/FuseSign. Accountant mode covers XPM jobs and "
                    "compliance deadlines. Mondays add a weekly tax industry digest.")
-    VERSION     = "2.0.0"
-    ICON        = "🌅"
-    SCHEDULE    = Schedule.daily_at(8)
-
-    name        = NAME
-    description = DESCRIPTION
-    version     = VERSION
-    icon        = ICON
-    default_schedule = SCHEDULE
+    version     = "2.0.0"
+    icon        = "🌅"
+    default_schedule = Schedule.daily_at(8)
     category    = PluginCategory.UNIVERSAL
-
-    DEFAULT_SETTINGS = {
-        "briefing_hour":         "8",
-        "briefing_minute":       "0",
-        "send_email":            "1",
-        "email_recipients":      "",      # comma-separated; falls back to user_email
-        "max_jobs_shown":        "15",
-        "include_inbox_summary": "1",
-        "include_memory_context":"1",
-        # Quiet-day suppression
-        "suppress_if_quiet":     "1",
-        "quiet_threshold":       "3",
-        # Monday industry digest
-        "monday_digest":         "1",     # 1 = include weekly digest on Mondays
-    }
 
     def __init__(self):
         super().__init__()

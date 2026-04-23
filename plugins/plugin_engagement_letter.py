@@ -55,25 +55,13 @@ class EngagementLetterPlugin(AgentPlugin):
     """Generates and sends personalised engagement letters via FuseSign."""
 
     PLUGIN_ID   = "plugin_engagement_letter"
-    NAME        = "Engagement Letter Generator"
-    DESCRIPTION = ("Detects new client emails, generates a personalised engagement "
+    name        = "Engagement Letter Generator"
+    description = ("Detects new client emails, generates a personalised engagement "
                    "letter using AI, and sends it via FuseSign for signing.")
-    VERSION     = "1.0.0"
-    ICON        = "📝"
-    SCHEDULE    = Schedule.every_minutes(10)
-
-    name        = NAME
-    description = DESCRIPTION
-    version     = VERSION
-    icon        = ICON
-    default_schedule = SCHEDULE
+    version     = "1.0.0"
+    icon        = "📝"
+    default_schedule = Schedule.every_minutes(10)
     category    = PluginCategory.RECEPTION
-
-    DEFAULT_SETTINGS = {
-        "use_fusesign":       "1",
-        "draft_only":         "0",   # if 1, only draft — don't send
-        "confidence_threshold": "0.8",
-    }
 
     def run(self, context: PluginContext) -> PluginResult:
         result = PluginResult()

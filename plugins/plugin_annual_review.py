@@ -35,28 +35,13 @@ class AnnualReviewPlugin(AgentPlugin):
     """Identifies clients due for annual review and sends personalised invitations."""
 
     PLUGIN_ID   = "plugin_annual_review"
-    NAME        = "Annual Review Prompt"
-    DESCRIPTION = ("Finds clients due for their annual review, drafts personalised "
+    name        = "Annual Review Prompt"
+    description = ("Finds clients due for their annual review, drafts personalised "
                    "invitations using AI, and queues them for approval.")
-    VERSION     = "1.0.0"
-    ICON        = "🔄"
-    SCHEDULE    = Schedule.every_hours(168)
-
-    name        = NAME
-    description = DESCRIPTION
-    version     = VERSION
-    icon        = ICON
-    default_schedule = SCHEDULE
+    version     = "1.0.0"
+    icon        = "🔄"
+    default_schedule = Schedule.every_hours(168)
     category    = PluginCategory.ACCOUNTANT
-
-    DEFAULT_SETTINGS = {
-        "run_day":              "1",     # Monday
-        "run_hour":             "8",
-        "run_minute":           "30",
-        "review_interval_days": "335",   # ~11 months
-        "confidence_threshold": "0.75",
-        "max_per_run":          "20",
-    }
 
     def __init__(self):
         super().__init__()

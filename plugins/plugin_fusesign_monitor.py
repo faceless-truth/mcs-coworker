@@ -36,27 +36,13 @@ class FuseSignMonitorPlugin(AgentPlugin):
     """Monitors FuseSign envelopes and automates signing follow-up."""
 
     PLUGIN_ID   = "plugin_fusesign_monitor"
-    NAME        = "FuseSign Monitor"
-    DESCRIPTION = ("Monitors FuseSign for signing completions and overdue bundles, "
+    name        = "FuseSign Monitor"
+    description = ("Monitors FuseSign for signing completions and overdue bundles, "
                    "notifies Teams, and logs completions in XPM.")
-    VERSION     = "1.0.0"
-    ICON        = "✍️"
-    SCHEDULE    = Schedule.every_minutes(15)
-
-    name        = NAME
-    description = DESCRIPTION
-    version     = VERSION
-    icon        = ICON
-    default_schedule = SCHEDULE
+    version     = "1.0.0"
+    icon        = "✍️"
+    default_schedule = Schedule.every_minutes(15)
     category    = PluginCategory.RECEPTION
-
-    DEFAULT_SETTINGS = {
-        "overdue_days":     "7",    # days before a pending bundle is considered overdue
-        "send_to_teams":    "1",
-        "log_to_xpm":       "1",
-        "send_reminder":    "1",    # send reminder email to client
-        "max_reminders":    "2",
-    }
 
     def run(self, context: PluginContext) -> PluginResult:
         result = PluginResult()
