@@ -11,7 +11,10 @@ echo.
 :: CONFIGURATION
 :: ---------------------------------------------------------------------------
 set REPO_DIR=%~dp0
-set FRONTEND_DIR=%~dp0..\mcs-coworker-demo
+:: Frontend lives inside the repo. The old sibling-folder path
+:: (..\mcs-coworker-demo) came from an early scaffold and silently caused the
+:: installer to skip the frontend build on clean checkouts.
+set FRONTEND_DIR=%REPO_DIR%frontend
 set BUILD_DIR=%REPO_DIR%\installer_build
 set OUTPUT_DIR=%REPO_DIR%\installer_output
 set PYTHON_EMBED_URL=https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip
@@ -151,21 +154,29 @@ echo.
 :: ---------------------------------------------------------------------------
 echo [3/6] Building React frontend...
 if not exist "%FRONTEND_DIR%\package.json" (
-    echo [WARN] Frontend not found at %FRONTEND_DIR% - skipping.
-) else (
-    pushd "%FRONTEND_DIR%"
-    call pnpm install --frozen-lockfile --silent 2>nul
-    if errorlevel 1 call pnpm install --silent
-    call pnpm build --silent
-    if errorlevel 1 (
-        popd
-        echo [ERROR] Frontend build failed.
-        pause & exit /b 1
-    )
-    popd
-    xcopy /E /I /Y /Q "%FRONTEND_DIR%\dist" "%APP_DIR%\frontend_dist" >nul
-    echo [3/6] Frontend built and copied.
+    echo [ERROR] Frontend not found at %FRONTEND_DIR%. Check FRONTEND_DIR.
+    pause ^& exit /b 1
 )
+pushd "%FRONTEND_DIR%"
+call pnpm install --frozen-lockfile --silent 2>nul
+if errorlevel 1 call pnpm install --silent
+call pnpm build --silent
+if errorlevel 1 (
+    popd
+    echo [ERROR] Frontend build failed.
+    pause ^& exit /b 1
+)
+popd
+
+:: vite.config.ts puts the build output at frontend\dist\public\.
+:: Fail loudly if it's missing — otherwise the installer ships with no frontend.
+if not exist "%FRONTEND_DIR%\dist\public\index.html" (
+    echo [ERROR] Frontend build output missing at %FRONTEND_DIR%\dist\public\index.html.
+    echo         Run "cd frontend ^&^& pnpm build" manually to diagnose.
+    pause ^& exit /b 1
+)
+xcopy /E /I /Y /Q "%FRONTEND_DIR%\dist\public" "%APP_DIR%\frontend_dist" >nul
+echo [3/6] Frontend built and copied.
 echo.
 
 :: ---------------------------------------------------------------------------
@@ -184,8 +195,9 @@ if errorlevel 1 (
 )
 
 :: Copy the built frontend dist into the cloned app dir
-if exist "%FRONTEND_DIR%\dist" (
-    xcopy /E /I /Y /Q "%FRONTEND_DIR%\dist" "%APP_DIR%\frontend_dist" >nul
+:: Vite writes to dist\public per vite.config.ts outDir.
+if exist "%FRONTEND_DIR%\dist\public\index.html" (
+    xcopy /E /I /Y /Q "%FRONTEND_DIR%\dist\public" "%APP_DIR%\frontend_dist" >nul
 )
 
 :: Remove large/unnecessary folders from the cloned copy to keep installer small
@@ -272,25 +284,4 @@ echo   Future updates: just git push - no reinstall needed.
 echo  ============================================================
 echo.
 pause
-goto :eof
-
-:: ---------------------------------------------------------------------------
-:: SUBROUTINE: find_frontend_dir
-:: Tries common locations for the frontend repo
-:: ---------------------------------------------------------------------------
-:find_frontend_dir
-if exist "%FRONTEND_DIR%\package.json" goto :eof
-:: Try sibling folder names
-for %%D in (
-    "%~dp0..\mcs-coworker-demo"
-    "%~dp0..\mcs-coworker-frontend"
-    "%REPO_DIR%\..\mcs-coworker-demo"
-    "%REPO_DIR%\..\mcs-coworker-frontend"
-) do (
-    if exist "%%~D\package.json" (
-        set FRONTEND_DIR=%%~D
-        goto :eof
-    )
-)
-:: Not found - build_installer will warn and skip frontend build
 goto :eof
