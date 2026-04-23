@@ -228,6 +228,11 @@ class PluginLoader:
         self._running = False
         self._on_run_complete: Callable | None = None  # called after each plugin run
         self._on_plugin_registered: Callable | None = None  # called when new plugin discovered
+        # Shared lock between the heartbeat-tick path and the scheduler-loop
+        # path. Both call run_all_due(); without this lock a plugin can fire
+        # twice because the second path sees its _next_run_at before the first
+        # has updated it.
+        self._run_lock = threading.Lock()
         # Subscribe to heartbeat ticks so the scheduler wakes up on each tick
         EventBus.subscribe("heartbeat.tick", self._on_heartbeat_tick, async_dispatch=False)
 
@@ -437,11 +442,24 @@ class PluginLoader:
 
     def _on_heartbeat_tick(self, event) -> None:
         """Called on every heartbeat tick — runs any due plugins."""
-        if self._running:
-            try:
-                self.run_all_due()
-            except Exception as e:
-                self._log(f"⚠ Heartbeat tick error: {e}")
+        if not self._running:
+            return
+        # Respect configured business hours — without this the heartbeat will
+        # fire plugins at midnight on weekends regardless of the setting.
+        if not self._is_within_business_hours():
+            return
+        # Skip if the scheduler loop is already running a batch; we don't want
+        # both paths to double-fire plugins whose _next_run_at hasn't been
+        # updated yet.
+        if not self._run_lock.acquire(blocking=False):
+            self._log("⏱ Heartbeat skipped — run_all_due already in progress")
+            return
+        try:
+            self.run_all_due()
+        except Exception as e:
+            self._log(f"⚠ Heartbeat tick error: {e}")
+        finally:
+            self._run_lock.release()
 
     def _is_within_business_hours(self) -> bool:
         """Check if current Melbourne time is within configured business hours."""
@@ -552,7 +570,12 @@ class PluginLoader:
                     time.sleep(10)
                     continue
                 _outside_hours_logged = False
-                self.run_all_due()
+                # Skip if the heartbeat tick path is already running a batch.
+                if self._run_lock.acquire(blocking=False):
+                    try:
+                        self.run_all_due()
+                    finally:
+                        self._run_lock.release()
             except Exception as e:
                 self._log(f"⚠ Scheduler error: {e}")
             time.sleep(10)  # check every 10s
