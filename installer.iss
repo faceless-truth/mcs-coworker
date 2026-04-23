@@ -54,6 +54,8 @@ Source: "{#MyBuildDir}\MCSCoWorker.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#MyBuildDir}\python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#MyBuildDir}\app\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#MyRepoDir}\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
+; WebView2 Evergreen bootstrapper — installed only if not already present.
+Source: "{#MyBuildDir}\installer_extras\MicrosoftEdgeWebview2Setup.exe"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Dirs]
 Name: "{app}\data"; Permissions: users-full
@@ -67,9 +69,27 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: "
 Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#MyAppName}"; ValueData: """{sys}\wscript.exe"" ""{app}\MCSCoWorker.vbs"""; Flags: uninsdeletevalue; Tasks: startupentry
 
 [Run]
+; Install the WebView2 Runtime first — pywebview's edgechromium backend
+; depends on it. Skipped if the runtime is already installed.
+Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"; \
+    StatusMsg: "Installing Microsoft WebView2 Runtime..."; \
+    Flags: runhidden waituntilterminated; \
+    Check: not IsWebView2Installed
 Filename: "{sys}\wscript.exe"; Parameters: """{app}\MCSCoWorker.vbs"""; WorkingDir: "{app}"; Description: "Launch {#MyAppName} now"; Flags: nowait postinstall skipifsilent
 
 [Code]
+// Detect whether the Edge WebView2 Runtime is already installed on the
+// target machine. The Evergreen runtime registers under one of two known
+// keys depending on per-machine vs per-user install. If either exists we
+// skip the bootstrapper to avoid a redundant install.
+function IsWebView2Installed: Boolean;
+begin
+  Result :=
+    RegKeyExists(HKLM, 'SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BEB-235B8DE5E7E2}') or
+    RegKeyExists(HKLM, 'SOFTWARE\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BEB-235B8DE5E7E2}') or
+    RegKeyExists(HKCU, 'Software\Microsoft\EdgeUpdate\Clients\{F3017226-FE2A-4295-8BEB-235B8DE5E7E2}');
+end;
+
 procedure InitializeWizard();
 begin
   WizardForm.WelcomeLabel2.Caption :=

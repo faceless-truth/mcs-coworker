@@ -131,19 +131,21 @@ if errorlevel 1 (
     pause & exit /b 1
 )
 
-:: pywebview on Windows needs the WebView2 runtime (Edge-based).
-:: Download and silently install the WebView2 Evergreen bootstrapper.
-echo [2/6] Ensuring Microsoft Edge WebView2 runtime is present...
+:: pywebview on Windows needs the WebView2 runtime (Edge-based). Download the
+:: Evergreen bootstrapper and bundle it INTO the installer — installer.iss
+:: runs it conditionally on the target machine via IsWebView2Installed().
+:: Do NOT run it on the build machine.
+echo [2/6] Downloading Microsoft Edge WebView2 bootstrapper for installer...
 set WV2_URL=https://go.microsoft.com/fwlink/p/?LinkId=2124703
-set WV2_TMP=%BUILD_DIR%\MicrosoftEdgeWebview2Setup.exe
-powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '%WV2_URL%' -OutFile '%WV2_TMP%' -UseBasicParsing" >nul 2>&1
-if exist "%WV2_TMP%" (
-    :: /silent /install - installs silently, no reboot required
-    "%WV2_TMP%" /silent /install >nul 2>&1
-    del "%WV2_TMP%" >nul 2>&1
-    echo [2/6] WebView2 runtime ensured.
+set WV2_EXTRAS_DIR=%BUILD_DIR%\installer_extras
+if not exist "%WV2_EXTRAS_DIR%" mkdir "%WV2_EXTRAS_DIR%"
+set WV2_OUT=%WV2_EXTRAS_DIR%\MicrosoftEdgeWebview2Setup.exe
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '%WV2_URL%' -OutFile '%WV2_OUT%' -UseBasicParsing" >nul 2>&1
+if exist "%WV2_OUT%" (
+    echo [2/6] WebView2 bootstrapper bundled.
 ) else (
-    echo [WARN] Could not download WebView2 bootstrapper - will bundle installer instead.
+    echo [ERROR] Could not download WebView2 bootstrapper. Check internet connection.
+    pause ^& exit /b 1
 )
 
 echo [2/6] Python runtime ready.
