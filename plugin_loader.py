@@ -316,7 +316,7 @@ class PluginLoader:
 
         for path in sorted(PLUGINS_DIR.glob("plugin_*.py")):
             module_name = path.stem
-            plugin_id = module_name  # e.g. "plugin_email_triage"
+            plugin_id = module_name  # e.g. "plugin_smart_responder"
 
             if plugin_id in self._plugins:
                 continue  # already loaded

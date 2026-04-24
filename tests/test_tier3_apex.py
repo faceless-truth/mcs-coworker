@@ -70,26 +70,6 @@ class TestEventWiring(unittest.TestCase):
         # Should have subscribed at least 4 handlers
         self.assertGreaterEqual(mock_bus.subscribe.call_count, 4)
 
-    def test_patch_email_triage_plugin(self):
-        from event_wiring import patch_email_triage_plugin
-        mock_bus = MagicMock()
-        plugin = MagicMock()
-        original_result = MagicMock()
-        original_result.actions_taken = 3
-        original_result.drafts_created = 2
-        plugin.run.return_value = original_result
-
-        patch_email_triage_plugin(plugin, mock_bus)
-        ctx = make_context()
-        result = plugin.run(ctx)
-
-        # Original run was called
-        self.assertEqual(result.actions_taken, 3)
-        # Batch-done event was published
-        mock_bus.publish.assert_called_once()
-        args = mock_bus.publish.call_args
-        self.assertIn("email.triage.batch_done", args[0])
-
     def test_patch_noa_processor_plugin(self):
         from event_wiring import patch_noa_processor_plugin
         mock_bus = MagicMock()

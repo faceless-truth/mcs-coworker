@@ -254,7 +254,7 @@ class ClaudeUsageWrapper:
     extract token usage from the response, and log it to the meter DB.
 
     Usage:
-        wrapped = ClaudeUsageWrapper(client, plugin_id="plugin_email_triage", tier="fast")
+        wrapped = ClaudeUsageWrapper(client, plugin_id="plugin_smart_responder", tier="fast")
         response = wrapped.messages.create(model=..., messages=...)
     """
 

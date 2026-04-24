@@ -71,7 +71,7 @@ mcs-desktop-agent/
 ├── plugin_loader.py                # Plugin discovery, lifecycle & scheduler
 ├── plugins/
 │   ├── __init__.py
-│   ├── plugin_email_triage.py      # Email classification & auto-response
+│   ├── plugin_smart_responder.py   # Email classification, triage, and auto-reply
 │   └── plugin_template.py          # Documented template for new plugins
 ├── requirements.txt
 ├── launch.bat                      # Windows launcher script

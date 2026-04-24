@@ -272,29 +272,6 @@ def _wire_annual_review_to_meeting_prep(event_bus: "EventBus", plugins: dict) ->
 
 # ── Patch helpers for existing plugins ───────────────────────────────────────
 
-def patch_email_triage_plugin(plugin, event_bus: "EventBus") -> None:
-    """
-    Monkey-patch the EmailTriagePlugin to publish events after each
-    email is classified. Called by plugin_loader after loading.
-    """
-    original_run = plugin.run
-
-    def patched_run(context):
-        result = original_run(context)
-        # Publish a batch-done event with summary stats
-        event_bus.emit(
-            Events.EMAIL_TRIAGE_BATCH_DONE,
-            payload={
-                "actions_taken": result.actions_taken,
-                "drafts_created": result.drafts_created,
-            },
-            source="plugin_email_triage")
-        return result
-
-    plugin.run = patched_run
-    logger.info("[EventWiring] EmailTriagePlugin patched to publish events.")
-
-
 def patch_noa_processor_plugin(plugin, event_bus: "EventBus") -> None:
     """
     Monkey-patch the NOAProcessorPlugin to publish events after each
@@ -320,8 +297,6 @@ def apply_all_patches(plugins: dict, event_bus: "EventBus") -> None:
     Apply all monkey-patches to existing plugins to make them
     publish events. Called by plugin_loader after loading.
     """
-    if "plugin_email_triage" in plugins:
-        patch_email_triage_plugin(plugins["plugin_email_triage"], event_bus)
     if "plugin_noa_processor" in plugins:
         patch_noa_processor_plugin(plugins["plugin_noa_processor"], event_bus)
     logger.info("[EventWiring] All plugin patches applied.")

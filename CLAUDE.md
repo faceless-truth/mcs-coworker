@@ -111,11 +111,7 @@ mcs-coworker/
 ## Plugins (in `plugins/`)
 | File | Purpose |
 |------|---------|
-| `plugin_email_triage.py` | Classify unread email, draft replies, notify staff |
-| `plugin_email_reply.py` | Reply-drafting helper |
-| `plugin_auto_reply_ross.py` | Per-staff auto-reply (Ross) |
-| `plugin_auto_response_elio_claude.py` | Per-staff auto-reply (Elio, Claude-driven) |
-| `plugin_elio_draft_replies.py` | Draft replies routed to Elio |
+| `plugin_smart_responder.py` | Unified email classification, triage, and auto-reply (replaces the retired triage/ross/elio/reply plugins) |
 | `plugin_noa_processor.py` | Notice of Assessment detection + cover email |
 | `plugin_tax_return_processor.py` | Tax-return workflow automation |
 | `plugin_asic_returns.py` | Parse ASIC reminder emails, log/calendar |
