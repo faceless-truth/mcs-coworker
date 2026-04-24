@@ -729,6 +729,65 @@ def save_settings():
     return ok({"saved": saved})
 
 
+# ── Signature Image ──────────────────────────────────────────────────────────
+# Uploaded signature image lives at DATA_DIR/signature.png. All uploads are
+# normalised to PNG via Pillow so graph_client has a single well-known path
+# and format to read when embedding the image inline in outgoing drafts.
+SIGNATURE_IMAGE_PATH = config.DATA_DIR / "signature.png"
+ALLOWED_SIGNATURE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif"}
+
+
+@app.route("/api/settings/signature-image", methods=["POST"])
+def upload_signature_image():
+    """Accept a single image upload, convert to PNG, save to DATA_DIR/signature.png."""
+    if "file" not in request.files:
+        return err("No file provided", 400)
+
+    file = request.files["file"]
+    if not file.filename:
+        return err("No filename", 400)
+
+    ext = Path(file.filename).suffix.lower()
+    if ext not in ALLOWED_SIGNATURE_EXTENSIONS:
+        return err(f"File type {ext} not supported (use .png, .jpg, .gif)", 400)
+
+    try:
+        from PIL import Image
+        import io
+        data = file.read()
+        if len(data) > MAX_UPLOAD_SIZE:
+            return err("File too large (max 25MB)", 413)
+        img = Image.open(io.BytesIO(data))
+        # Flatten transparency onto white? No — preserve transparency by saving
+        # as PNG RGBA. Convert palette/other modes to RGBA so PNG save succeeds.
+        if img.mode not in ("RGB", "RGBA"):
+            img = img.convert("RGBA")
+        SIGNATURE_IMAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        img.save(str(SIGNATURE_IMAGE_PATH), format="PNG")
+    except Exception as e:
+        return err(f"Failed to process image: {e}", 400)
+
+    return ok({"path": str(SIGNATURE_IMAGE_PATH), "size": SIGNATURE_IMAGE_PATH.stat().st_size})
+
+
+@app.route("/api/settings/signature-image", methods=["GET"])
+def get_signature_image():
+    """Return the saved signature image file, or 404 if none."""
+    if not SIGNATURE_IMAGE_PATH.exists():
+        return err("No signature image", 404)
+    return send_file(str(SIGNATURE_IMAGE_PATH), mimetype="image/png")
+
+
+@app.route("/api/settings/signature-image", methods=["DELETE"])
+def delete_signature_image():
+    """Remove the saved signature image."""
+    try:
+        SIGNATURE_IMAGE_PATH.unlink(missing_ok=True)
+    except Exception as e:
+        return err(f"Failed to remove: {e}", 500)
+    return ok({"removed": True})
+
+
 @app.route("/api/settings/test/<service>", methods=["POST"])
 def test_connection(service):
     try:

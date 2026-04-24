@@ -380,12 +380,12 @@ class GraphClient:
     _cached_signature: str = ""
 
     def get_signature_image_path(self) -> str | None:
-        """Return the path to the uploaded signature image if it exists."""
+        """Return the path to the uploaded signature image at DATA_DIR/signature.png."""
         try:
-            from config import get_setting
-            path = get_setting("signature_image_path", "")
-            if path and os.path.isfile(path):
-                return path
+            from config import DATA_DIR
+            path = DATA_DIR / "signature.png"
+            if path.is_file():
+                return str(path)
         except Exception:
             pass
         return None
@@ -394,33 +394,49 @@ class GraphClient:
         """Return an HTML signature block.
 
         Precedence:
-          1. `email_signature` setting (user-typed HTML/text from Settings).
-          2. Uploaded signature image (`signature_image_path` setting).
+          1. Uploaded signature image (DATA_DIR/signature.png) — embedded inline
+             as base64. If `email_signature` setting has text, it is prepended
+             as HTML paragraphs above the image (e.g. "Kind regards, \\n Name").
+          2. Text-only signature from `email_signature` setting.
           3. Auto-detection from recent sent emails.
         """
-        # 1. User-configured signature from Settings — highest priority.
+        # Load the configurable text prefix (used above the image, or standalone).
         try:
             from config import get_setting
-            user_sig = (get_setting("email_signature", "") or "").strip()
-            if user_sig:
-                # Plain-text input: wrap with <br> so line breaks render in HTML.
-                # Detect 'HTML-ish' input by a stray tag — otherwise escape newlines.
-                if "<" in user_sig and ">" in user_sig:
-                    rendered = user_sig
-                else:
-                    rendered = html.escape(user_sig).replace("\n", "<br>")
-                return "<br><br>" + rendered
+            user_sig_text = (get_setting("email_signature", "") or "").strip()
         except Exception:
-            pass
+            user_sig_text = ""
 
-        # 2. Uploaded signature image.
+        # 1. Uploaded signature image — preferred when present.
         sig_path = self.get_signature_image_path()
         if sig_path:
-            return (
-                '<br><br>'
-                '<img src="cid:signature_image" '
-                'style="max-width:400px;">'
-            )
+            try:
+                import base64 as _b64
+                with open(sig_path, "rb") as f:
+                    b64 = _b64.b64encode(f.read()).decode("ascii")
+                parts = ["<br><br>"]
+                if user_sig_text:
+                    if "<" in user_sig_text and ">" in user_sig_text:
+                        parts.append(user_sig_text)
+                    else:
+                        escaped = html.escape(user_sig_text).replace("\n", "<br>")
+                        parts.append(f"<p>{escaped}</p>")
+                parts.append(
+                    f'<img src="data:image/png;base64,{b64}" '
+                    f'alt="signature" style="max-width:400px;">'
+                )
+                return "".join(parts)
+            except Exception as e:
+                logger.warning("Failed to embed signature image: %s", e)
+                # Fall through to text-only signature.
+
+        # 2. Text-only signature from Settings.
+        if user_sig_text:
+            if "<" in user_sig_text and ">" in user_sig_text:
+                rendered = user_sig_text
+            else:
+                rendered = html.escape(user_sig_text).replace("\n", "<br>")
+            return "<br><br>" + rendered
 
         if self._cached_signature:
             return self._cached_signature

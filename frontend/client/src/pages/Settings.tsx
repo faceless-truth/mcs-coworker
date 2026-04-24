@@ -1,8 +1,8 @@
 // Design: Refined Dark Professional — Settings page
 // Configure AI models, integrations, business hours, and behaviour
 
-import { useEffect, useState } from "react";
-import { CheckCircle2, Eye, EyeOff, Save, TestTube, ExternalLink, Unlink, Loader2, Plus, Trash2, Pencil, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { CheckCircle2, Eye, EyeOff, Save, TestTube, ExternalLink, Unlink, Loader2, Plus, Trash2, Pencil, X, Upload, Image as ImageIcon } from "lucide-react";
 import { toast } from "sonner";
 import {
   fetchXeroStatus, startXeroAuth, disconnectXero, testConnection,
@@ -329,6 +329,132 @@ const EMPTY_SETTINGS = {
   draftMode: false,
 };
 
+const SIGNATURE_IMAGE_URL = "http://127.0.0.1:7842/api/settings/signature-image";
+
+function SignatureImageUploader() {
+  // Cache-bust version bumps every time the image changes so <img> re-loads.
+  const [version, setVersion] = useState(0);
+  const [exists, setExists] = useState<boolean | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const check = async () => {
+    try {
+      const res = await fetch(SIGNATURE_IMAGE_URL, { method: "HEAD" });
+      setExists(res.ok);
+    } catch {
+      setExists(false);
+    }
+  };
+  useEffect(() => { check(); }, []);
+
+  const upload = async (file: File) => {
+    const ok = [".png", ".jpg", ".jpeg", ".gif"].some(e =>
+      file.name.toLowerCase().endsWith(e)
+    );
+    if (!ok) {
+      toast.error("Unsupported file type", { description: "Use .png, .jpg, or .gif" });
+      return;
+    }
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(SIGNATURE_IMAGE_URL, { method: "POST", body: form });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      setVersion(v => v + 1);
+      setExists(true);
+      toast.success("Signature image uploaded");
+    } catch (e: any) {
+      toast.error("Upload failed", { description: e.message });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const remove = async () => {
+    try {
+      const res = await fetch(SIGNATURE_IMAGE_URL, { method: "DELETE" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setExists(false);
+      setVersion(v => v + 1);
+      toast.success("Signature image removed");
+    } catch (e: any) {
+      toast.error("Remove failed", { description: e.message });
+    }
+  };
+
+  const onFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    upload(files[0]);
+  };
+
+  return (
+    <div className="space-y-3">
+      <div
+        onClick={() => inputRef.current?.click()}
+        onDragOver={e => { e.preventDefault(); setDragging(true); }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={e => {
+          e.preventDefault();
+          setDragging(false);
+          onFiles(e.dataTransfer.files);
+        }}
+        className={`cursor-pointer rounded-md border-2 border-dashed px-4 py-6 text-center transition-colors ${
+          dragging ? "border-blue-400 bg-blue-50" : "border-border bg-slate-50 hover:bg-slate-100"
+        }`}
+      >
+        <input
+          ref={inputRef}
+          type="file"
+          accept=".png,.jpg,.jpeg,.gif,image/png,image/jpeg,image/gif"
+          className="hidden"
+          onChange={e => onFiles(e.target.files)}
+        />
+        {uploading ? (
+          <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" /> Uploading…
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-1.5 text-sm text-muted-foreground">
+            <Upload className="w-5 h-5" />
+            <div>
+              <span className="font-medium text-foreground">Click to browse</span> or drag an image here
+            </div>
+            <div className="text-xs">PNG, JPG, or GIF — saved as PNG</div>
+          </div>
+        )}
+      </div>
+
+      {exists && (
+        <div className="rounded-md border border-border bg-white p-3">
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+              <ImageIcon className="w-3.5 h-3.5" /> Current signature image
+            </div>
+            <button
+              onClick={remove}
+              className="flex items-center gap-1 px-2 py-1 text-xs font-medium rounded border border-rose-200 text-rose-600 hover:bg-rose-50"
+            >
+              <Trash2 className="w-3 h-3" /> Remove
+            </button>
+          </div>
+          <img
+            key={version}
+            src={`${SIGNATURE_IMAGE_URL}?v=${version}`}
+            alt="Signature preview"
+            className="max-w-[400px] max-h-[200px] object-contain"
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Settings() {
   const [settings, setSettings] = useState(EMPTY_SETTINGS);
   const [showKey, setShowKey] = useState(false);
@@ -506,13 +632,19 @@ export default function Settings() {
           <input className={inputClass} value={settings.outlookEmail} onChange={e => setSettings(s => ({ ...s, outlookEmail: e.target.value }))} />
         </Field>
         <Field
-          label="Email Signature"
-          hint="Appended to every draft and auto-send from CoWorker. Plain text line breaks render automatically; HTML is used verbatim if tags are detected."
+          label="Signature Image"
+          hint="Upload a signature image (e.g. your exported Outlook signature). Embedded inline in every draft and auto-send from CoWorker."
+        >
+          <SignatureImageUploader />
+        </Field>
+        <Field
+          label="Signature Text (optional)"
+          hint="Plain text that appears ABOVE the signature image — e.g. 'Kind regards,' and your name. Leave blank if your image already includes it."
         >
           <textarea
-            className={inputClass + " font-sans min-h-[120px] resize-y"}
+            className={inputClass + " font-sans min-h-[80px] resize-y"}
             value={settings.emailSignature}
-            placeholder={"Kind regards,\nElio Scarton\nMC & S Pty Ltd"}
+            placeholder={"Kind regards,\nElio Scarton"}
             onChange={e => setSettings(s => ({ ...s, emailSignature: e.target.value }))}
           />
         </Field>
