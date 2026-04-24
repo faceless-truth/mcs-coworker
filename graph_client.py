@@ -238,6 +238,12 @@ class GraphClient:
         r = requests.patch(url, headers=self._headers(), timeout=30, json={"isRead": True})
         r.raise_for_status()
 
+    def mark_as_unread(self, message_id: str):
+        """Mark a message as unread so it re-highlights in the inbox."""
+        url = f"{GRAPH_BASE}/me/messages/{message_id}"
+        r = requests.patch(url, headers=self._headers(), timeout=30, json={"isRead": False})
+        r.raise_for_status()
+
     def _append_signature(self, body_html: str) -> str:
         """Append the user's configured signature to an outgoing HTML body.
 
@@ -307,6 +313,7 @@ class GraphClient:
                 },
             )
             r2.raise_for_status()
+            self._reopen_original(reply_to_id)
             return draft_id
         else:
             # Create a fresh draft
@@ -320,6 +327,15 @@ class GraphClient:
             r = requests.post(url, headers=self._headers(), timeout=30, json=payload)
             r.raise_for_status()
             return r.json()["id"]
+
+    def _reopen_original(self, message_id: str) -> None:
+        """Flip the original email back to unread so the accountant sees
+        the draft reply highlighted in their inbox. Graph's `createReply`
+        marks the parent as read — we undo that here. Non-fatal on failure."""
+        try:
+            self.mark_as_unread(message_id)
+        except Exception as e:
+            logger.warning("mark_as_unread(%s) failed: %s", message_id, e)
 
     def get_draft_link(self, draft_id: str):
         """Get a deeplink to a draft in Outlook Web."""
@@ -651,6 +667,9 @@ class GraphClient:
                 }
                 r = requests.post(att_url, headers=self._headers(), timeout=30, json=att_payload)
                 r.raise_for_status()
+
+        if reply_to_id:
+            self._reopen_original(reply_to_id)
 
         return draft_id
 
