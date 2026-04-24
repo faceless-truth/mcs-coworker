@@ -1,7 +1,7 @@
 // Design: Refined Dark Professional — AI Chat page (specialist agents)
 
 import { useState, useRef, useEffect } from "react";
-import { Bot, Send, User, Paperclip, X, FileText } from "lucide-react";
+import { Bot, Send, User, Paperclip, X, FileText, Download, Copy } from "lucide-react";
 import { toast } from "sonner";
 import {
   sendChatMessage,
@@ -196,6 +196,79 @@ export default function Chat() {
     }
   };
 
+  const buildExportMarkdown = (): string => {
+    const agentName = selectedAgent?.name || "Assistant";
+    const now = new Date();
+    const dateStr = now.toLocaleString("en-AU", {
+      dateStyle: "long",
+      timeStyle: "short",
+    });
+
+    // Skip the auto-greeting: start from the first user message.
+    const firstUserIdx = messages.findIndex(m => m.role === "user");
+    const convo = firstUserIdx >= 0 ? messages.slice(firstUserIdx) : [];
+
+    let md = `# ${agentName} — Chat Export\n`;
+    md += `Date: ${dateStr}\n`;
+    md += `Agent: ${agentName}\n\n`;
+    md += `---\n\n`;
+
+    for (let i = 0; i < convo.length; i++) {
+      const m = convo[i];
+      const label = m.role === "user" ? "User" : agentName;
+      md += `**${label}:** ${m.content}\n\n`;
+      const isPairEnd = m.role === "assistant";
+      const isLast = i === convo.length - 1;
+      if (isPairEnd || isLast) {
+        md += `---\n\n`;
+      }
+    }
+
+    return md;
+  };
+
+  const buildExportFilename = (): string => {
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const ts =
+      `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
+      `_${pad(now.getHours())}${pad(now.getMinutes())}`;
+    const safeName = (selectedAgent?.name || "chat")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "_")
+      .replace(/^_+|_+$/g, "");
+    return `${safeName || "chat"}_${ts}.md`;
+  };
+
+  const handleExport = () => {
+    try {
+      const md = buildExportMarkdown();
+      const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = buildExportFilename();
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      toast.success("Conversation exported");
+    } catch (e: any) {
+      toast.error("Export failed", { description: e?.message ?? "" });
+    }
+  };
+
+  const handleCopyAll = async () => {
+    try {
+      await navigator.clipboard.writeText(buildExportMarkdown());
+      toast.success("Conversation copied to clipboard");
+    } catch (e: any) {
+      toast.error("Copy failed", { description: e?.message ?? "" });
+    }
+  };
+
+  const hasConversation = messages.some(m => m.role === "user");
+
   const renderContent = (content: string) => {
     const parts = content.split(/(```[\s\S]*?```)/g);
     return parts.map((part, i) => {
@@ -249,6 +322,26 @@ export default function Chat() {
             )}
           </p>
         </div>
+        {hasConversation && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handleCopyAll}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-border bg-white text-slate-700 hover:border-blue-300 hover:text-blue-600 transition-all"
+              title="Copy full conversation to clipboard"
+            >
+              <Copy className="w-3.5 h-3.5" />
+              Copy all
+            </button>
+            <button
+              onClick={handleExport}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-border bg-white text-slate-700 hover:border-blue-300 hover:text-blue-600 transition-all"
+              title="Download conversation as Markdown"
+            >
+              <Download className="w-3.5 h-3.5" />
+              Export
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Agent selector */}
