@@ -709,6 +709,7 @@ def save_settings():
         "monthly_ai_budget_aud",
         "skip_public_holidays", "public_holiday_state",
         "reception_mode", "staff_profile",
+        "email_signature",
         # Xero OAuth credentials
         "xero_client_id", "xero_client_secret",
     }

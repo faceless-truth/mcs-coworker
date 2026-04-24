@@ -3,6 +3,7 @@ MC & S Email Automation - Microsoft Graph API Client
 Handles OAuth2 authentication and email operations.
 """
 import atexit
+import html
 import logging
 import os
 import threading
@@ -237,9 +238,31 @@ class GraphClient:
         r = requests.patch(url, headers=self._headers(), timeout=30, json={"isRead": True})
         r.raise_for_status()
 
+    def _append_signature(self, body_html: str) -> str:
+        """Append the user's configured signature to an outgoing HTML body.
+
+        Centralised here so every draft/send goes through one place. Plugins
+        do not need to call this directly — it is applied automatically by
+        `send_email`, `create_draft`, and the `*_with_attachments` variants.
+        """
+        if not body_html:
+            body_html = ""
+        try:
+            sig = self.get_signature_html()
+        except Exception:
+            sig = ""
+        if not sig:
+            return body_html
+        # Idempotency guard: if the caller has already embedded the signature
+        # (e.g. legacy code paths), don't double it up.
+        if sig and sig in body_html:
+            return body_html
+        return body_html + sig
+
     def send_email(self, to_address: str, subject: str, body_html: str,
                    reply_to_id: str = None):
         """Send an email directly."""
+        body_html = self._append_signature(body_html)
         message = {
             "subject": subject,
             "body": {"contentType": "HTML", "content": body_html},
@@ -264,6 +287,7 @@ class GraphClient:
     def create_draft(self, to_address: str, subject: str, body_html: str,
                      reply_to_id: str = None):
         """Save a draft reply without sending it. Returns the draft message ID."""
+        body_html = self._append_signature(body_html)
         if reply_to_id:
             # Create a reply draft
             url = f"{GRAPH_BASE}/me/messages/{reply_to_id}/createReply"
@@ -353,12 +377,27 @@ class GraphClient:
     def get_signature_html(self) -> str:
         """Return an HTML signature block.
 
-        If the user has uploaded a signature image, return an <img> tag
-        referencing it via cid (Content-ID) for inline embedding.
-        Otherwise fall back to extracting the signature from recent
-        sent emails.
+        Precedence:
+          1. `email_signature` setting (user-typed HTML/text from Settings).
+          2. Uploaded signature image (`signature_image_path` setting).
+          3. Auto-detection from recent sent emails.
         """
-        # Check for uploaded signature image first
+        # 1. User-configured signature from Settings — highest priority.
+        try:
+            from config import get_setting
+            user_sig = (get_setting("email_signature", "") or "").strip()
+            if user_sig:
+                # Plain-text input: wrap with <br> so line breaks render in HTML.
+                # Detect 'HTML-ish' input by a stray tag — otherwise escape newlines.
+                if "<" in user_sig and ">" in user_sig:
+                    rendered = user_sig
+                else:
+                    rendered = html.escape(user_sig).replace("\n", "<br>")
+                return "<br><br>" + rendered
+        except Exception:
+            pass
+
+        # 2. Uploaded signature image.
         sig_path = self.get_signature_image_path()
         if sig_path:
             return (
@@ -536,6 +575,7 @@ class GraphClient:
                                     reply_to_id: str = None):
         """Send an email with file attachments."""
         import base64
+        body_html = self._append_signature(body_html)
         message = {
             "subject": subject,
             "body": {"contentType": "HTML", "content": body_html},
@@ -567,6 +607,7 @@ class GraphClient:
                                       reply_to_id: str = None) -> str:
         """Create a draft email with file attachments. Returns draft ID."""
         import base64
+        body_html = self._append_signature(body_html)
 
         # Create the draft first
         if reply_to_id:

@@ -435,10 +435,7 @@ class ASICReturnPlugin(AgentPlugin):
                         due_date=due_date or "as per the attached statement",
                     )
 
-                    # Append signature
-                    signature = graph.get_signature_html()
-                    if signature:
-                        reply_body = reply_body + "<br>" + signature
+                    # Signature is appended centrally by graph_client.
 
                     if draft_mode:
                         graph.create_draft_with_attachments(
@@ -599,10 +596,7 @@ Respond ONLY with valid JSON. If you cannot determine a field, use a reasonable 
             outstanding_items=outstanding_items,
         )
 
-        # Append signature
-        signature = context.graph.get_signature_html()
-        if signature:
-            reply_body = reply_body + "<br>" + signature
+        # Signature is appended centrally by graph_client.
 
         try:
             if draft_mode:

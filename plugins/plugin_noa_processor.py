@@ -374,10 +374,7 @@ class NOAProcessorPlugin(AgentPlugin):
                     entity_name, noa_data
                 )
 
-                # Append signature
-                signature = graph.get_signature_html()
-                if signature:
-                    reply_body = reply_body + "<br>" + signature
+                # Signature is appended centrally by graph_client.
 
                 # Step 4: Create draft or send with NOA attached
                 if draft_mode:

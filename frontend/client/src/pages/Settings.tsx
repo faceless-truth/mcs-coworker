@@ -317,6 +317,7 @@ const EMPTY_SETTINGS = {
   reasoningModel: "",
   opusModel: "claude-opus-4-6",
   outlookEmail: "",
+  emailSignature: "",
   xpmApiKey: "",
   xeroClientId: "",
   xeroClientSecret: "",
@@ -349,6 +350,7 @@ export default function Settings() {
             reasoningModel:      s.reasoning_model       ?? prev.reasoningModel,
             opusModel:           s.opus_model            ?? prev.opusModel,
             outlookEmail:        s.outlook_email         ?? prev.outlookEmail,
+            emailSignature:      s.email_signature       ?? prev.emailSignature,
             xeroClientId:        s.xero_client_id        ?? prev.xeroClientId,
             xeroClientSecret:    s.xero_client_secret    ?? prev.xeroClientSecret,
             fuseSignApiKey:      s.fusesign_api_key      ?? prev.fuseSignApiKey,
@@ -374,6 +376,7 @@ export default function Settings() {
     const payload: Record<string, string> = {
       anthropic_api_key:           settings.anthropicApiKey,
       outlook_email:               settings.outlookEmail,
+      email_signature:             settings.emailSignature,
       fusesign_api_key:            settings.fuseSignApiKey,
       teams_webhook_url:           settings.teamsWebhook,
       fast_model:                  settings.fastModel,
@@ -501,6 +504,17 @@ export default function Settings() {
       <Section title="Microsoft 365" description="The Outlook mailbox CoWorker monitors for incoming emails">
         <Field label="Outlook Mailbox">
           <input className={inputClass} value={settings.outlookEmail} onChange={e => setSettings(s => ({ ...s, outlookEmail: e.target.value }))} />
+        </Field>
+        <Field
+          label="Email Signature"
+          hint="Appended to every draft and auto-send from CoWorker. Plain text line breaks render automatically; HTML is used verbatim if tags are detected."
+        >
+          <textarea
+            className={inputClass + " font-sans min-h-[120px] resize-y"}
+            value={settings.emailSignature}
+            placeholder={"Kind regards,\nElio Scarton\nMC & S Pty Ltd"}
+            onChange={e => setSettings(s => ({ ...s, emailSignature: e.target.value }))}
+          />
         </Field>
       </Section>
 
