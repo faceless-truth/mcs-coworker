@@ -287,7 +287,7 @@ const EMPTY_SETTINGS = {
   anthropicApiKey: "",
   fastModel: "",
   reasoningModel: "",
-  opusModel: "claude-opus-4-0-20250514",
+  opusModel: "claude-opus-4-6",
   outlookEmail: "",
   xpmApiKey: "",
   xeroClientId: "",
