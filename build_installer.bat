@@ -28,7 +28,7 @@ set INNO_INSTALLER_TMP=%TEMP%\innosetup-installer.exe
 :: ---------------------------------------------------------------------------
 :: STEP 0 - Auto-install missing build tools
 :: ---------------------------------------------------------------------------
-echo [0/6] Checking build tools...
+echo [0/5] Checking build tools...
 
 :: Check Python (needed to run this build script itself)
 python --version >nul 2>&1
@@ -47,7 +47,7 @@ if errorlevel 1 (
 
 :: Auto-install Inno Setup if missing
 if not exist "%INNO_SETUP_DIR%\iscc.exe" (
-    echo [0/6] Inno Setup not found - downloading and installing automatically...
+    echo [0/5] Inno Setup not found - downloading and installing automatically...
     powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '%INNO_INSTALLER_URL%' -OutFile '%INNO_INSTALLER_TMP%' -UseBasicParsing"
     if errorlevel 1 (
         echo [ERROR] Could not download Inno Setup. Check internet connection.
@@ -60,9 +60,9 @@ if not exist "%INNO_SETUP_DIR%\iscc.exe" (
         echo [ERROR] Inno Setup install failed.
         goto :abort
     )
-    echo [0/6] Inno Setup installed.
+    echo [0/5] Inno Setup installed.
 ) else (
-    echo [0/6] Inno Setup already installed.
+    echo [0/5] Inno Setup already installed.
 )
 ver >nul
 
@@ -72,32 +72,32 @@ set "PATH=%PATH%;%INNO_SETUP_DIR%"
 :: Auto-install pnpm if missing
 where pnpm >nul 2>&1
 if errorlevel 1 (
-    echo [0/6] pnpm not found - installing via npm...
+    echo [0/5] pnpm not found - installing via npm...
     npm install -g pnpm --silent >nul 2>&1
     ver >nul
-    echo [0/6] pnpm installed.
+    echo [0/5] pnpm installed.
 )
 
-echo [0/6] All build tools ready.
+echo [0/5] All build tools ready.
 echo.
 
 :: ---------------------------------------------------------------------------
 :: STEP 1 - Clean previous build
 :: ---------------------------------------------------------------------------
-echo [1/6] Cleaning previous build...
+echo [1/5] Cleaning previous build...
 if exist "%BUILD_DIR%" rmdir /s /q "%BUILD_DIR%"
 if exist "%OUTPUT_DIR%" rmdir /s /q "%OUTPUT_DIR%"
 mkdir "%BUILD_DIR%"
 mkdir "%OUTPUT_DIR%"
 mkdir "%PYTHON_DIR%"
 mkdir "%APP_DIR%"
-echo [1/6] Done.
+echo [1/5] Done.
 echo.
 
 :: ---------------------------------------------------------------------------
 :: STEP 2 - Download and set up embeddable Python runtime
 :: ---------------------------------------------------------------------------
-echo [2/6] Setting up Python 3.11 runtime...
+echo [2/5] Setting up Python 3.11 runtime...
 
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '%PYTHON_EMBED_URL%' -OutFile '%PYTHON_EMBED_ZIP%' -UseBasicParsing"
 if errorlevel 1 (
@@ -114,7 +114,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "if ($pth) { (Get-Content $pth.FullName) -replace '#import site','import site' | Set-Content $pth.FullName }"
 
 :: Install pip
-echo [2/6] Installing pip...
+echo [2/5] Installing pip...
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri 'https://bootstrap.pypa.io/get-pip.py' -OutFile '%BUILD_DIR%\get-pip.py' -UseBasicParsing"
 "%PYTHON_DIR%\python.exe" "%BUILD_DIR%\get-pip.py" --no-warn-script-location --quiet
 del "%BUILD_DIR%\get-pip.py" >nul 2>&1
@@ -123,7 +123,7 @@ del "%BUILD_DIR%\get-pip.py" >nul 2>&1
 :: NOTE: pywebview is forced to the EdgeChromium (WebView2) backend in main.py —
 ::       pythonnet/cffi are NOT installed because the .NET backend crashes on the
 ::       embeddable Python bundled here.
-echo [2/6] Installing Python packages (this takes a few minutes)...
+echo [2/5] Installing Python packages (this takes a few minutes)...
 "%PYTHON_DIR%\python.exe" -m pip install --no-warn-script-location --quiet ^
     -r "%REPO_DIR%\requirements.txt"
 if errorlevel 1 (
@@ -135,26 +135,26 @@ if errorlevel 1 (
 :: Evergreen bootstrapper and bundle it INTO the installer — installer.iss
 :: runs it conditionally on the target machine via IsWebView2Installed().
 :: Do NOT run it on the build machine.
-echo [2/6] Downloading Microsoft Edge WebView2 bootstrapper for installer...
+echo [2/5] Downloading Microsoft Edge WebView2 bootstrapper for installer...
 set WV2_URL=https://go.microsoft.com/fwlink/p/?LinkId=2124703
 set WV2_EXTRAS_DIR=%BUILD_DIR%\installer_extras
 if not exist "%WV2_EXTRAS_DIR%" mkdir "%WV2_EXTRAS_DIR%"
 set WV2_OUT=%WV2_EXTRAS_DIR%\MicrosoftEdgeWebview2Setup.exe
 powershell -NoProfile -ExecutionPolicy Bypass -Command "Invoke-WebRequest -Uri '%WV2_URL%' -OutFile '%WV2_OUT%' -UseBasicParsing" >nul 2>&1
 if exist "%WV2_OUT%" (
-    echo [2/6] WebView2 bootstrapper bundled.
+    echo [2/5] WebView2 bootstrapper bundled.
 ) else (
     echo [ERROR] Could not download WebView2 bootstrapper. Check internet connection.
     goto :abort
 )
 
-echo [2/6] Python runtime ready.
+echo [2/5] Python runtime ready.
 echo.
 
 :: ---------------------------------------------------------------------------
 :: STEP 3 - Build React frontend
 :: ---------------------------------------------------------------------------
-echo [3/6] Building React frontend...
+echo [3/5] Building React frontend...
 if not exist "%FRONTEND_DIR%\package.json" (
     echo [ERROR] Frontend not found at %FRONTEND_DIR%. Check FRONTEND_DIR.
     goto :abort
@@ -181,13 +181,13 @@ if not exist "%FRONTEND_DIR%\dist\public\index.html" (
     goto :abort
 )
 xcopy /E /I /Y /Q "%FRONTEND_DIR%\dist\public" "%APP_DIR%\frontend_dist" >nul
-echo [3/6] Frontend built and copied.
+echo [3/5] Frontend built and copied.
 echo.
 
 :: ---------------------------------------------------------------------------
 :: STEP 4 - Clone app source into build dir (preserves .git for auto-updater)
 :: ---------------------------------------------------------------------------
-echo [4/6] Cloning app source (with .git for auto-updates)...
+echo [4/5] Cloning app source (with .git for auto-updates)...
 
 :: Remove the app dir created in STEP 1 so git clone can create it fresh
 if exist "%APP_DIR%" rmdir /s /q "%APP_DIR%"
@@ -221,65 +221,22 @@ if exist "%APP_DIR%\build"             rmdir /s /q "%APP_DIR%\build"
 for /f %%i in ('git -C "%REPO_DIR_NOSLASH%" rev-parse --short HEAD 2^>nul') do set GIT_HASH=%%i
 if defined GIT_HASH (
     echo %GIT_HASH%> "%APP_DIR%\VERSION"
-    echo [4/6] App source copied. Version: %GIT_HASH%
+    echo [4/5] App source copied. Version: %GIT_HASH%
 ) else (
-    echo [4/6] App source copied.
+    echo [4/5] App source copied.
 )
 echo.
 
 :: ---------------------------------------------------------------------------
-:: STEP 5 - Create VBScript launcher (no PyInstaller needed)
+:: STEP 5 - Build installer with Inno Setup
 :: ---------------------------------------------------------------------------
-echo [5/6] Creating launcher...
-
-:: MCSCoWorker.vbs
-:: - Uses pythonw.exe so no console window appears
-:: - Passes the full path to launcher.py explicitly
-:: - Sets working directory to the app folder
-:: - Waits=False so the VBS exits immediately (app runs independently)
-(
-echo Set oShell = CreateObject^("WScript.Shell"^)
-echo Set oFSO   = CreateObject^("Scripting.FileSystemObject"^)
-echo.
-echo scriptDir      = oFSO.GetParentFolderName^(WScript.ScriptFullName^)
-echo appDir         = scriptDir ^& "\app"
-echo pythonwExe     = scriptDir ^& "\python\pythonw.exe"
-echo launcherScript = appDir    ^& "\launcher.py"
-echo.
-echo ' Sanity checks
-echo If Not oFSO.FileExists^(pythonwExe^) Then
-echo     MsgBox "MCS CoWorker: pythonw.exe not found at:" ^& vbCrLf ^& pythonwExe ^& vbCrLf ^& vbCrLf ^& _
-echo            "Please reinstall from SharePoint.", vbCritical, "MCS CoWorker"
-echo     WScript.Quit 1
-echo End If
-echo If Not oFSO.FileExists^(launcherScript^) Then
-echo     MsgBox "MCS CoWorker: launcher.py not found at:" ^& vbCrLf ^& launcherScript ^& vbCrLf ^& vbCrLf ^& _
-echo            "Please reinstall from SharePoint.", vbCritical, "MCS CoWorker"
-echo     WScript.Quit 1
-echo End If
-echo.
-echo ' Set working directory to app folder
-echo oShell.CurrentDirectory = appDir
-echo.
-echo ' Run: pythonw.exe "C:\...\app\launcher.py"
-echo ' WindowStyle 0 = hidden window, bWaitOnReturn False = fire and forget
-echo cmd = Chr^(34^) ^& pythonwExe ^& Chr^(34^) ^& " " ^& Chr^(34^) ^& launcherScript ^& Chr^(34^)
-echo oShell.Run cmd, 0, False
-) > "%BUILD_DIR%\MCSCoWorker.vbs"
-
-echo [5/6] Launcher created (MCSCoWorker.vbs).
-echo.
-
-:: ---------------------------------------------------------------------------
-:: STEP 6 - Build installer with Inno Setup
-:: ---------------------------------------------------------------------------
-echo [6/6] Building installer with Inno Setup...
+echo [5/5] Building installer with Inno Setup...
 iscc "%REPO_DIR%\installer.iss" /DMyBuildDir="%BUILD_DIR%" /DMyRepoDir="%REPO_DIR%"
 if errorlevel 1 (
     echo [ERROR] Inno Setup failed. See output above.
     goto :abort
 )
-echo [6/6] Installer built.
+echo [5/5] Installer built.
 echo.
 
 echo  ============================================================
