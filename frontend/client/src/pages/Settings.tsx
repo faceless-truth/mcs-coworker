@@ -281,6 +281,34 @@ interface XeroStatus {
   staff_name: string | null;
 }
 
+// Hoisted out of Settings so they are stable component types across renders.
+// Declaring them inside Settings would create a brand-new component identity on
+// every keystroke, which React treats as a different element — unmounting and
+// remounting the subtree and stealing focus from whichever input was active.
+const inputClass = "w-full px-3 py-2 text-sm border border-border rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 font-mono";
+
+function Section({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-white rounded-lg border border-border shadow-sm overflow-hidden">
+      <div className="px-5 py-3.5 border-b border-border bg-slate-50">
+        <div className="text-sm font-semibold text-foreground">{title}</div>
+        {description && <div className="text-xs text-muted-foreground mt-0.5">{description}</div>}
+      </div>
+      <div className="p-5 space-y-4">{children}</div>
+    </div>
+  );
+}
+
+function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+  return (
+    <div>
+      <label className="block text-xs font-medium text-foreground mb-1">{label}</label>
+      {hint && <div className="text-xs text-muted-foreground mb-1.5">{hint}</div>}
+      {children}
+    </div>
+  );
+}
+
 // Empty defaults — real values flow in from /api/settings on mount. Sensitive
 // fields come back masked from the backend; only non-masked edits are saved.
 const EMPTY_SETTINGS = {
@@ -416,26 +444,6 @@ export default function Settings() {
       toast.error(e.message || "Connection test failed");
     }
   };
-
-  const Section = ({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) => (
-    <div className="bg-white rounded-lg border border-border shadow-sm overflow-hidden">
-      <div className="px-5 py-3.5 border-b border-border bg-slate-50">
-        <div className="text-sm font-semibold text-foreground">{title}</div>
-        {description && <div className="text-xs text-muted-foreground mt-0.5">{description}</div>}
-      </div>
-      <div className="p-5 space-y-4">{children}</div>
-    </div>
-  );
-
-  const Field = ({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) => (
-    <div>
-      <label className="block text-xs font-medium text-foreground mb-1">{label}</label>
-      {hint && <div className="text-xs text-muted-foreground mb-1.5">{hint}</div>}
-      {children}
-    </div>
-  );
-
-  const inputClass = "w-full px-3 py-2 text-sm border border-border rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 font-mono";
 
   return (
     <div className="p-6 space-y-5">
