@@ -3,7 +3,7 @@
 ; Run via build_installer.bat
 
 #define MyAppName      "MCS CoWorker"
-#define MyAppVersion   "2.0"
+#define MyAppVersion   "2.3"
 #define MyAppPublisher "MC & S Accountants"
 #define MyAppURL       "https://mcands.com.au"
 #define MyAppId        "{B4E1F3A2-7C5D-4E8B-9F2A-1D6E3C4B5A7F}"
