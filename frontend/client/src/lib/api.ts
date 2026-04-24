@@ -240,6 +240,43 @@ export async function deleteKnowledge(id: number) {
   return apiFetch(`/api/knowledge/${id}`, { method: "DELETE" });
 }
 
+// ── BAS Clients ───────────────────────────────────────────────────────────────
+export interface BasClient {
+  id: number;
+  client_name: string;
+  entity_name: string | null;
+  abn: string | null;
+  frequency: string | null;
+  client_email: string | null;
+  last_data_received: string | null;
+  last_reminder_sent: string | null;
+  status: string | null;
+  notes: string | null;
+  created_at?: string | null;
+}
+
+export async function fetchBasClients(): Promise<BasClient[]> {
+  return apiFetch<BasClient[]>("/api/bas-clients");
+}
+
+export async function createBasClient(row: Partial<BasClient>): Promise<BasClient> {
+  return apiFetch<BasClient>("/api/bas-clients", {
+    method: "POST",
+    body: JSON.stringify(row),
+  });
+}
+
+export async function updateBasClient(id: number, row: Partial<BasClient>): Promise<BasClient> {
+  return apiFetch<BasClient>(`/api/bas-clients/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(row),
+  });
+}
+
+export async function deleteBasClient(id: number) {
+  return apiFetch(`/api/bas-clients/${id}`, { method: "DELETE" });
+}
+
 // ── Lessons ───────────────────────────────────────────────────────────────────
 export async function fetchLessons() {
   return apiFetch("/api/lessons");

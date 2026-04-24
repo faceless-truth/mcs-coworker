@@ -48,6 +48,9 @@ from config import (
     add_feedback_message, get_feedback_history, clear_feedback_history,
     get_knowledge_entries, add_knowledge_entry,
     update_knowledge_entry, delete_knowledge_entry,
+    get_bas_clients, get_bas_client, add_bas_client,
+    update_bas_client, delete_bas_client, bulk_replace_bas_clients,
+    BAS_CLIENT_COLUMNS,
 )
 from plugin_loader import PluginLoader
 from approval_queue import ApprovalQueue
@@ -1609,6 +1612,98 @@ def update_knowledge(entry_id):
 def remove_knowledge(entry_id):
     delete_knowledge_entry(entry_id)
     return ok({"id": entry_id, "deleted": True})
+
+
+# ── BAS Clients ───────────────────────────────────────────────────────────────
+BAS_CSV_HEADERS = [
+    "client_name", "entity_name", "abn", "frequency", "client_email",
+    "last_data_received", "last_reminder_sent", "status", "notes",
+]
+
+
+def _bas_csv_template() -> str:
+    return ",".join(BAS_CSV_HEADERS) + "\n"
+
+
+@app.route("/api/bas-clients")
+def list_bas_clients():
+    return ok(get_bas_clients())
+
+
+@app.route("/api/bas-clients", methods=["POST"])
+def create_bas_client():
+    data = request.get_json(force=True) or {}
+    if not (data.get("client_name") or "").strip():
+        return err("'client_name' is required")
+    try:
+        new_id = add_bas_client(data)
+    except ValueError as e:
+        return err(str(e))
+    return ok(get_bas_client(new_id))
+
+
+@app.route("/api/bas-clients/<int:client_id>", methods=["PUT"])
+def update_bas_client_endpoint(client_id):
+    data = request.get_json(force=True) or {}
+    update_bas_client(client_id, data)
+    updated = get_bas_client(client_id)
+    if not updated:
+        return err("Not found", 404)
+    return ok(updated)
+
+
+@app.route("/api/bas-clients/<int:client_id>", methods=["DELETE"])
+def delete_bas_client_endpoint(client_id):
+    delete_bas_client(client_id)
+    return ok({"id": client_id, "deleted": True})
+
+
+@app.route("/api/bas-clients/upload", methods=["POST"])
+def upload_bas_clients():
+    """Parse a CSV upload and replace the bas_clients table with its contents."""
+    import csv
+    import io
+
+    if "file" not in request.files:
+        return err("No file provided")
+    file = request.files["file"]
+    if not file.filename:
+        return err("No filename")
+    if not file.filename.lower().endswith(".csv"):
+        return err("File must be .csv")
+
+    try:
+        raw = file.read()
+        if len(raw) > MAX_UPLOAD_SIZE:
+            return err("File too large", 413)
+        text = raw.decode("utf-8-sig", errors="replace")
+        reader = csv.DictReader(io.StringIO(text))
+        if not reader.fieldnames:
+            return err("CSV has no header row")
+        # Normalise header names to lower_snake
+        fieldmap = {name: name.strip().lower().replace(" ", "_") for name in reader.fieldnames}
+        rows: list[dict] = []
+        for raw_row in reader:
+            mapped = {fieldmap[k]: (v or "").strip() for k, v in raw_row.items() if k}
+            if not mapped.get("client_name"):
+                continue
+            rows.append({k: mapped.get(k) for k in BAS_CLIENT_COLUMNS})
+        if not rows:
+            return err("No valid rows found (client_name is required)")
+        count = bulk_replace_bas_clients(rows)
+    except Exception as e:
+        return err(f"Failed to parse CSV: {e}")
+    return ok({"imported": count, "clients": get_bas_clients()})
+
+
+@app.route("/api/bas-clients/template", methods=["GET"])
+def bas_clients_template():
+    """Return a blank CSV with the correct headers."""
+    return Response(
+        _bas_csv_template(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": "attachment; filename=bas_clients_template.csv"},
+    )
 
 
 # ── Chat history ──────────────────────────────────────────────────────────────

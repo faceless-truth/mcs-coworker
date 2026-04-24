@@ -2,53 +2,41 @@
 MC & S Plugin: BAS Reminder Drafter
 ======================================
 Plugin ID  : plugin_bas_reminder
-Version    : 2.0.0
+Version    : 3.0.0
 
 WHAT IT DOES
 ------------
-Monitors ATO BAS lodgement deadlines and proactively reminds clients
-using ADAPTIVE scheduling — each client is reminded on the correct
-cadence based on their lodgement frequency (monthly or quarterly),
-which is learned from XPM and stored in vector memory.
+Drives BAS reminders from the accountant-managed BAS Client List (managed in
+Settings → BAS Client Tracking). Each row carries its own lodgement frequency,
+contact email, and workflow status. The plugin:
 
-1. Runs on the 21st of every month (catches both monthly and quarterly
-   windows in a single pass)
-2. For each GST-registered client, determines their lodgement frequency:
-     - Checks XPM client record for "bas_frequency" field
-     - Falls back to vector memory for previously learned frequency
-     - Falls back to "quarterly" as the safe default
-3. Calculates the correct next due date for that client's frequency
-4. Sends a reminder if the due date is within the configured lead window
-5. Stores the learned frequency in memory so it improves over time
-6. Uses Claude Haiku to draft personalised, frequency-aware emails
+1. Loads every BAS client from the ``bas_clients`` SQLite table.
+2. Reads the Knowledge Base entry "BAS Lodgement Policy" to include the firm's
+   own deadline text in the draft email (ATO due dates are also calculated
+   algorithmically so the logic still works even if the KB entry is empty).
+3. For each client:
+     - Checks semantic memory for a recent inbound email referencing BAS /
+       records / figures. When one is found the client's
+       ``last_data_received`` is updated and status is bumped to
+       ``Data Received``.
+     - If status is ``Data Received`` or ``Lodged``, no reminder is sent.
+     - If status is ``Awaiting Data`` and a deadline falls within the
+       configured lead window, drafts a reminder via Claude Haiku and
+       stamps ``last_reminder_sent``.
 
-ADAPTIVE LEARNING
------------------
-Each time the plugin runs, it stores the detected frequency per client
-in vector memory under the key "bas_frequency_learned". On subsequent
-runs, if XPM does not return a frequency field, the plugin uses the
-stored value — creating a self-improving knowledge base.
-
-ATO DUE DATES
--------------
-Quarterly lodgers (extended lodgement agent dates):
-  Q1 Jul-Sep  → 28 Oct
-  Q2 Oct-Dec  → 28 Feb
-  Q3 Jan-Mar  → 28 Apr
-  Q4 Apr-Jun  → 28 Jul
-
-Monthly lodgers:
-  21st of the following month (e.g., Jan BAS due 21 Feb)
-
-SCHEDULE
---------
-Default: 21st of every month at 08:00.
-Covers both monthly (due 21st) and quarterly windows in a single pass.
+STATUS WORKFLOW
+---------------
+``Awaiting Data``  →  ``Data Received``  →  ``Lodged``
+(Staff flip Lodged manually in Settings once they've submitted the BAS.)
 """
 
 from datetime import datetime, date, timedelta
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
-from config import get_setting, log_activity
+from config import (
+    get_setting, log_activity,
+    get_bas_clients, update_bas_client,
+    get_knowledge_entries,
+)
 
 
 # ATO quarterly BAS due dates (day, month) — lodgement agent extended dates
@@ -59,115 +47,112 @@ QUARTERLY_DUE_DATES = [
     (28, 7),    # Q4: Apr-Jun due 28 Jul
 ]
 
-# XPM field names that may indicate BAS frequency
-XPM_FREQUENCY_FIELDS = [
-    "bas_frequency", "gst_frequency", "lodgement_frequency",
-    "reporting_frequency", "bas_reporting_period",
-]
+# Annual BAS (for eligible small businesses lodging an Annual GST Return)
+ANNUAL_DUE_DATE = (28, 2)  # 28 February of the following year
 
-# Values that indicate monthly lodgement
-MONTHLY_INDICATORS = {"monthly", "month", "m", "1", "1m", "monthly lodger"}
+BAS_DATA_KEYWORDS = (
+    "bas", "records", "figures", "bookkeeping", "payroll summary",
+    "gst", "quarterly figures",
+)
 
 
 class BASReminderPlugin(AgentPlugin):
-    """Drafts BAS reminders with adaptive monthly/quarterly scheduling per client."""
+    """Drafts BAS reminders driven by the local BAS Client Tracking list."""
 
     PLUGIN_ID   = "plugin_bas_reminder"
     name        = "BAS Reminder Drafter"
-    description = ("Calculates BAS due dates per client based on their lodgement "
-                   "frequency (monthly or quarterly), learned from XPM and memory.")
-    version     = "2.0.0"
+    description = ("Reminds clients on the BAS Client List that their BAS is "
+                   "coming due, tracks when data arrives, and updates status.")
+    version     = "3.0.0"
     icon        = "📅"
-    # Run on the 21st of every month — catches both monthly (due 21st) and
-    # quarterly windows in a single pass
-    default_schedule = Schedule.monthly_on_day(21)
+    # Daily tick — the lead-window gate does the actual 'should I send now' work
+    # so the plugin can react to status changes mid-cycle.
+    default_schedule = Schedule.daily_at(8)
     category    = PluginCategory.RECEPTION
+
+    @classmethod
+    def settings_schema(cls):
+        return [
+            {"key": "lead_days", "label": "Days before due date to remind",
+             "type": "number", "default": "14"},
+            {"key": "confidence_threshold", "label": "Approval confidence",
+             "type": "number", "default": "0.75"},
+            {"key": "memory_lookback_days",
+             "label": "Treat inbound BAS emails within N days as 'data received'",
+             "type": "number", "default": "45"},
+        ]
 
     def run(self, context: PluginContext) -> PluginResult:
         result = PluginResult()
-        # Calendar scheduler ensures this runs on the 21st of each month at 08:00
-
         today      = date.today()
         lead_days  = int(self.get_plugin_setting("lead_days", "14"))
         confidence = float(self.get_plugin_setting("confidence_threshold", "0.75"))
-        default_freq = self.get_plugin_setting("default_frequency", "quarterly")
-        learn      = self.get_plugin_setting("learn_from_xpm", "1") == "1"
+        lookback   = int(self.get_plugin_setting("memory_lookback_days", "45"))
 
-        if not context.gateway or not context.gateway.is_available("xpm"):
-            result.summary = "XPM not configured — BAS reminders skipped."
+        clients = get_bas_clients()
+        if not clients:
+            result.summary = ("No BAS clients configured. Add them in "
+                              "Settings → BAS Client Tracking.")
             return result
 
-        # ── Get GST-registered clients from XPM ───────────────────────────────
-        try:
-            clients = context.gateway.xpm.list_clients(search="", limit=500)
-        except Exception as e:
-            result.summary = f"XPM client fetch failed: {e}"
-            return result
+        policy_text = self._get_policy_text()
 
         drafted  = 0
         skipped  = 0
-        learned  = 0
+        updated  = 0
 
         for client in clients:
-            # Filter for GST-registered clients only
-            gst_registered = (
-                client.get("gst_registered", False)
-                or client.get("registered_for_gst", False)
-                or str(client.get("gst", "")).lower() in ("yes", "1", "true")
-            )
-            if not gst_registered:
-                continue
+            client_name  = (client.get("client_name") or "").strip()
+            client_email = (client.get("client_email") or "").strip()
+            frequency    = (client.get("frequency") or "Quarterly").strip()
+            status       = (client.get("status") or "Awaiting Data").strip()
 
-            client_name  = client.get("name", client.get("client_name", "Unknown"))
-            client_email = client.get("email", "")
-            if not client_email:
+            if not client_name or not client_email:
                 skipped += 1
                 continue
 
-            # ── Determine lodgement frequency ─────────────────────────────────
-            frequency = self._detect_frequency(context, client, client_name, default_freq)
-
-            # ── Store learned frequency in memory ─────────────────────────────
-            if learn and context.memory:
+            # ── Cross-reference memory for inbound BAS data ──────────────────
+            received_ts = self._detect_received(context, client, lookback)
+            if received_ts:
+                changes: dict = {"last_data_received": received_ts.date().isoformat()}
+                if status == "Awaiting Data":
+                    changes["status"] = "Data Received"
+                    status = "Data Received"
                 try:
-                    context.memory.store_lesson(
-                        lesson=(f"{client_name} BAS lodgement frequency: {frequency}"),
-                        category="bas_frequency_learned",
-                        metadata={"client_name": client_name,
-                                  "frequency": frequency,
-                                  "detected_date": today.isoformat()})
-                    learned += 1
-                except Exception:
-                    pass
+                    update_bas_client(client["id"], changes)
+                    updated += 1
+                except Exception as e:
+                    context.log(f"[BASReminder] status update failed for {client_name}: {e}")
 
-            # ── Calculate upcoming due dates for this client ───────────────────
-            upcoming_due_dates = self._get_upcoming_due_dates(frequency, today, lead_days)
-
-            if not upcoming_due_dates:
+            # ── Skip clients that are no longer waiting for data ─────────────
+            if status in ("Data Received", "Lodged"):
                 continue
 
-            # ── Draft and queue a reminder for each upcoming due date ──────────
-            for due_date in upcoming_due_dates:
-                # Check if reminder already sent for this client + due date
-                already_sent = self._check_already_sent(context, client_name, due_date)
-                if already_sent:
+            # ── Calculate upcoming due dates for this client ─────────────────
+            upcoming = self._get_upcoming_due_dates(frequency, today, lead_days)
+            if not upcoming:
+                continue
+
+            for due_date in upcoming:
+                # Don't hammer the client — skip if we already reminded them
+                # for this cycle.
+                if self._already_reminded(client, due_date):
                     skipped += 1
                     continue
 
-                email_body = self._draft_reminder(
-                    context, client_name, due_date, frequency)
                 subject = (f"BAS Lodgement Reminder — Due "
                            f"{due_date.strftime('%d %B %Y')}")
-
-                # ── Submit to approval queue ──────────────────────────────────
+                body    = self._draft_reminder(
+                    context, client_name, due_date, frequency, policy_text)
                 draft_mode = context.draft_mode
+
                 if context.approval_queue:
-                    def _send(to=client_email, subj=subject, body=email_body, dm=draft_mode):
+                    def _send(to=client_email, subj=subject, b=body, dm=draft_mode):
                         if context.graph:
                             if dm:
-                                context.graph.create_draft(to, subj, body)
+                                context.graph.create_draft(to, subj, b)
                             else:
-                                context.graph.send_email(to, subj, body)
+                                context.graph.send_email(to, subj, b)
                     context.approval_queue.submit(
                         action_type="send_email",
                         description=(f"BAS reminder ({frequency}) to "
@@ -181,23 +166,28 @@ class BASReminderPlugin(AgentPlugin):
                 elif context.graph:
                     try:
                         if draft_mode:
-                            context.graph.create_draft(client_email, subject, email_body)
+                            context.graph.create_draft(client_email, subject, body)
                         else:
-                            context.graph.send_email(client_email, subject, email_body)
+                            context.graph.send_email(client_email, subject, body)
                     except Exception as e:
                         context.log(
                             f"[BASReminder] Email failed for {client_name}: {e}")
 
-                # ── Store in memory to prevent duplicates ─────────────────────
+                try:
+                    update_bas_client(client["id"],
+                                       {"last_reminder_sent": today.isoformat()})
+                except Exception:
+                    pass
+
                 if context.memory:
                     try:
                         context.memory.store_client_interaction(
                             client_name=client_name,
+                            client_email=client_email,
                             interaction_type="bas_reminder",
                             summary=(f"BAS reminder ({frequency}) sent for "
                                      f"due date {due_date.isoformat()}"),
                             metadata={"due_date": due_date.isoformat(),
-                                      "email": client_email,
                                       "frequency": frequency})
                     except Exception:
                         pass
@@ -212,57 +202,104 @@ class BASReminderPlugin(AgentPlugin):
 
         result.summary = (
             f"BAS reminders: {drafted} drafted/queued, {skipped} skipped. "
-            f"Frequency learned/updated for {learned} clients.")
+            f"Status updated for {updated} clients.")
         result.actions_taken = drafted
         result.items_skipped = skipped
         return result
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
-    def _detect_frequency(self, context: PluginContext, client: dict,
-                           client_name: str, default_freq: str) -> str:
-        """
-        Determine a client's BAS lodgement frequency.
-        Priority: XPM field → vector memory lesson → default setting.
-        Returns 'monthly' or 'quarterly'.
-        """
-        # 1. Check XPM client record fields
-        for field in XPM_FREQUENCY_FIELDS:
-            val = str(client.get(field, "")).strip().lower()
-            if val:
-                if val in MONTHLY_INDICATORS:
-                    return "monthly"
-                if val in {"quarterly", "quarter", "q", "3", "3m"}:
-                    return "quarterly"
+    def _get_policy_text(self) -> str:
+        """Return the firm's BAS Lodgement Policy content from the KB, if any."""
+        try:
+            for entry in get_knowledge_entries(only_enabled=True):
+                title = (entry.get("title") or "").strip().lower()
+                if "bas" in title and "lodgement" in title:
+                    return (entry.get("content") or "").strip()
+        except Exception:
+            pass
+        return ""
 
-        # 2. Check vector memory for previously learned frequency
-        if context is not None and context.memory:
+    def _detect_received(self, context: PluginContext, client: dict,
+                          lookback_days: int):
+        """Return the timestamp of a recent inbound BAS email from this client,
+        or None if nothing qualifies.
+        """
+        if not context.memory:
+            return None
+        client_email = (client.get("client_email") or "").strip().lower()
+        if not client_email:
+            return None
+
+        cutoff = datetime.now() - timedelta(days=lookback_days)
+        last_received = client.get("last_data_received") or ""
+
+        try:
+            hits = context.memory.search(
+                query=f"BAS records figures {client.get('client_name', '')}",
+                n_results=10,
+                collection="interactions",
+            )
+        except Exception:
+            return None
+
+        newest = None
+        for hit in hits:
+            meta = hit.get("metadata", {}) or {}
+            hit_email = str(meta.get("client_email", "")).lower()
+            if hit_email and hit_email != client_email:
+                continue
+            ts_str = str(meta.get("timestamp", ""))
             try:
-                results = context.memory.search(
-                    query=f"{client_name} BAS lodgement frequency",
-                    n_results=3,
-                    collection="lessons")
-                for r in results:
-                    meta = r.get("metadata", {})
-                    if (meta.get("client_name") == client_name
-                            and meta.get("category") == "bas_frequency_learned"):
-                        freq = meta.get("frequency", "").lower()
-                        if freq in ("monthly", "quarterly"):
-                            return freq
+                ts = datetime.fromisoformat(ts_str)
+            except Exception:
+                continue
+            if ts < cutoff:
+                continue
+            text = (hit.get("content") or "").lower()
+            if not any(k in text for k in BAS_DATA_KEYWORDS):
+                continue
+            # Only interactions coming IN from the client count as 'data
+            # received' — our own outbound reminders should be ignored.
+            itype = str(meta.get("interaction_type", "")).lower()
+            if itype in ("bas_reminder", "outbound", "sent"):
+                continue
+            if newest is None or ts > newest:
+                newest = ts
+
+        if newest is None:
+            return None
+        # Don't downgrade an already-stamped later date.
+        if last_received:
+            try:
+                prev = datetime.fromisoformat(last_received)
+                if prev >= newest:
+                    return None
             except Exception:
                 pass
+        return newest
 
-        # 3. Fall back to configured default
-        return default_freq
+    def _already_reminded(self, client: dict, due_date: date) -> bool:
+        """Only send one reminder per due-date cycle. Uses the stamped date to
+        approximate: if a reminder was sent within the lead window of the
+        upcoming due date, skip."""
+        last = client.get("last_reminder_sent") or ""
+        if not last:
+            return False
+        try:
+            sent = date.fromisoformat(last)
+        except Exception:
+            return False
+        return 0 <= (due_date - sent).days <= 30
 
     def _get_upcoming_due_dates(self, frequency: str, today: date,
                                  lead_days: int) -> list:
-        """Return a list of due dates within the lead window for this frequency."""
-        upcoming = []
+        """Return due dates within the lead window for the given frequency."""
+        upcoming: list = []
+        freq = (frequency or "").strip().lower()
 
-        if frequency == "monthly":
-            # Monthly: 21st of the following month
-            # Check this month's 21st and next month's 21st
+        if freq == "monthly":
+            # Monthly lodgers: BAS due 21st of the following month.
             for offset in range(3):
                 month = today.month + offset
                 year  = today.year
@@ -276,8 +313,24 @@ class BASReminderPlugin(AgentPlugin):
                 days_until = (due - today).days
                 if 0 <= days_until <= lead_days:
                     upcoming.append(due)
+
+        elif freq == "annual":
+            day, month = ANNUAL_DUE_DATE
+            for year_offset in (0, 1):
+                year = today.year + year_offset
+                try:
+                    due = date(year, month, day)
+                except ValueError:
+                    due = date(year, month, 28)
+                if due < today:
+                    continue
+                days_until = (due - today).days
+                if 0 <= days_until <= lead_days:
+                    upcoming.append(due)
+                    break
+
         else:
-            # Quarterly: ATO extended lodgement dates
+            # Default / quarterly.
             for day, month in QUARTERLY_DUE_DATES:
                 year = today.year
                 try:
@@ -295,31 +348,13 @@ class BASReminderPlugin(AgentPlugin):
 
         return upcoming
 
-    def _check_already_sent(self, context: PluginContext,
-                             client_name: str, due_date: date) -> bool:
-        """Return True if a reminder for this client + due date is already in memory."""
-        if not context.memory:
-            return False
-        try:
-            history = context.memory.search(
-                query=f"BAS reminder {client_name} {due_date.isoformat()}",
-                n_results=5,
-                collection="client_interactions")
-            return any(
-                r.get("metadata", {}).get("due_date") == due_date.isoformat()
-                and r.get("metadata", {}).get("client_name") == client_name
-                and r.get("metadata", {}).get("type") == "bas_reminder"
-                for r in history)
-        except Exception:
-            return False
-
     def _draft_reminder(self, context: PluginContext, client_name: str,
-                         due_date: date, frequency: str) -> str:
-        """Use Claude Haiku to draft a frequency-aware BAS reminder email."""
+                         due_date: date, frequency: str, policy_text: str) -> str:
+        """Use Claude Haiku (if available) to draft the reminder email."""
         practice  = get_setting("practice_name", "MC & S Accounting")
         due_str   = due_date.strftime("%d %B %Y")
         days_left = (due_date - date.today()).days
-        freq_label = "monthly" if frequency == "monthly" else "quarterly"
+        freq_label = (frequency or "quarterly").lower()
 
         if not context.claude_fast:
             return (f"<p>Dear {client_name},</p>"
@@ -329,13 +364,17 @@ class BASReminderPlugin(AgentPlugin):
                     f"so we can prepare and lodge on time.</p>"
                     f"<p>Kind regards,<br>{practice}</p>")
         try:
+            policy_block = (
+                f"\n\nFirm BAS policy (for reference, do not quote verbatim):\n{policy_text}"
+                if policy_text else "")
             prompt = (
                 f"Write a professional {freq_label} BAS lodgement reminder email "
                 f"from {practice} to {client_name}. "
                 f"The BAS is due on {due_str} ({days_left} days away). "
                 f"Mention that this is their {freq_label} BAS. "
-                "Ask the client to provide their records. Keep it brief and friendly. "
-                "Return HTML body only.")
+                f"Ask the client to provide their records. Keep it brief and friendly. "
+                f"Return HTML body only."
+                f"{policy_block}")
             resp = context.claude_fast.messages.create(
                 model=self.get_claude_model_fast(),
                 max_tokens=350,

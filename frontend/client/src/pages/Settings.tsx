@@ -8,7 +8,8 @@ import {
   fetchXeroStatus, startXeroAuth, disconnectXero, testConnection,
   fetchSettings, saveSettings,
   fetchKnowledge, createKnowledge, updateKnowledge, deleteKnowledge,
-  type KnowledgeEntry,
+  fetchBasClients, createBasClient, updateBasClient, deleteBasClient,
+  type KnowledgeEntry, type BasClient,
 } from "@/lib/api";
 
 const KB_CATEGORIES = ["Pricing", "Checklists", "Procedures", "Firm Policies", "Staff Info", "Other"];
@@ -270,6 +271,289 @@ function KnowledgeBaseSection() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+const BAS_FREQUENCIES = ["Monthly", "Quarterly", "Annual"];
+const BAS_STATUSES = ["Awaiting Data", "Data Received", "Lodged"];
+const BAS_API = "http://127.0.0.1:7842/api/bas-clients";
+
+function BasClientsSection() {
+  const [clients, setClients] = useState<BasClient[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [uploading, setUploading] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const load = async () => {
+    try {
+      const rows = await fetchBasClients();
+      setClients(rows || []);
+    } catch (e: any) {
+      toast.error("Failed to load BAS clients", { description: e.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const upload = async (file: File) => {
+    if (!file.name.toLowerCase().endsWith(".csv")) {
+      toast.error("Please upload a .csv file");
+      return;
+    }
+    setUploading(true);
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const res = await fetch(`${BAS_API}/upload`, { method: "POST", body: form });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.ok) {
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      toast.success(`Imported ${body.data?.imported ?? 0} BAS clients`);
+      await load();
+    } catch (e: any) {
+      toast.error("Upload failed", { description: e.message });
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const onFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    upload(files[0]);
+  };
+
+  const addRow = async () => {
+    try {
+      const created = await createBasClient({
+        client_name: "New Client",
+        frequency: "Quarterly",
+        status: "Awaiting Data",
+      });
+      setClients(prev => [...prev, created]);
+    } catch (e: any) {
+      toast.error("Add failed", { description: e.message });
+    }
+  };
+
+  const patch = (id: number, changes: Partial<BasClient>) => {
+    setClients(prev => prev.map(c => (c.id === id ? { ...c, ...changes } : c)));
+  };
+
+  const saveRow = async (row: BasClient, changes: Partial<BasClient>) => {
+    try {
+      const updated = await updateBasClient(row.id, { ...row, ...changes });
+      patch(row.id, updated);
+    } catch (e: any) {
+      toast.error("Save failed", { description: e.message });
+      load();
+    }
+  };
+
+  const remove = async (row: BasClient) => {
+    if (!confirm(`Delete ${row.client_name}?`)) return;
+    try {
+      await deleteBasClient(row.id);
+      setClients(prev => prev.filter(c => c.id !== row.id));
+    } catch (e: any) {
+      toast.error("Delete failed", { description: e.message });
+    }
+  };
+
+  const downloadTemplate = () => {
+    const url = `${BAS_API}/template`;
+    const token = (window as any).__API_TOKEN__ || "";
+    fetch(url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then(r => r.blob())
+      .then(blob => {
+        const href = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = href;
+        a.download = "bas_clients_template.csv";
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(href);
+      })
+      .catch(e => toast.error("Download failed", { description: e.message }));
+  };
+
+  const cellInput =
+    "w-full px-2 py-1 text-xs border border-transparent rounded hover:border-border focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400/30 bg-transparent";
+  const cellSelect =
+    "w-full px-2 py-1 text-xs border border-transparent rounded hover:border-border focus:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-400/30 bg-transparent";
+
+  return (
+    <div className="bg-white rounded-lg border border-border shadow-sm overflow-hidden">
+      <div className="px-5 py-3.5 border-b border-border bg-slate-50 flex items-center justify-between">
+        <div>
+          <div className="text-sm font-semibold text-foreground">BAS Client Tracking</div>
+          <div className="text-xs text-muted-foreground mt-0.5">
+            Clients covered by the BAS Reminder plugin. Status is updated automatically as records are received and lodgements are completed.
+          </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={downloadTemplate}
+            className="px-3 py-2 rounded-md text-xs font-medium border border-border hover:bg-slate-100"
+          >
+            Download Template
+          </button>
+          <button
+            onClick={addRow}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-medium text-white hover:opacity-90"
+            style={{ background: "oklch(0.5 0.2 250)" }}
+          >
+            <Plus className="w-3.5 h-3.5" /> Add Row
+          </button>
+        </div>
+      </div>
+
+      <div className="p-5 space-y-4">
+        <div
+          onClick={() => inputRef.current?.click()}
+          onDragOver={e => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={e => {
+            e.preventDefault();
+            setDragging(false);
+            onFiles(e.dataTransfer.files);
+          }}
+          className={`cursor-pointer rounded-md border-2 border-dashed px-4 py-5 text-center transition-colors ${
+            dragging ? "border-blue-400 bg-blue-50" : "border-border bg-slate-50 hover:bg-slate-100"
+          }`}
+        >
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".csv,text/csv"
+            className="hidden"
+            onChange={e => onFiles(e.target.files)}
+          />
+          {uploading ? (
+            <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="w-4 h-4 animate-spin" /> Uploading…
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-1.5 text-sm text-muted-foreground">
+              <Upload className="w-5 h-5" />
+              <div>
+                <span className="font-medium text-foreground">Click to browse</span> or drag a CSV here
+              </div>
+              <div className="text-xs">Uploading a CSV replaces the entire client list</div>
+            </div>
+          )}
+        </div>
+
+        <div className="text-xs text-muted-foreground italic">
+          This list is local to this machine. Each accountant manages their own BAS clients.
+        </div>
+
+        {loading ? (
+          <div className="text-sm text-muted-foreground">Loading…</div>
+        ) : clients.length === 0 ? (
+          <div className="text-sm text-muted-foreground">
+            No BAS clients yet. Upload a CSV or click "Add Row" to start.
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-md border border-border">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-50 text-muted-foreground">
+                <tr>
+                  <th className="px-2 py-2 text-left font-medium">Client Name</th>
+                  <th className="px-2 py-2 text-left font-medium">Entity Name</th>
+                  <th className="px-2 py-2 text-left font-medium">ABN</th>
+                  <th className="px-2 py-2 text-left font-medium">Frequency</th>
+                  <th className="px-2 py-2 text-left font-medium">Client Email</th>
+                  <th className="px-2 py-2 text-left font-medium">Last Data Received</th>
+                  <th className="px-2 py-2 text-left font-medium">Status</th>
+                  <th className="px-2 py-2"></th>
+                </tr>
+              </thead>
+              <tbody>
+                {clients.map(row => (
+                  <tr key={row.id} className="border-t border-border">
+                    <td className="px-2 py-1">
+                      <input
+                        className={cellInput}
+                        value={row.client_name || ""}
+                        onChange={e => patch(row.id, { client_name: e.target.value })}
+                        onBlur={e => saveRow(row, { client_name: e.target.value })}
+                      />
+                    </td>
+                    <td className="px-2 py-1">
+                      <input
+                        className={cellInput}
+                        value={row.entity_name || ""}
+                        onChange={e => patch(row.id, { entity_name: e.target.value })}
+                        onBlur={e => saveRow(row, { entity_name: e.target.value })}
+                      />
+                    </td>
+                    <td className="px-2 py-1">
+                      <input
+                        className={cellInput + " font-mono"}
+                        value={row.abn || ""}
+                        onChange={e => patch(row.id, { abn: e.target.value })}
+                        onBlur={e => saveRow(row, { abn: e.target.value })}
+                      />
+                    </td>
+                    <td className="px-2 py-1">
+                      <select
+                        className={cellSelect}
+                        value={row.frequency || "Quarterly"}
+                        onChange={e => {
+                          patch(row.id, { frequency: e.target.value });
+                          saveRow(row, { frequency: e.target.value });
+                        }}
+                      >
+                        {BAS_FREQUENCIES.map(f => <option key={f} value={f}>{f}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-2 py-1">
+                      <input
+                        className={cellInput}
+                        value={row.client_email || ""}
+                        onChange={e => patch(row.id, { client_email: e.target.value })}
+                        onBlur={e => saveRow(row, { client_email: e.target.value })}
+                      />
+                    </td>
+                    <td className="px-2 py-1 text-muted-foreground">
+                      {row.last_data_received || <span className="italic">—</span>}
+                    </td>
+                    <td className="px-2 py-1">
+                      <select
+                        className={cellSelect}
+                        value={row.status || "Awaiting Data"}
+                        onChange={e => {
+                          patch(row.id, { status: e.target.value });
+                          saveRow(row, { status: e.target.value });
+                        }}
+                      >
+                        {BAS_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                    </td>
+                    <td className="px-2 py-1 text-right">
+                      <button
+                        onClick={() => remove(row)}
+                        className="p-1.5 rounded hover:bg-rose-50"
+                        title="Delete"
+                      >
+                        <Trash2 className="w-3.5 h-3.5 text-rose-500" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -597,6 +881,9 @@ export default function Settings() {
 
       {/* Knowledge base — used by the Smart Email Responder */}
       <KnowledgeBaseSection />
+
+      {/* BAS Client Tracking — local list for the BAS reminder plugin */}
+      <BasClientsSection />
 
       {/* Claude AI */}
       <Section title="Claude AI — Tiered Models" description="Configure the AI models used for fast triage, deep reasoning, and complex specialist analysis">

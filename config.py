@@ -165,6 +165,20 @@ def init_db():
             created_at TEXT DEFAULT (datetime('now','localtime')),
             updated_at TEXT DEFAULT (datetime('now','localtime'))
         );
+
+        CREATE TABLE IF NOT EXISTS bas_clients (
+            id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+            client_name        TEXT NOT NULL,
+            entity_name        TEXT,
+            abn                TEXT,
+            frequency          TEXT DEFAULT 'Quarterly',
+            client_email       TEXT,
+            last_data_received TEXT,
+            last_reminder_sent TEXT,
+            status             TEXT DEFAULT 'Awaiting Data',
+            notes              TEXT,
+            created_at         TEXT DEFAULT CURRENT_TIMESTAMP
+        );
     """)
 
     # Add display_name column if upgrading from older schema
@@ -826,3 +840,95 @@ def delete_knowledge_entry(entry_id: int):
     conn.execute("DELETE FROM knowledge_base WHERE id=?", (entry_id,))
     conn.commit()
     conn.close()
+
+
+# ── BAS Clients ───────────────────────────────────────────────────────────────
+
+BAS_CLIENT_COLUMNS = {
+    "client_name", "entity_name", "abn", "frequency", "client_email",
+    "last_data_received", "last_reminder_sent", "status", "notes",
+}
+
+
+def get_bas_clients() -> list[dict]:
+    """Return every BAS client row ordered by client_name."""
+    conn = get_db()
+    rows = conn.execute(
+        "SELECT * FROM bas_clients ORDER BY client_name COLLATE NOCASE"
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_bas_client(client_id: int) -> dict | None:
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM bas_clients WHERE id=?", (client_id,)
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def add_bas_client(data: dict) -> int:
+    """Insert a BAS client row. Only whitelisted columns are used."""
+    safe = {k: (data.get(k) or None) for k in BAS_CLIENT_COLUMNS if k in data}
+    if not safe.get("client_name"):
+        raise ValueError("client_name is required")
+    safe.setdefault("frequency", "Quarterly")
+    safe.setdefault("status", "Awaiting Data")
+    cols = list(safe.keys())
+    placeholders = ", ".join("?" * len(cols))
+    conn = get_db()
+    cur = conn.execute(
+        f"INSERT INTO bas_clients ({', '.join(cols)}) VALUES ({placeholders})",
+        [safe[c] for c in cols],
+    )
+    new_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return new_id
+
+
+def update_bas_client(client_id: int, data: dict):
+    """Update any subset of columns on a BAS client row."""
+    safe = {k: data.get(k) for k in BAS_CLIENT_COLUMNS if k in data}
+    if not safe:
+        return
+    sets = ", ".join(f"{k}=?" for k in safe)
+    values = list(safe.values()) + [client_id]
+    conn = get_db()
+    conn.execute(f"UPDATE bas_clients SET {sets} WHERE id=?", values)
+    conn.commit()
+    conn.close()
+
+
+def delete_bas_client(client_id: int):
+    conn = get_db()
+    conn.execute("DELETE FROM bas_clients WHERE id=?", (client_id,))
+    conn.commit()
+    conn.close()
+
+
+def bulk_replace_bas_clients(rows: list[dict]) -> int:
+    """Replace the entire bas_clients table with the supplied rows.
+    Returns the number of rows inserted.
+    """
+    conn = get_db()
+    conn.execute("DELETE FROM bas_clients")
+    count = 0
+    for data in rows:
+        safe = {k: (data.get(k) or None) for k in BAS_CLIENT_COLUMNS if k in data}
+        if not safe.get("client_name"):
+            continue
+        safe.setdefault("frequency", "Quarterly")
+        safe.setdefault("status", "Awaiting Data")
+        cols = list(safe.keys())
+        placeholders = ", ".join("?" * len(cols))
+        conn.execute(
+            f"INSERT INTO bas_clients ({', '.join(cols)}) VALUES ({placeholders})",
+            [safe[c] for c in cols],
+        )
+        count += 1
+    conn.commit()
+    conn.close()
+    return count
