@@ -287,6 +287,7 @@ const EMPTY_SETTINGS = {
   anthropicApiKey: "",
   fastModel: "",
   reasoningModel: "",
+  opusModel: "claude-opus-4-0-20250514",
   outlookEmail: "",
   xpmApiKey: "",
   xeroClientId: "",
@@ -318,6 +319,7 @@ export default function Settings() {
             anthropicApiKey:     s.anthropic_api_key     ?? prev.anthropicApiKey,
             fastModel:           s.fast_model            ?? prev.fastModel,
             reasoningModel:      s.reasoning_model       ?? prev.reasoningModel,
+            opusModel:           s.opus_model            ?? prev.opusModel,
             outlookEmail:        s.outlook_email         ?? prev.outlookEmail,
             xeroClientId:        s.xero_client_id        ?? prev.xeroClientId,
             xeroClientSecret:    s.xero_client_secret    ?? prev.xeroClientSecret,
@@ -348,6 +350,7 @@ export default function Settings() {
       teams_webhook_url:           settings.teamsWebhook,
       fast_model:                  settings.fastModel,
       reasoning_model:             settings.reasoningModel,
+      opus_model:                  settings.opusModel,
       confidence_threshold:        String(settings.confidenceThreshold),
       heartbeat_interval_seconds:  String(settings.heartbeatInterval),
       draft_mode:                  settings.draftMode ? "1" : "0",
@@ -459,13 +462,16 @@ export default function Settings() {
       <KnowledgeBaseSection />
 
       {/* Claude AI */}
-      <Section title="Claude AI — Dual Model" description="Configure the AI models used for fast triage and deep reasoning">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <Section title="Claude AI — Tiered Models" description="Configure the AI models used for fast triage, deep reasoning, and complex specialist analysis">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <Field label="Fast Model (Haiku)" hint="Used for triage, classification, and drafting">
             <input className={inputClass} value={settings.fastModel} onChange={e => setSettings(s => ({ ...s, fastModel: e.target.value }))} />
           </Field>
           <Field label="Reasoning Model (Sonnet)" hint="Used for complex analysis and decisions">
             <input className={inputClass} value={settings.reasoningModel} onChange={e => setSettings(s => ({ ...s, reasoningModel: e.target.value }))} />
+          </Field>
+          <Field label="Deep Analysis Model (Opus)" hint="Used for complex specialist agent queries">
+            <input className={inputClass} value={settings.opusModel} onChange={e => setSettings(s => ({ ...s, opusModel: e.target.value }))} />
           </Field>
         </div>
         <Field label="Anthropic API Key">

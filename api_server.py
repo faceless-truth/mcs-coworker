@@ -683,6 +683,7 @@ def get_settings():
             s[key] = s[key][:4] + "••••••••••••••••••••"
     s["fast_model"] = get_claude_model_fast()
     s["reasoning_model"] = get_claude_model_reasoning()
+    s["opus_model"] = get_setting("opus_model", "claude-opus-4-0-20250514")
     # Add Xero OAuth status
     try:
         from xero_oauth import is_configured as xero_is_configured, is_authorised as xero_is_authorised
@@ -704,7 +705,7 @@ def save_settings():
         "statementhub_api_key", "statementhub_base_url",
         "confidence_threshold", "heartbeat_interval_seconds",
         "draft_mode", "auto_update_enabled",
-        "fast_model", "reasoning_model",
+        "fast_model", "reasoning_model", "opus_model",
         "monthly_ai_budget_aud",
         "skip_public_holidays", "public_holiday_state",
         "reception_mode", "staff_profile",
@@ -1088,7 +1089,10 @@ def chat():
             model = get_claude_model_reasoning() if is_tier2 else get_claude_model_fast()
             max_tokens = 4096 if is_tier2 else 2048
         else:
-            if agent.model_preference == "sonnet":
+            if agent.model_preference == "opus":
+                model = get_setting("opus_model") or "claude-opus-4-0-20250514"
+                max_tokens = 4096
+            elif agent.model_preference == "sonnet":
                 model = get_claude_model_reasoning()
                 max_tokens = 4096
             else:

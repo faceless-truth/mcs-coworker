@@ -11,11 +11,14 @@ Each specialist has:
   - supports_files: whether this agent can process uploaded files
   - file_types: list of accepted file extensions
   - model_preference: which Claude model to use
-    ("sonnet" for complex analysis, "haiku" for simple tasks)
+    ("opus" for deep analysis, "sonnet" for complex analysis, "haiku" for simple tasks)
 """
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 from dataclasses import dataclass, field
+
+
+ModelPreference = Literal["opus", "sonnet", "haiku"]
 
 
 @dataclass
@@ -28,7 +31,7 @@ class SpecialistAgent:
     system_prompt: str
     supports_files: bool = False
     file_types: List[str] = field(default_factory=list)
-    model_preference: str = "sonnet"
+    model_preference: ModelPreference = "sonnet"
 
 
 def _load_prompt(filename: str) -> str:
@@ -61,7 +64,7 @@ def get_all_agents() -> Dict[str, SpecialistAgent]:
             system_prompt=_load_prompt("gst.md"),
             supports_files=True,
             file_types=[".pdf", ".docx", ".xlsx", ".csv", ".txt"],
-            model_preference="sonnet",
+            model_preference="opus",
         ),
         SpecialistAgent(
             id="smsf",
@@ -72,7 +75,7 @@ def get_all_agents() -> Dict[str, SpecialistAgent]:
             system_prompt=_load_prompt("smsf.md"),
             supports_files=True,
             file_types=[".pdf", ".docx", ".xlsx", ".csv", ".txt"],
-            model_preference="sonnet",
+            model_preference="opus",
         ),
         SpecialistAgent(
             id="div7a",
@@ -83,7 +86,7 @@ def get_all_agents() -> Dict[str, SpecialistAgent]:
             system_prompt=_load_prompt("div7a.md"),
             supports_files=True,
             file_types=[".pdf", ".docx", ".xlsx", ".csv", ".txt"],
-            model_preference="sonnet",
+            model_preference="opus",
         ),
         SpecialistAgent(
             id="trusts",
@@ -94,7 +97,7 @@ def get_all_agents() -> Dict[str, SpecialistAgent]:
             system_prompt=_load_prompt("trusts.md"),
             supports_files=True,
             file_types=[".pdf", ".docx", ".xlsx", ".csv", ".txt"],
-            model_preference="sonnet",
+            model_preference="opus",
         ),
         SpecialistAgent(
             id="individual_tax",
