@@ -46,6 +46,17 @@ def get_all_agents() -> Dict[str, SpecialistAgent]:
     """Return all registered specialist agents keyed by id."""
     return {a.id: a for a in [
         SpecialistAgent(
+            id="general",
+            name="General Chat",
+            description="Quick answers on any topic — fast and conversational",
+            icon="💬",
+            category="general",
+            system_prompt=_load_prompt("general.md"),
+            supports_files=True,
+            file_types=[".pdf", ".docx", ".xlsx", ".csv", ".txt", ".jpg", ".jpeg", ".png"],
+            model_preference="haiku",
+        ),
+        SpecialistAgent(
             id="plugin_builder",
             name="Plugin Builder",
             description="Build automation plugins from templates or custom Python",

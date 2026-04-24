@@ -31,6 +31,12 @@ interface Agent {
 // Example prompts shown as quick-start pills, keyed by agent id. When an
 // agent isn't in the map we fall back to its description.
 const AGENT_EXAMPLES: Record<string, string[]> = {
+  general: [
+    "Help me draft an email to a client",
+    "Summarise this document",
+    "What are the key EOFY 2026 dates?",
+    "Quick question about a client situation",
+  ],
   plugin_builder: [
     "Create a plugin that flags ATO emails as HIGH priority and notifies Teams",
     "Build a WIP ageing report that emails the partners every Monday",
@@ -89,7 +95,7 @@ function formatBytes(n: number): string {
 
 export default function Chat() {
   const [agents, setAgents] = useState<Agent[]>([]);
-  const [selectedAgentId, setSelectedAgentId] = useState<string>("plugin_builder");
+  const [selectedAgentId, setSelectedAgentId] = useState<string>("general");
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
