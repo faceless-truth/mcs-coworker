@@ -26,7 +26,7 @@ import queue
 import time
 import uuid
 from collections import deque
-from flask import Flask, Response, jsonify, request, stream_with_context, send_from_directory
+from flask import Flask, Response, jsonify, request, stream_with_context, send_from_directory, send_file
 from flask_cors import CORS
 
 # ── Backend imports ────────────────────────────────────────────────────────────
@@ -1560,6 +1560,77 @@ def chat_history():
 def clear_chat_history():
     clear_feedback_history()
     return ok()
+
+
+# ── Chat export (Word .docx) ──────────────────────────────────────────────────
+@app.route("/api/chat/export", methods=["POST"])
+def chat_export():
+    """Render the supplied conversation as a real Word document.
+
+    Body: {"agent_name": str, "messages": [{"role": "user"|"assistant", "content": str}, ...]}
+    """
+    from io import BytesIO
+    from docx import Document
+    from docx.shared import Pt
+
+    body = request.get_json(silent=True) or {}
+    agent_name = (body.get("agent_name") or "Assistant").strip() or "Assistant"
+    messages = body.get("messages") or []
+    if not isinstance(messages, list) or not messages:
+        return err("No messages to export")
+
+    doc = Document()
+
+    # Arial 11pt as the default for the Normal style.
+    normal = doc.styles["Normal"]
+    normal.font.name = "Arial"
+    normal.font.size = Pt(11)
+
+    # Title (Heading 1) + subtitle.
+    doc.add_heading(f"{agent_name} — Chat Export", level=1)
+    date_str = datetime.now().strftime("%d %B %Y, %I:%M %p")
+    subtitle = doc.add_paragraph()
+    subtitle.add_run(f"Date: {date_str}  |  Agent: {agent_name}").italic = True
+
+    doc.add_paragraph()  # blank spacer
+
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        role = m.get("role")
+        content = m.get("content", "")
+        if not isinstance(content, str):
+            content = str(content)
+        label = "User:" if role == "user" else f"{agent_name}:"
+        para = doc.add_paragraph()
+        label_run = para.add_run(label + " ")
+        label_run.bold = True
+        para.add_run(content)
+        doc.add_paragraph()  # blank line between turns
+
+    # Footer on all sections.
+    for section in doc.sections:
+        footer_para = section.footer.paragraphs[0]
+        footer_para.text = "MC & S Pty Ltd — Confidential"
+        for run in footer_para.runs:
+            run.font.name = "Arial"
+            run.font.size = Pt(9)
+
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+
+    safe_agent = re.sub(r"[^a-z0-9]+", "_", agent_name.lower()).strip("_") or "chat"
+    ts = datetime.now().strftime("%Y-%m-%d_%H%M")
+    filename = f"{safe_agent}_{ts}.docx"
+
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        as_attachment=True,
+        download_name=filename,
+    )
+
 
 # ── Microsoft OAuth callback ─────────────────────────────────────────────────
 @app.route("/auth/callback")

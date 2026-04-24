@@ -227,7 +227,7 @@ export default function Chat() {
     return md;
   };
 
-  const buildExportFilename = (): string => {
+  const fallbackFilename = (): string => {
     const now = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
     const ts =
@@ -237,17 +237,46 @@ export default function Chat() {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, "_")
       .replace(/^_+|_+$/g, "");
-    return `${safeName || "chat"}_${ts}.md`;
+    return `${safeName || "chat"}_${ts}.docx`;
   };
 
-  const handleExport = () => {
+  const parseFilenameFromHeader = (header: string | null): string | null => {
+    if (!header) return null;
+    const utf8 = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header);
+    if (utf8) return decodeURIComponent(utf8[1].trim().replace(/^"|"$/g, ""));
+    const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(header);
+    return plain ? plain[1].trim() : null;
+  };
+
+  const handleExport = async () => {
+    const agentName = selectedAgent?.name || "Assistant";
+    const firstUserIdx = messages.findIndex(m => m.role === "user");
+    const convo = firstUserIdx >= 0 ? messages.slice(firstUserIdx) : [];
+    if (convo.length === 0) {
+      toast.error("Nothing to export yet");
+      return;
+    }
     try {
-      const md = buildExportMarkdown();
-      const blob = new Blob([md], { type: "text/markdown;charset=utf-8" });
+      const res = await fetch("http://127.0.0.1:7842/api/chat/export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent_name: agentName,
+          messages: convo.map(m => ({ role: m.role, content: m.content })),
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      const blob = await res.blob();
+      const filename =
+        parseFilenameFromHeader(res.headers.get("Content-Disposition")) ||
+        fallbackFilename();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = buildExportFilename();
+      a.download = filename;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -335,7 +364,7 @@ export default function Chat() {
             <button
               onClick={handleExport}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-border bg-white text-slate-700 hover:border-blue-300 hover:text-blue-600 transition-all"
-              title="Download conversation as Markdown"
+              title="Download conversation as a Word document"
             >
               <Download className="w-3.5 h-3.5" />
               Export
