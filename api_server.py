@@ -683,7 +683,7 @@ def get_settings():
             s[key] = s[key][:4] + "••••••••••••••••••••"
     s["fast_model"] = get_claude_model_fast()
     s["reasoning_model"] = get_claude_model_reasoning()
-    s["opus_model"] = get_setting("opus_model", "claude-opus-4-0-20250514")
+    s["opus_model"] = get_setting("opus_model", "claude-opus-4-6")
     # Add Xero OAuth status
     try:
         from xero_oauth import is_configured as xero_is_configured, is_authorised as xero_is_authorised
@@ -1090,7 +1090,7 @@ def chat():
             max_tokens = 4096 if is_tier2 else 2048
         else:
             if agent.model_preference == "opus":
-                model = get_setting("opus_model") or "claude-opus-4-0-20250514"
+                model = get_setting("opus_model") or "claude-opus-4-6"
                 max_tokens = 4096
             elif agent.model_preference == "sonnet":
                 model = get_claude_model_reasoning()
