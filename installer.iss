@@ -50,7 +50,8 @@ Name: "desktopicon";  Description: "Create a &desktop shortcut";              Gr
 Name: "startupentry"; Description: "Start MCS CoWorker when &Windows starts"; GroupDescription: "Startup:";          Flags: unchecked
 
 [Files]
-Source: "{#MyBuildDir}\MCSCoWorker.vbs"; DestDir: "{app}"; Flags: ignoreversion
+; launch_silent.vbs ships as part of the cloned repo, so it arrives at
+; {app}\app\launch_silent.vbs via the line below — no separate copy needed.
 Source: "{#MyBuildDir}\python\*"; DestDir: "{app}\python"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#MyBuildDir}\app\*"; DestDir: "{app}\app"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#MyRepoDir}\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -61,12 +62,12 @@ Source: "{#MyBuildDir}\installer_extras\MicrosoftEdgeWebview2Setup.exe"; DestDir
 Name: "{app}\data"; Permissions: users-full
 
 [Icons]
-Name: "{group}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\MCSCoWorker.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\assets\icon.ico"
+Name: "{group}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\app\launch_silent.vbs"""; WorkingDir: "{app}\app"; IconFilename: "{app}\assets\icon.ico"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\MCSCoWorker.vbs"""; WorkingDir: "{app}"; IconFilename: "{app}\assets\icon.ico"; Tasks: desktopicon
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\app\launch_silent.vbs"""; WorkingDir: "{app}\app"; IconFilename: "{app}\assets\icon.ico"; Tasks: desktopicon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#MyAppName}"; ValueData: """{sys}\wscript.exe"" ""{app}\MCSCoWorker.vbs"""; Flags: uninsdeletevalue; Tasks: startupentry
+Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: string; ValueName: "{#MyAppName}"; ValueData: """{sys}\wscript.exe"" ""{app}\app\launch_silent.vbs"""; Flags: uninsdeletevalue; Tasks: startupentry
 
 [Run]
 ; Install the WebView2 Runtime first — pywebview's edgechromium backend
@@ -75,7 +76,7 @@ Filename: "{tmp}\MicrosoftEdgeWebview2Setup.exe"; Parameters: "/silent /install"
     StatusMsg: "Installing Microsoft WebView2 Runtime..."; \
     Flags: runhidden waituntilterminated; \
     Check: not IsWebView2Installed
-Filename: "{sys}\wscript.exe"; Parameters: """{app}\MCSCoWorker.vbs"""; WorkingDir: "{app}"; Description: "Launch {#MyAppName} now"; Flags: nowait postinstall skipifsilent
+Filename: "{sys}\wscript.exe"; Parameters: """{app}\app\launch_silent.vbs"""; WorkingDir: "{app}\app"; Description: "Launch {#MyAppName} now"; Flags: nowait postinstall skipifsilent
 
 [Code]
 // Detect whether the Edge WebView2 Runtime is already installed on the
