@@ -180,17 +180,89 @@ def _register_startup():
         log.warning(f"Could not register startup: {e}")
 
 
+# Stable identifier so Windows groups our windows under our own taskbar entry
+# (and shows the icon set via WM_SETICON) instead of grouping under pythonw.exe.
+APP_USER_MODEL_ID = "MCandS.CoWorker.Desktop.1"
+WINDOW_TITLE = "MC & S CoWorker"
+
+
+def _icon_path() -> Path | None:
+    """Resolve the bundled icon.ico across dev and production layouts.
+
+    Production: {install_dir}\\assets\\icon.ico (installer copies assets/* there).
+    Dev:        {repo}\\assets\\icon.ico.
+    """
+    for cand in (
+        INSTALL_DIR / "assets" / "icon.ico",
+        BASE_DIR / "assets" / "icon.ico",
+    ):
+        if cand.exists():
+            return cand
+    return None
+
+
+def _set_app_user_model_id():
+    """Tell Windows we're a distinct app, not just another pythonw.exe instance.
+    Must be called before any window is shown for the taskbar grouping to apply."""
+    try:
+        import ctypes
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+    except Exception as e:
+        log.debug(f"Could not set AppUserModelID: {e}")
+
+
+def _apply_window_icon():
+    """Set the pywebview window's title-bar and taskbar icon via Win32 WM_SETICON.
+    pywebview's edgechromium backend doesn't expose an icon parameter, so we
+    locate the HWND by title after the page has loaded and push the icon in."""
+    ico = _icon_path()
+    if ico is None:
+        log.warning("No icon.ico found — taskbar/title-bar will use default")
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        WM_SETICON      = 0x0080
+        ICON_SMALL      = 0
+        ICON_BIG        = 1
+        IMAGE_ICON      = 1
+        LR_LOADFROMFILE = 0x0010
+
+        user32 = ctypes.windll.user32
+        user32.LoadImageW.restype = wintypes.HANDLE
+        user32.FindWindowW.restype = wintypes.HWND
+        user32.SendMessageW.restype = wintypes.LPARAM
+
+        hwnd = user32.FindWindowW(None, WINDOW_TITLE)
+        if not hwnd:
+            log.debug("Window not found yet — skipping icon set")
+            return
+
+        hicon_small = user32.LoadImageW(0, str(ico), IMAGE_ICON, 16, 16, LR_LOADFROMFILE)
+        hicon_big   = user32.LoadImageW(0, str(ico), IMAGE_ICON, 32, 32, LR_LOADFROMFILE)
+
+        if hicon_small:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
+        if hicon_big:
+            user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
+        log.info(f"Window icon applied from {ico}")
+    except Exception as e:
+        log.warning(f"Could not set window icon: {e}")
+
+
 def _build_tray_icon():
-    """Build a pystray Icon using the app's icon.ico, or a generated fallback."""
+    """Build a pystray Icon image using the app's icon.ico, or a generated fallback."""
     try:
         from PIL import Image as PILImage
-        icon_path = INSTALL_DIR / "icon.ico"
-        if icon_path.exists():
-            img = PILImage.open(str(icon_path))
+        ico = _icon_path()
+        if ico is not None:
+            img = PILImage.open(str(ico))
             # pystray needs RGBA
             img = img.convert("RGBA")
         else:
-            # Fallback: simple navy square with white "M"
+            log.warning("No icon.ico found — using fallback tray square")
+            # Fallback: simple navy square
             img = PILImage.new("RGBA", (64, 64), (15, 52, 96, 255))
         return img
     except Exception as e:
@@ -200,6 +272,10 @@ def _build_tray_icon():
 
 def main():
     log.info("MC & S CoWorker starting...")
+
+    # Set our AppUserModelID before any window appears, otherwise Windows
+    # groups our taskbar entry under pythonw.exe and ignores WM_SETICON.
+    _set_app_user_model_id()
 
     # Register in Windows startup (silent, HKCU only)
     _register_startup()
@@ -229,7 +305,7 @@ def main():
     log.info(f"Opening window: {url}")
 
     window = webview.create_window(
-        title="MC & S CoWorker",
+        title=WINDOW_TITLE,
         url=url,
         width=1280,
         height=800,
@@ -251,6 +327,8 @@ def main():
             )
         except Exception:
             pass
+        # Apply the taskbar/title-bar icon now that the native window exists.
+        _apply_window_icon()
 
     window.events.loaded += on_loaded
 
