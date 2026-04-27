@@ -218,15 +218,18 @@ class DebtorFollowUpPlugin(AgentPlugin):
             return (f"<p>Dear {client_name},</p>"
                     f"<p>We wish to draw your attention to an outstanding invoice of "
                     f"${balance:,.2f} which is now {days_overdue} days overdue.</p>"
-                    f"<p>Please arrange payment at your earliest convenience.</p>"
-                    f"<p>Kind regards,<br>{practice}</p>")
+                    f"<p>Please arrange payment at your earliest convenience.</p>")
         try:
             prompt = (f"Write a {tone} email from {practice} to {client_name} "
                       f"({client_email}) regarding an outstanding invoice of "
                       f"${balance:,.2f} that is {days_overdue} days overdue. "
                       f"This is follow-up number {prior_followups + 1}. "
                       "Keep it professional, concise, and relationship-preserving. "
-                      "Include a clear call to action. Return HTML body only.")
+                      "Include a clear call to action. Return HTML body only.\n\n"
+                      "Do NOT include any sign-off, closing, or signature in your "
+                      "draft. No Kind regards, no Best regards, no name, no company "
+                      "name. The email signature is appended automatically — just end "
+                      "with your last sentence of actual content.")
             resp = context.claude_fast.messages.create(
                 model=self.get_claude_model_fast(),
                 max_tokens=400,
@@ -236,5 +239,4 @@ class DebtorFollowUpPlugin(AgentPlugin):
             return (f"<p>Dear {client_name},</p>"
                     f"<p>We wish to draw your attention to an outstanding invoice of "
                     f"${balance:,.2f} which is now {days_overdue} days overdue.</p>"
-                    f"<p>Please arrange payment at your earliest convenience.</p>"
-                    f"<p>Kind regards,<br>{practice}</p>")
+                    f"<p>Please arrange payment at your earliest convenience.</p>")

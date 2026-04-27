@@ -361,8 +361,7 @@ class BASReminderPlugin(AgentPlugin):
                     f"<p>This is a reminder that your {freq_label} BAS lodgement "
                     f"is due on <strong>{due_str}</strong> ({days_left} days away).</p>"
                     f"<p>Please provide your records at your earliest convenience "
-                    f"so we can prepare and lodge on time.</p>"
-                    f"<p>Kind regards,<br>{practice}</p>")
+                    f"so we can prepare and lodge on time.</p>")
         try:
             policy_block = (
                 f"\n\nFirm BAS policy (for reference, do not quote verbatim):\n{policy_text}"
@@ -373,7 +372,11 @@ class BASReminderPlugin(AgentPlugin):
                 f"The BAS is due on {due_str} ({days_left} days away). "
                 f"Mention that this is their {freq_label} BAS. "
                 f"Ask the client to provide their records. Keep it brief and friendly. "
-                f"Return HTML body only."
+                f"Return HTML body only.\n\n"
+                f"Do NOT include any sign-off, closing, or signature in your "
+                f"draft. No Kind regards, no Best regards, no name, no company "
+                f"name. The email signature is appended automatically — just end "
+                f"with your last sentence of actual content."
                 f"{policy_block}")
             resp = context.claude_fast.messages.create(
                 model=self.get_claude_model_fast(),
@@ -383,5 +386,4 @@ class BASReminderPlugin(AgentPlugin):
         except Exception:
             return (f"<p>Dear {client_name},</p>"
                     f"<p>Your {freq_label} BAS is due on {due_str}. "
-                    f"Please provide your records.</p>"
-                    f"<p>Kind regards,<br>{practice}</p>")
+                    f"Please provide your records.</p>")

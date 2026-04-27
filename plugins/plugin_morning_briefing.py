@@ -559,6 +559,8 @@ Today is {today}. Staff profile: {staff_profile}.
 
 {mode_instruction}{digest_instruction}
 
+Do NOT include any sign-off, closing, or signature in your draft. No Kind regards, no Best regards, no name, no company name. The email signature is appended automatically — just end with your last sentence of actual content.
+
 --- DATA ---
 {raw_data}
 {lessons_text}

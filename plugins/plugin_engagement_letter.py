@@ -216,7 +216,12 @@ class EngagementLetterPlugin(AgentPlugin):
                       "3. State client responsibilities\n"
                       "4. Include a signature block for the client\n"
                       "5. Be professional, clear, and ATO-compliant\n"
-                      "Return the full letter as plain text (no HTML).")
+                      "Return the full letter as plain text (no HTML).\n\n"
+                      "Do NOT include any sign-off, closing, or signature in your "
+                      "draft. No Kind regards, no Best regards, no Yours sincerely, "
+                      "no name, no company name. The email signature is appended "
+                      "automatically — just end with your last sentence of actual "
+                      "content before the client signature block.")
             resp = context.claude_reason.messages.create(
                 model=self.get_claude_model_reasoning(),
                 max_tokens=1000,
@@ -234,5 +239,4 @@ class EngagementLetterPlugin(AgentPlugin):
                 f"{services_str}\n\n"
                 f"Our fees will be discussed and agreed upon prior to commencement of work.\n\n"
                 f"Please sign below to confirm your acceptance of these terms.\n\n"
-                f"Yours sincerely,\n{practice}\n\n"
                 f"Client signature: ___________________  Date: ___________")

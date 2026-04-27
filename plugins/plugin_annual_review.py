@@ -223,14 +223,17 @@ class AnnualReviewPlugin(AgentPlugin):
             return (f"<p>Dear {client_name},</p>"
                     f"<p>It has been a while since we last connected and we would love "
                     f"to schedule your annual review meeting.</p>"
-                    f"<p>Please reply to arrange a convenient time.</p>"
-                    f"<p>Kind regards,<br>{practice}</p>")
+                    f"<p>Please reply to arrange a convenient time.</p>")
         try:
             prompt = (f"Write a warm, professional annual review invitation email from "
                       f"{practice} to {client_name}. Mention it has been about a year, "
                       "invite them to book a meeting, and highlight the value of the review "
                       "(tax planning, business health, goals). Keep it under 150 words. "
-                      "Return HTML body only.")
+                      "Return HTML body only.\n\n"
+                      "Do NOT include any sign-off, closing, or signature in your "
+                      "draft. No Kind regards, no Best regards, no name, no company "
+                      "name. The email signature is appended automatically — just end "
+                      "with your last sentence of actual content.")
             resp = context.claude_fast.messages.create(
                 model=self.get_claude_model_fast(),
                 max_tokens=300,
@@ -238,5 +241,4 @@ class AnnualReviewPlugin(AgentPlugin):
             return resp.content[0].text.strip()
         except Exception:
             return (f"<p>Dear {client_name},</p>"
-                    f"<p>We would like to invite you to your annual review meeting.</p>"
-                    f"<p>Kind regards,<br>{practice}</p>")
+                    f"<p>We would like to invite you to your annual review meeting.</p>")
