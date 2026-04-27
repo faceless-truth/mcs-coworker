@@ -113,7 +113,6 @@ mcs-coworker/
 |------|---------|
 | `plugin_smart_responder.py` | Unified email classification, triage, and auto-reply (replaces the retired triage/ross/elio/reply plugins) |
 | `plugin_noa_processor.py` | Notice of Assessment detection + cover email |
-| `plugin_tax_return_processor.py` | Tax-return workflow automation |
 | `plugin_asic_returns.py` | Parse ASIC reminder emails, log/calendar |
 | `plugin_bas_reminder.py` | BAS reminders |
 | `plugin_debtor_followup.py` | Aged-debtor progressive follow-up |
