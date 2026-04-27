@@ -41,9 +41,27 @@ from config import (
     get_setting, log_activity, get_knowledge_entries,
 )
 from prompt_utils import wrap_untrusted_content, UNTRUSTED_CONTENT_SYSTEM_PROMPT
+from bas_dates import format_bas_dates_for_prompt
 
 
 NO_REPLY_TOKEN = "NO_REPLY"
+
+# Trigger phrases that mean we should give Claude the calculated BAS dates as
+# extra context. Matched case-insensitively against subject + body.
+BAS_KEYWORDS = (
+    "bas",
+    "business activity statement",
+    "quarterly",
+    "lodgement",
+    "lodgment",
+    "activity statement",
+    "gst return",
+)
+
+
+def _is_bas_email(subject: str, body: str) -> bool:
+    haystack = f"{subject or ''}\n{body or ''}".lower()
+    return any(kw in haystack for kw in BAS_KEYWORDS)
 
 
 class SmartEmailResponderPlugin(AgentPlugin):
@@ -284,6 +302,18 @@ class SmartEmailResponderPlugin(AgentPlugin):
         )
         if staff_profile:
             system += f"\n\nStaff profile hint: {staff_profile}"
+
+        if _is_bas_email(subject, body):
+            try:
+                system += (
+                    "\n\nBAS LODGEMENT DATES (calculated, current)\n"
+                    "==========================================\n"
+                    + format_bas_dates_for_prompt()
+                    + "\n\nWhen the client asks about BAS due dates, use the "
+                    "agent due dates above (we lodge under the tax agent program)."
+                )
+            except Exception:
+                pass
 
         # The email body is attacker-controlled — wrap it in a tag and add a
         # system-prompt addendum that marks the tag as DATA, not instructions.

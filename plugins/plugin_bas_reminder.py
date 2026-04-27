@@ -37,15 +37,13 @@ from config import (
     get_bas_clients, update_bas_client,
     get_knowledge_entries,
 )
+from bas_dates import (
+    get_bas_dates,
+    get_next_due_quarter,
+    get_upcoming_deadlines,
+    get_financial_year,
+)
 
-
-# ATO quarterly BAS due dates (day, month) — lodgement agent extended dates
-QUARTERLY_DUE_DATES = [
-    (28, 10),   # Q1: Jul-Sep due 28 Oct
-    (28, 2),    # Q2: Oct-Dec due 28 Feb
-    (28, 4),    # Q3: Jan-Mar due 28 Apr
-    (28, 7),    # Q4: Apr-Jun due 28 Jul
-]
 
 # Annual BAS (for eligible small businesses lodging an Annual GST Return)
 ANNUAL_DUE_DATE = (28, 2)  # 28 February of the following year
@@ -294,7 +292,12 @@ class BASReminderPlugin(AgentPlugin):
 
     def _get_upcoming_due_dates(self, frequency: str, today: date,
                                  lead_days: int) -> list:
-        """Return due dates within the lead window for the given frequency."""
+        """Return agent due dates within the lead window for the given frequency.
+
+        For quarterly clients, dates are pulled from ``bas_dates.get_upcoming_deadlines``
+        so the firm's ATO tax-agent program dates (with weekend rollovers) are used —
+        not the standard ATO public dates.
+        """
         upcoming: list = []
         freq = (frequency or "").strip().lower()
 
@@ -330,23 +333,38 @@ class BASReminderPlugin(AgentPlugin):
                     break
 
         else:
-            # Default / quarterly.
-            for day, month in QUARTERLY_DUE_DATES:
-                year = today.year
-                try:
-                    due = date(year, month, day)
-                except ValueError:
-                    due = date(year, month, 28)
-                if due < today:
-                    try:
-                        due = date(year + 1, month, day)
-                    except ValueError:
-                        due = date(year + 1, month, 28)
-                days_until = (due - today).days
-                if 0 <= days_until <= lead_days:
+            # Default / quarterly — driven by bas_dates utility (tax agent program).
+            seen: set = set()
+            for q in get_upcoming_deadlines(days_ahead=lead_days, reference_date=today):
+                due = q.get("agent_due")
+                if due and due not in seen:
+                    seen.add(due)
                     upcoming.append(due)
 
         return upcoming
+
+    def _reminder_stage(self, due_date: date, frequency: str,
+                         today: date) -> str:
+        """Classify the reminder cadence stage for a given due date.
+
+        Returns one of: ``"final"`` (≤5 days), ``"data_request"`` (≤data_request_by),
+        ``"first"`` (≤30 days), or ``"early"`` otherwise. Only quarterly clients
+        carry a data_request_by date; for monthly/annual we fall back to first/final.
+        """
+        days_until = (due_date - today).days
+        if days_until <= 5:
+            return "final"
+        freq = (frequency or "").strip().lower()
+        if freq not in ("monthly", "annual"):
+            for q in get_bas_dates(get_financial_year(today)) + \
+                     get_bas_dates(get_financial_year(today) + 1):
+                if q["agent_due"] == due_date:
+                    if today >= q["data_request_by"]:
+                        return "data_request"
+                    break
+        if days_until <= 30:
+            return "first"
+        return "early"
 
     def _draft_reminder(self, context: PluginContext, client_name: str,
                          due_date: date, frequency: str, policy_text: str) -> str:

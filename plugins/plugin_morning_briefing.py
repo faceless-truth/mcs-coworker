@@ -38,6 +38,7 @@ import requests
 from datetime import datetime, date, timedelta
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity, get_active_lessons
+from bas_dates import get_upcoming_deadlines, get_next_due_quarter
 
 
 # ── Industry digest sources ───────────────────────────────────────────────────
@@ -227,13 +228,19 @@ class MorningBriefingPlugin(AgentPlugin):
             sections.append(noa_section)
             actionable += noa_count
 
-        # 5. Inbox summary
+        # 5. BAS deadlines (next 14 days)
+        bas_section, bas_count = self._gather_bas_deadlines(days_ahead=14)
+        if bas_section:
+            sections.append(bas_section)
+            actionable += bas_count
+
+        # 6. Inbox summary
         if self.get_plugin_setting("include_inbox_summary", "1") == "1":
             inbox_section = self._gather_inbox_summary(context)
             if inbox_section:
                 sections.append(inbox_section)
 
-        # 6. Pending approvals
+        # 7. Pending approvals
         approvals_section, appr_count = self._gather_pending_approvals(context)
         if approvals_section:
             sections.append(approvals_section)
@@ -276,19 +283,25 @@ class MorningBriefingPlugin(AgentPlugin):
             sections.append(approvals_section)
             actionable += appr_count
 
-        # 3. Inbox summary
+        # 3. BAS deadlines (next 14 days)
+        bas_section, bas_count = self._gather_bas_deadlines(days_ahead=14)
+        if bas_section:
+            sections.append(bas_section)
+            actionable += bas_count
+
+        # 4. Inbox summary
         if self.get_plugin_setting("include_inbox_summary", "1") == "1":
             inbox_section = self._gather_inbox_summary(context)
             if inbox_section:
                 sections.append(inbox_section)
 
-        # 4. Memory context
+        # 5. Memory context
         if self.get_plugin_setting("include_memory_context", "1") == "1":
             memory_section = self._gather_memory_context(context, today)
             if memory_section:
                 sections.append(memory_section)
 
-        # 5. Monday industry digest
+        # 6. Monday industry digest
         digest_section = ""
         if is_monday and self.get_plugin_setting("monday_digest", "1") == "1":
             digest_section = self._gather_industry_digest(context)
@@ -385,6 +398,59 @@ class MorningBriefingPlugin(AgentPlugin):
             return "\n".join(lines), actionable
         except Exception as e:
             return f"Debtor data unavailable: {e}", 0
+
+    def _gather_bas_deadlines(self, days_ahead: int = 14) -> tuple[str, int]:
+        """Surface upcoming BAS lodgement deadlines for the next N days.
+
+        Cross-references the bas_clients table to count clients still in the
+        ``Awaiting Data`` state for the next due quarter. Returns the section
+        text and an actionable count (number of awaiting-data clients for the
+        next due cycle).
+        """
+        try:
+            upcoming = get_upcoming_deadlines(days_ahead=days_ahead)
+            if not upcoming:
+                return "", 0
+
+            next_due = get_next_due_quarter()
+            awaiting_count = 0
+            if next_due:
+                try:
+                    from config import get_bas_clients
+                    clients = get_bas_clients() or []
+                    awaiting_count = sum(
+                        1 for c in clients
+                        if (c.get("status") or "Awaiting Data").strip() == "Awaiting Data"
+                    )
+                except Exception:
+                    awaiting_count = 0
+
+            lines = ["BAS Deadlines (next 14 days):"]
+            seen: set = set()
+            for q in upcoming:
+                key = (q.get("quarter"), q.get("agent_due"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                agent_due = q.get("agent_due")
+                drb = q.get("data_request_by")
+                days_until = q.get("days_until_due")
+                if days_until is None and agent_due:
+                    days_until = (agent_due - date.today()).days
+                lines.append(
+                    f"  • {q.get('quarter')} ({q.get('period')}) — "
+                    f"agent due {agent_due.strftime('%d %b %Y')} "
+                    f"({days_until} days). Data needed by "
+                    f"{drb.strftime('%d %b %Y')}."
+                )
+            if awaiting_count and next_due:
+                lines.append(
+                    f"  {awaiting_count} BAS client(s) still 'Awaiting Data' "
+                    f"for {next_due['quarter']}."
+                )
+            return "\n".join(lines), awaiting_count
+        except Exception:
+            return "", 0
 
     def _gather_noa_queue(self) -> tuple[str, int]:
         """Return count of unprocessed NOA emails from the NOA processor DB."""
