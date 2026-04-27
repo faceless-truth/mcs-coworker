@@ -69,6 +69,8 @@ class SmartEmailResponderPlugin(AgentPlugin):
     requires_claude = True
     category        = PluginCategory.UNIVERSAL
 
+    MODEL_TIER = "sonnet"
+
     default_schedule = Schedule.every_seconds(60)
 
     @classmethod
