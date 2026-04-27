@@ -45,7 +45,8 @@ function useSystemStatus() {
       try {
         const res = await fetch(`${API_BASE}/api/system/status`);
         if (res.ok) {
-          const data = await res.json();
+          const json = await res.json();
+          const data = (json && typeof json === "object" && "data" in json) ? json.data : json;
           setStatus(data);
         }
       } catch (_) {
