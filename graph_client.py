@@ -295,38 +295,52 @@ class GraphClient:
         """Save a draft reply without sending it. Returns the draft message ID."""
         body_html = self._append_signature(body_html)
         if reply_to_id:
-            # Create a reply draft
-            url = f"{GRAPH_BASE}/me/messages/{reply_to_id}/createReply"
-            r = requests.post(url, headers=self._headers(), timeout=30, json={})
-            r.raise_for_status()
-            draft = r.json()
-            draft_id = draft["id"]
+            try:
+                draft_id = self._create_threaded_reply_draft(reply_to_id, body_html)
+                self._reopen_original(reply_to_id)
+                return draft_id
+            except Exception as e:
+                logger.warning(
+                    "createReply failed for %s: %s — falling back to standalone draft",
+                    reply_to_id, e,
+                )
+                # Fall through to standalone draft below.
 
-            # Update the draft with our content
-            update_url = f"{GRAPH_BASE}/me/messages/{draft_id}"
-            r2 = requests.patch(
-                update_url,
-                headers=self._headers(), timeout=30,
-                json={
-                    "subject": subject,
-                    "body": {"contentType": "HTML", "content": body_html},
-                },
-            )
-            r2.raise_for_status()
-            self._reopen_original(reply_to_id)
-            return draft_id
-        else:
-            # Create a fresh draft
-            url = f"{GRAPH_BASE}/me/messages"
-            payload = {
-                "subject": subject,
-                "body": {"contentType": "HTML", "content": body_html},
-                "toRecipients": [{"emailAddress": {"address": to_address}}],
-                "isDraft": True,
-            }
-            r = requests.post(url, headers=self._headers(), timeout=30, json=payload)
-            r.raise_for_status()
-            return r.json()["id"]
+        url = f"{GRAPH_BASE}/me/messages"
+        payload = {
+            "subject": subject,
+            "body": {"contentType": "HTML", "content": body_html},
+            "toRecipients": [{"emailAddress": {"address": to_address}}],
+            "isDraft": True,
+        }
+        r = requests.post(url, headers=self._headers(), timeout=30, json=payload)
+        r.raise_for_status()
+        return r.json()["id"]
+
+    def _create_threaded_reply_draft(self, reply_to_id: str, body_html: str) -> str:
+        """Create a reply draft linked to the original conversation.
+
+        Uses Graph's `createReply` so the draft inherits the original's
+        conversationId, To, "Re: " subject, and quoted body. We then PATCH our
+        AI-generated body in *above* the quoted original so the accountant can
+        see the conversation context. Returns the new draft's id.
+        """
+        url = f"{GRAPH_BASE}/me/messages/{reply_to_id}/createReply"
+        r = requests.post(url, headers=self._headers(), timeout=30, json={})
+        r.raise_for_status()
+        draft = r.json()
+        draft_id = draft["id"]
+
+        quoted_body = (draft.get("body") or {}).get("content", "")
+        combined = body_html + quoted_body
+
+        update_url = f"{GRAPH_BASE}/me/messages/{draft_id}"
+        r2 = requests.patch(
+            update_url, headers=self._headers(), timeout=30,
+            json={"body": {"contentType": "HTML", "content": combined}},
+        )
+        r2.raise_for_status()
+        return draft_id
 
     def _reopen_original(self, message_id: str) -> None:
         """Flip the original email back to unread so the accountant sees
@@ -641,23 +655,19 @@ class GraphClient:
         import base64
         body_html = self._append_signature(body_html)
 
-        # Create the draft first
+        threaded = False
+        draft_id = None
         if reply_to_id:
-            url = f"{GRAPH_BASE}/me/messages/{reply_to_id}/createReply"
-            r = requests.post(url, headers=self._headers(), timeout=30, json={})
-            r.raise_for_status()
-            draft = r.json()
-            draft_id = draft["id"]
-            update_url = f"{GRAPH_BASE}/me/messages/{draft_id}"
-            r2 = requests.patch(
-                update_url, headers=self._headers(), timeout=30,
-                json={
-                    "subject": subject,
-                    "body": {"contentType": "HTML", "content": body_html},
-                },
-            )
-            r2.raise_for_status()
-        else:
+            try:
+                draft_id = self._create_threaded_reply_draft(reply_to_id, body_html)
+                threaded = True
+            except Exception as e:
+                logger.warning(
+                    "createReply failed for %s: %s — falling back to standalone draft",
+                    reply_to_id, e,
+                )
+
+        if draft_id is None:
             url = f"{GRAPH_BASE}/me/messages"
             payload = {
                 "subject": subject,
@@ -669,7 +679,6 @@ class GraphClient:
             r.raise_for_status()
             draft_id = r.json()["id"]
 
-        # Add attachments to the draft
         if attachment_paths:
             for path in attachment_paths:
                 filename = os.path.basename(path)
@@ -684,7 +693,7 @@ class GraphClient:
                 r = requests.post(att_url, headers=self._headers(), timeout=30, json=att_payload)
                 r.raise_for_status()
 
-        if reply_to_id:
+        if threaded:
             self._reopen_original(reply_to_id)
 
         return draft_id
