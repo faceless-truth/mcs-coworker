@@ -69,7 +69,7 @@ class SmartEmailResponderPlugin(AgentPlugin):
     requires_claude = True
     category        = PluginCategory.UNIVERSAL
 
-    default_schedule = Schedule.every_minutes(1)
+    default_schedule = Schedule.every_seconds(60)
 
     @classmethod
     def settings_schema(cls) -> list[dict]:
@@ -84,7 +84,7 @@ class SmartEmailResponderPlugin(AgentPlugin):
         if not context.graph:
             context.log("🧠 Smart Email Responder: Microsoft 365 not connected.")
             return False
-        if not (context.claude or context.claude_fast):
+        if not (context.claude_reason or context.claude):
             context.log("🧠 Smart Email Responder: Claude not configured.")
             return False
         return True
@@ -94,7 +94,7 @@ class SmartEmailResponderPlugin(AgentPlugin):
     def run(self, context: PluginContext) -> PluginResult:
         result = PluginResult()
         graph = context.graph
-        claude = context.claude_fast or context.claude
+        claude = context.claude_reason or context.claude
 
         if graph is None or claude is None:
             result.success = False
@@ -127,7 +127,7 @@ class SmartEmailResponderPlugin(AgentPlugin):
         drafted = 0
         skipped = 0
         errors  = 0
-        model = self.get_claude_model_fast()
+        model = self.get_claude_model_reasoning()
 
         for email in emails:
             subject = email.get("subject", "(no subject)")
