@@ -22,6 +22,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from client_utils import normalise_client_name, is_entity_name, format_memory_metadata
+
 logger = logging.getLogger(__name__)
 
 
@@ -85,6 +87,7 @@ class MemoryStore:
         content: Optional[str] = None,
         client_name: Optional[str] = None,
         client_email: Optional[str] = None,
+        entity_name: Optional[str] = None,
         interaction_type: str = "email",
         summary: Optional[str] = None,
         extra_meta: Optional[Dict] = None,
@@ -106,13 +109,18 @@ class MemoryStore:
             "epoch": int(time.time()),
         }
 
+        # Normalise client_name to "Surname, First Name" so all plugins agree.
+        if client_name:
+            client_name = normalise_client_name(client_name)
+        if client_email and not client_name:
+            client_name = normalise_client_name(client_email)
+
         if client_name:
             meta["client_name"] = client_name
         if client_email:
             meta["client_email"] = client_email
-            if not client_name:
-                # Derive a readable client_name from email for later filtering.
-                meta["client_name"] = client_email.split("@")[0].replace(".", " ").title()
+        if entity_name:
+            meta["entity_name"] = entity_name
 
         extra = extra_meta or metadata or {}
         for k, v in extra.items():
@@ -166,6 +174,11 @@ class MemoryStore:
         n_results = min(n_results, total)
         effective_filters = filters if filters is not None else where
 
+        # Normalise client_name in filters so search matches stored entries.
+        if effective_filters and isinstance(effective_filters, dict) and "client_name" in effective_filters:
+            effective_filters = dict(effective_filters)
+            effective_filters["client_name"] = normalise_client_name(effective_filters["client_name"])
+
         try:
             results = col.query(
                 query_texts=[query],
@@ -201,6 +214,8 @@ class MemoryStore:
         """All stored interactions for a client, sorted by recency (newest first)."""
         if self._interactions.count() == 0:
             return []
+
+        client_name = normalise_client_name(client_name)
 
         try:
             results = self._interactions.get(
@@ -247,9 +262,10 @@ class MemoryStore:
 
         resolved_name = client_name
         if not resolved_name and client_email:
-            resolved_name = client_email.split("@")[0].replace(".", " ").title()
+            resolved_name = client_email
         if not resolved_name:
             return []
+        resolved_name = normalise_client_name(resolved_name)
 
         if query:
             return self.search(
@@ -259,6 +275,43 @@ class MemoryStore:
                 collection="interactions",
             )
         return self.get_client_history(resolved_name, n_results)
+
+    def get_all_clients(self) -> List[str]:
+        """Return a sorted list of all unique client names stored in memory."""
+        if self._interactions.count() == 0:
+            return []
+        try:
+            results = self._interactions.get(
+                include=["metadatas"],
+                limit=self._interactions.count(),
+            )
+            names = set()
+            if results and results.get("metadatas"):
+                for meta in results["metadatas"]:
+                    if meta and meta.get("client_name"):
+                        names.add(meta["client_name"])
+            return sorted(names)
+        except Exception as e:
+            logger.error("get_all_clients failed: %s", e, exc_info=True)
+            return []
+
+    def get_client_entities(self, client_name: str) -> List[str]:
+        """Return all entity names stored under a client."""
+        client_name = normalise_client_name(client_name)
+        try:
+            results = self._interactions.get(
+                where={"client_name": client_name},
+                include=["metadatas"],
+                limit=1000,
+            )
+            entities = set()
+            if results and results.get("metadatas"):
+                for meta in results["metadatas"]:
+                    if meta and meta.get("entity_name"):
+                        entities.add(meta["entity_name"])
+            return sorted(entities)
+        except Exception:
+            return []
 
     # ── Lessons (from approval queue) ───────────────────────────────────
 
