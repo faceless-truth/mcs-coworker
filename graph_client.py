@@ -52,6 +52,8 @@ def _save_token_cache(cache: msal.SerializableTokenCache) -> None:
 GRAPH_SCOPES = [
     "Mail.ReadWrite",
     "Mail.Send",
+    "Sites.ReadWrite.All",
+    "Files.ReadWrite.All",
 ]
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
@@ -830,6 +832,220 @@ class GraphClient:
         """Create a mail folder if it doesn't exist. Returns folder ID."""
         return self._resolve_folder_id(folder_name)
 
+
+    # ── SharePoint ───────────────────────────────────────────────────────────
+
+    def _make_request(self, method: str, url: str, json=None,
+                      data=None, headers: dict = None):
+        """Generic Graph API helper used by SharePoint methods.
+
+        Returns the parsed JSON body on success, or None on 404 / HTTP error
+        so callers can degrade gracefully rather than raising. Existing
+        Outlook methods keep their explicit raise_for_status() behaviour.
+        """
+        request_headers = self._headers()
+        if headers:
+            # Allow Content-Type override (e.g., octet-stream for uploads).
+            request_headers.update(headers)
+        try:
+            kwargs = {"headers": request_headers, "timeout": 60}
+            if json is not None:
+                kwargs["json"] = json
+            if data is not None:
+                kwargs["data"] = data
+            method_upper = method.upper()
+            r = requests.request(method_upper, url, **kwargs)
+            if r.status_code == 404:
+                return None
+            if r.status_code >= 400:
+                logger.warning(
+                    "Graph API %s %s returned %s: %s",
+                    method_upper, url, r.status_code, r.text[:200],
+                )
+                return None
+            try:
+                return r.json()
+            except ValueError:
+                return {}
+        except Exception as e:
+            logger.error("Graph API %s %s failed: %s", method, url, e)
+            return None
+
+    def _get_sharepoint_config(self) -> dict:
+        """Read SharePoint config from settings."""
+        from config import get_setting
+        return {
+            "site_url": get_setting("sharepoint_site_url", ""),
+            "library": get_setting("sharepoint_library", "Documents"),
+            "client_base": get_setting("sharepoint_client_base", "Clients"),
+        }
+
+    def get_sharepoint_site_id(self) -> str | None:
+        """Resolve the SharePoint site ID from the configured URL."""
+        config = self._get_sharepoint_config()
+        if not config["site_url"]:
+            return None
+        parsed = urlparse(config["site_url"])
+        hostname = parsed.hostname
+        site_path = parsed.path or ""
+        if not hostname:
+            return None
+        url = f"{GRAPH_BASE}/sites/{hostname}:{site_path}"
+        result = self._make_request("GET", url)
+        if result and "id" in result:
+            return result["id"]
+        return None
+
+    def get_sharepoint_drive_id(self, site_id: str) -> str | None:
+        """Get the drive ID for the configured document library."""
+        config = self._get_sharepoint_config()
+        url = f"{GRAPH_BASE}/sites/{site_id}/drives"
+        result = self._make_request("GET", url)
+        if result and "value" in result:
+            for drive in result["value"]:
+                if drive.get("name", "").lower() == config["library"].lower():
+                    return drive["id"]
+            # Fallback: return the first drive
+            if result["value"]:
+                return result["value"][0]["id"]
+        return None
+
+    def sharepoint_folder_exists(self, client_name: str,
+                                 entity_name: str = None) -> bool:
+        """Check if a client folder exists in SharePoint."""
+        site_id = self.get_sharepoint_site_id()
+        if not site_id:
+            return False
+        drive_id = self.get_sharepoint_drive_id(site_id)
+        if not drive_id:
+            return False
+        config = self._get_sharepoint_config()
+        folder_path = f"{config['client_base']}/{client_name}"
+        if entity_name:
+            folder_path += f"/{entity_name}"
+        url = f"{GRAPH_BASE}/drives/{drive_id}/root:/{folder_path}"
+        result = self._make_request("GET", url)
+        return result is not None and "id" in result
+
+    def upload_to_sharepoint(
+        self,
+        file_content: bytes,
+        filename: str,
+        client_name: str,
+        entity_name: str = None,
+        subfolder: str = None,
+    ) -> str | None:
+        """Upload a file to a client's SharePoint folder.
+
+        Returns the SharePoint webUrl if successful, None if failed.
+        Path: /{library}/{client_base}/{client_name}/{entity_name}/{subfolder}/{filename}
+        """
+        site_id = self.get_sharepoint_site_id()
+        if not site_id:
+            logger.error("SharePoint site ID not found — check sharepoint_site_url setting")
+            return None
+        drive_id = self.get_sharepoint_drive_id(site_id)
+        if not drive_id:
+            logger.error("SharePoint drive ID not found — check sharepoint_library setting")
+            return None
+
+        config = self._get_sharepoint_config()
+        folder_path = config["client_base"]
+        if client_name:
+            folder_path += f"/{client_name}"
+        if entity_name:
+            folder_path += f"/{entity_name}"
+        if subfolder:
+            folder_path += f"/{subfolder}"
+
+        file_path = f"{folder_path}/{filename}"
+        result = None
+
+        if len(file_content) < 4 * 1024 * 1024:  # < 4MB → simple upload
+            url = f"{GRAPH_BASE}/drives/{drive_id}/root:/{file_path}:/content"
+            headers = {"Content-Type": "application/octet-stream"}
+            result = self._make_request("PUT", url, data=file_content, headers=headers)
+        else:
+            # Large files → upload session in 10MB chunks
+            url = f"{GRAPH_BASE}/drives/{drive_id}/root:/{file_path}:/createUploadSession"
+            session = self._make_request("POST", url, json={
+                "item": {"@microsoft.graph.conflictBehavior": "rename"}
+            })
+            if not session or "uploadUrl" not in session:
+                logger.error("Failed to create upload session")
+                return None
+            upload_url = session["uploadUrl"]
+            chunk_size = 10 * 1024 * 1024
+            total = len(file_content)
+            for i in range(0, total, chunk_size):
+                chunk = file_content[i:i + chunk_size]
+                end = min(i + chunk_size, total)
+                chunk_headers = {
+                    "Content-Range": f"bytes {i}-{end - 1}/{total}",
+                    "Content-Type": "application/octet-stream",
+                }
+                resp = requests.put(upload_url, data=chunk, headers=chunk_headers, timeout=120)
+                if resp.status_code not in (200, 201, 202):
+                    logger.error("Upload chunk failed: %s", resp.status_code)
+                    return None
+                if resp.status_code in (200, 201):
+                    try:
+                        result = resp.json()
+                    except ValueError:
+                        result = None
+
+        if result and "webUrl" in result:
+            logger.info("Uploaded to SharePoint: %s", file_path)
+            return result["webUrl"]
+        return None
+
+    def list_sharepoint_folder(self, client_name: str,
+                               entity_name: str = None) -> list:
+        """List files in a client's SharePoint folder."""
+        site_id = self.get_sharepoint_site_id()
+        if not site_id:
+            return []
+        drive_id = self.get_sharepoint_drive_id(site_id)
+        if not drive_id:
+            return []
+        config = self._get_sharepoint_config()
+        folder_path = config["client_base"]
+        if client_name:
+            folder_path += f"/{client_name}"
+        if entity_name:
+            folder_path += f"/{entity_name}"
+        url = f"{GRAPH_BASE}/drives/{drive_id}/root:/{folder_path}:/children"
+        result = self._make_request("GET", url)
+        if result and "value" in result:
+            return [
+                {
+                    "name": item["name"],
+                    "size": item.get("size", 0),
+                    "modified": item.get("lastModifiedDateTime", ""),
+                    "url": item.get("webUrl", ""),
+                    "is_folder": "folder" in item,
+                }
+                for item in result["value"]
+            ]
+        return []
+
+    def test_sharepoint_connection(self) -> dict:
+        """Test the SharePoint connection and return status."""
+        try:
+            site_id = self.get_sharepoint_site_id()
+            if not site_id:
+                return {"ok": False, "error": "Could not find SharePoint site. Check the URL in settings."}
+            drive_id = self.get_sharepoint_drive_id(site_id)
+            if not drive_id:
+                return {"ok": False, "error": "Could not find document library. Check the library name in settings."}
+            config = self._get_sharepoint_config()
+            url = f"{GRAPH_BASE}/drives/{drive_id}/root:/{config['client_base']}:/children?$top=1"
+            result = self._make_request("GET", url)
+            if result and "value" in result:
+                return {"ok": True, "message": f"Connected. Found client folders in /{config['client_base']}/"}
+            return {"ok": False, "error": f"Could not access /{config['client_base']}/ folder. Check the client folder base path."}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     # ── Calendar ──────────────────────────────────────────────────────────────
 
