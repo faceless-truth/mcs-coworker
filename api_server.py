@@ -2030,6 +2030,37 @@ def _has_structured_recommendation(text: str) -> bool:
     return bool(re.search(r"^#{1,3}\s", text, re.MULTILINE))
 
 
+def _find_recommendation_message(messages: list) -> str | None:
+    """Pick the most-structured assistant message in the conversation.
+
+    Multi-phase specialists (Tax Structure, Payroll) produce a heavily
+    formatted recommendation partway through the dialogue; if the user
+    sends a follow-up afterwards, the *last* assistant message is the
+    follow-up — not the recommendation. Score each assistant message by
+    its heading count and return the winner (≥ 2 headings to qualify).
+    """
+    best: str | None = None
+    best_score = 0
+    for m in messages or []:
+        if not isinstance(m, dict) or m.get("role") != "assistant":
+            continue
+        content = m.get("content", "")
+        if not isinstance(content, str):
+            continue
+        score = (
+            content.count("\n# ")
+            + content.count("\n## ")
+            + content.count("\n### ")
+        )
+        # Also count a leading heading on the very first line.
+        if re.match(r"^#{1,3}\s", content):
+            score += 1
+        if score > best_score:
+            best_score = score
+            best = content
+    return best if best_score >= 2 else None
+
+
 @app.route("/api/chat/export", methods=["POST"])
 def chat_export():
     """Render the supplied conversation as a Word document.
@@ -2101,15 +2132,17 @@ def chat_export():
         return _docx_response(doc, f"{safe_agent}_summary_{ts}.docx")
 
     if export_type == "recommendation":
-        last = _last_assistant_message(messages)
-        if not _has_structured_recommendation(last):
+        # Scan every assistant turn — the recommendation may have been
+        # produced earlier in the dialogue with a follow-up on top.
+        rec = _find_recommendation_message(messages)
+        if rec is None:
             return err(
                 "No structured recommendation to export — ask the specialist to "
                 "produce one first.",
                 400,
             )
         doc = _markdown_to_docx(
-            last,
+            rec,
             title=f"{agent_name} — Recommendation",
             client_name=client_name,
             entity_name=entity_name,

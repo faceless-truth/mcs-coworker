@@ -421,13 +421,16 @@ export default function Chat() {
     }
   };
 
-  const lastAssistantContent = (() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      if (messages[i].role === "assistant") return messages[i].content;
-    }
-    return "";
-  })();
-  const hasStructuredRecommendation = /^#{1,3}\s/m.test(lastAssistantContent);
+  // Scan every assistant message for structured headings — the
+  // recommendation may have been produced before a follow-up turn,
+  // so checking only the last message would falsely grey the export.
+  const hasStructuredRecommendation = messages.some(m => {
+    if (m.role !== "assistant" || typeof m.content !== "string") return false;
+    const headingCount =
+      (m.content.match(/\n#{1,3}\s/g) || []).length +
+      (/^#{1,3}\s/.test(m.content) ? 1 : 0);
+    return headingCount >= 2;
+  });
 
   const handleCopyAll = async () => {
     try {
