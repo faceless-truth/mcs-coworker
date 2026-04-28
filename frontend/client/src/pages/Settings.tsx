@@ -887,6 +887,9 @@ const EMPTY_SETTINGS = {
   xeroClientSecret: "",
   fuseSignApiKey: "",
   teamsWebhook: "",
+  sharepointSiteUrl: "",
+  sharepointLibrary: "Documents",
+  sharepointClientBase: "Clients",
   confidenceThreshold: 0.75,
   heartbeatInterval: 300,
   autoUpdate: false,
@@ -1045,6 +1048,9 @@ export default function Settings() {
             xeroClientSecret:    s.xero_client_secret    ?? prev.xeroClientSecret,
             fuseSignApiKey:      s.fusesign_api_key      ?? prev.fuseSignApiKey,
             teamsWebhook:        s.teams_webhook_url     ?? prev.teamsWebhook,
+            sharepointSiteUrl:   s.sharepoint_site_url   ?? prev.sharepointSiteUrl,
+            sharepointLibrary:   s.sharepoint_library    ?? prev.sharepointLibrary,
+            sharepointClientBase: s.sharepoint_client_base ?? prev.sharepointClientBase,
             confidenceThreshold: s.confidence_threshold !== undefined ? parseFloat(s.confidence_threshold) : prev.confidenceThreshold,
             heartbeatInterval:   s.heartbeat_interval_seconds !== undefined ? parseInt(s.heartbeat_interval_seconds, 10) : prev.heartbeatInterval,
             autoUpdate:          s.auto_update_enabled === "1" || s.auto_update_enabled === true,
@@ -1069,6 +1075,9 @@ export default function Settings() {
       email_signature:             settings.emailSignature,
       fusesign_api_key:            settings.fuseSignApiKey,
       teams_webhook_url:           settings.teamsWebhook,
+      sharepoint_site_url:         settings.sharepointSiteUrl,
+      sharepoint_library:          settings.sharepointLibrary,
+      sharepoint_client_base:      settings.sharepointClientBase,
       fast_model:                  settings.fastModel,
       reasoning_model:             settings.reasoningModel,
       opus_model:                  settings.opusModel,
@@ -1135,6 +1144,29 @@ export default function Settings() {
       }
     } catch (e: any) {
       toast.error(e.message || "Connection test failed");
+    }
+  };
+
+  const [sharepointTesting, setSharepointTesting] = useState(false);
+  const [sharepointStatus, setSharepointStatus] = useState<{ ok: boolean; message?: string } | null>(null);
+  const handleTestSharepoint = async () => {
+    setSharepointTesting(true);
+    setSharepointStatus(null);
+    try {
+      const res = await fetch("http://127.0.0.1:7842/api/sharepoint/test", { method: "POST" });
+      const body = await res.json().catch(() => ({}));
+      if (body.ok) {
+        setSharepointStatus({ ok: true, message: body.message || "Connected." });
+        toast.success("SharePoint connection successful", { description: body.message });
+      } else {
+        setSharepointStatus({ ok: false, message: body.error || "Connection failed" });
+        toast.error("SharePoint connection failed", { description: body.error });
+      }
+    } catch (e: any) {
+      setSharepointStatus({ ok: false, message: e?.message || "Connection failed" });
+      toast.error("SharePoint connection failed", { description: e?.message });
+    } finally {
+      setSharepointTesting(false);
     }
   };
 
@@ -1218,6 +1250,60 @@ export default function Settings() {
             onChange={e => setSettings(s => ({ ...s, emailSignature: e.target.value }))}
           />
         </Field>
+      </Section>
+
+      {/* SharePoint — Client File Storage */}
+      <Section
+        title="SharePoint — Client File Storage"
+        description="Save AI Chat exports and correspondence to client folders"
+      >
+        <Field label="Site URL" hint="The full URL to your SharePoint site, e.g. https://mcands.sharepoint.com/sites/ClientFiles">
+          <input
+            type="text"
+            className={inputClass}
+            value={settings.sharepointSiteUrl}
+            placeholder="https://mcands.sharepoint.com/sites/ClientFiles"
+            onChange={e => setSettings(s => ({ ...s, sharepointSiteUrl: e.target.value }))}
+          />
+        </Field>
+        <Field label="Document Library" hint='Usually "Documents" or "Shared Documents" — the library that holds client folders'>
+          <input
+            type="text"
+            className={inputClass}
+            value={settings.sharepointLibrary}
+            placeholder="Documents"
+            onChange={e => setSettings(s => ({ ...s, sharepointLibrary: e.target.value }))}
+          />
+        </Field>
+        <Field label="Client Folder Base" hint='The folder inside the library that contains all client folders, e.g. "Clients"'>
+          <input
+            type="text"
+            className={inputClass}
+            value={settings.sharepointClientBase}
+            placeholder="Clients"
+            onChange={e => setSettings(s => ({ ...s, sharepointClientBase: e.target.value }))}
+          />
+        </Field>
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleTestSharepoint}
+            disabled={sharepointTesting || !settings.sharepointSiteUrl}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-medium border border-border hover:border-blue-300 hover:text-blue-600 transition-all disabled:opacity-60 flex-shrink-0"
+          >
+            {sharepointTesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TestTube className="w-3.5 h-3.5" />}
+            {sharepointTesting ? "Testing…" : "Test Connection"}
+          </button>
+          {sharepointStatus && (
+            <div
+              className={`flex items-center gap-1.5 text-xs ${
+                sharepointStatus.ok ? "text-emerald-700" : "text-rose-600"
+              }`}
+            >
+              {sharepointStatus.ok && <CheckCircle2 className="w-3.5 h-3.5" />}
+              <span>{sharepointStatus.message}</span>
+            </div>
+          )}
+        </div>
       </Section>
 
       {/* Xero XPM — OAuth */}

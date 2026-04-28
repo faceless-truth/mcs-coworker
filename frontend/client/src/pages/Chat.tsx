@@ -1,12 +1,13 @@
 // Design: Refined Dark Professional — AI Chat page (specialist agents)
 
 import { useState, useRef, useEffect, useMemo } from "react";
-import { Bot, Send, User, Paperclip, X, FileText, Download, Copy, Check } from "lucide-react";
+import { Bot, Send, User, Paperclip, X, FileText, Download, Copy, Check, FolderUp } from "lucide-react";
 import { toast } from "sonner";
 import {
   sendChatMessage,
   fetchAgents,
   fetchClientNames,
+  fetchSettings,
   uploadChatFile,
   type ChatFileRef,
 } from "@/lib/api";
@@ -117,7 +118,8 @@ export default function Chat() {
   const [uploadingFiles, setUploadingFiles] = useState<{ name: string; size: number }[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
-  const [exportingType, setExportingType] = useState<"transcript" | "summary" | "recommendation" | null>(null);
+  const [exportingType, setExportingType] = useState<"transcript" | "summary" | "recommendation" | "sharepoint" | null>(null);
+  const [sharepointConfigured, setSharepointConfigured] = useState(false);
   const [clientName, setClientName] = useState("");
   const [entityName, setEntityName] = useState("");
   const [clientNamesList, setClientNamesList] = useState<string[]>([]);
@@ -158,6 +160,19 @@ export default function Chat() {
         setClientNamesList(names);
       } catch {
         // Autocomplete falls back to empty — typing a new name still works.
+      }
+    })();
+  }, []);
+
+  // Check whether SharePoint is configured so the "Save to Client Folder"
+  // option can be greyed out with an explanatory tooltip.
+  useEffect(() => {
+    (async () => {
+      try {
+        const s: any = await fetchSettings();
+        setSharepointConfigured(!!(s?.sharepoint_site_url && s.sharepoint_site_url.trim()));
+      } catch {
+        setSharepointConfigured(false);
       }
     })();
   }, []);
@@ -421,6 +436,57 @@ export default function Chat() {
     }
   };
 
+  const handleSharepointExport = async () => {
+    const agentName = selectedAgent?.name || "Assistant";
+    const firstUserIdx = messages.findIndex(m => m.role === "user");
+    const convo = firstUserIdx >= 0 ? messages.slice(firstUserIdx) : [];
+    if (convo.length === 0) {
+      toast.error("Nothing to export yet");
+      return;
+    }
+    if (!clientName.trim()) {
+      toast.error("Enter a client name to save to SharePoint");
+      return;
+    }
+    if (!sharepointConfigured) {
+      toast.error("Configure SharePoint in Settings first");
+      return;
+    }
+    // Pick the most useful export type for the file record:
+    //   recommendation if the specialist produced one, otherwise transcript.
+    const exportType = hasStructuredRecommendation ? "recommendation" : "transcript";
+    setExportingType("sharepoint");
+    try {
+      const res = await fetch("http://127.0.0.1:7842/api/chat/export/sharepoint", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          agent_name: agentName,
+          agent_id: selectedAgentId,
+          messages: convo.map(m => ({ role: m.role, content: m.content })),
+          client_name: clientName.trim(),
+          entity_name: entityName.trim() || null,
+          export_type: exportType,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.ok) {
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      toast.success("Saved to SharePoint", {
+        description: body.filename,
+        action: body.url
+          ? { label: "Open", onClick: () => window.open(body.url, "_blank") }
+          : undefined,
+      });
+    } catch (e: any) {
+      toast.error("SharePoint save failed", { description: e?.message ?? "" });
+    } finally {
+      setExportingType(null);
+      setExportMenuOpen(false);
+    }
+  };
+
   // Scan every assistant message for structured headings — the
   // recommendation may have been produced before a follow-up turn,
   // so checking only the last message would falsely grey the export.
@@ -539,6 +605,7 @@ export default function Chat() {
               >
                 <Download className="w-3.5 h-3.5" />
                 {exportingType === "summary" ? "Generating summary…"
+                  : exportingType === "sharepoint" ? "Saving to SharePoint…"
                   : exportingType ? "Exporting…"
                   : "Export"}
                 <span className="text-slate-400">▾</span>
@@ -572,7 +639,7 @@ export default function Chat() {
                     title={hasStructuredRecommendation
                       ? undefined
                       : "No structured recommendation to export — ask the specialist to produce one first."}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 disabled:opacity-50 disabled:hover:bg-white disabled:cursor-not-allowed"
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 border-b border-border disabled:opacity-50 disabled:hover:bg-white disabled:cursor-not-allowed"
                   >
                     <div className="font-semibold text-slate-700">Download Recommendation (.docx)</div>
                     <div className="text-slate-500">
@@ -581,6 +648,37 @@ export default function Chat() {
                         : "Available once the specialist produces a structured doc"}
                     </div>
                   </button>
+                  {(() => {
+                    const sharepointDisabled = !clientName.trim() || !sharepointConfigured;
+                    const sharepointTooltip = !clientName.trim()
+                      ? "Enter a client name to save to SharePoint"
+                      : !sharepointConfigured
+                      ? "Configure SharePoint in Settings first"
+                      : undefined;
+                    return (
+                      <button
+                        type="button"
+                        onMouseDown={e => {
+                          if (sharepointDisabled) return;
+                          e.preventDefault();
+                          handleSharepointExport();
+                        }}
+                        disabled={sharepointDisabled}
+                        title={sharepointTooltip}
+                        className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 disabled:opacity-50 disabled:hover:bg-white disabled:cursor-not-allowed"
+                      >
+                        <div className="font-semibold text-slate-700 flex items-center gap-1.5">
+                          <FolderUp className="w-3.5 h-3.5" />
+                          Save to Client Folder (SharePoint)
+                        </div>
+                        <div className="text-slate-500">
+                          {sharepointDisabled
+                            ? sharepointTooltip
+                            : `Files into /${clientName.trim()}/CoWorker Exports/`}
+                        </div>
+                      </button>
+                    );
+                  })()}
                 </div>
               )}
             </div>
