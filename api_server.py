@@ -1094,6 +1094,11 @@ def chat():
     if not agent:
         return jsonify({"ok": False, "error": f"Unknown agent: {agent_id}"}), 400
 
+    # Optional client context — supplied by the Chat UI when the user has
+    # nominated which client this conversation is about.
+    client_name = body.get("client_name") or None
+    entity_name = body.get("entity_name") or None
+
     # Cap per-message size to bound token cost per call.
     for m in messages:
         content = m.get("content", "")
@@ -1184,11 +1189,23 @@ def chat():
         # useful for tax specialists that need practice-specific context.
         if agent.id != "plugin_builder":
             store = _get_memory_store()
-            if store is not None and last_text:
+            if store is not None:
                 try:
-                    memory_context = store.format_for_prompt(last_text, n_results=5)
-                    if memory_context:
-                        system_prompt += f"\n\n{memory_context}"
+                    if client_name:
+                        from client_utils import normalise_client_name
+                        normalised_for_lookup = normalise_client_name(client_name)
+                        client_context = store.format_for_prompt(
+                            f"{normalised_for_lookup} {last_text[:100]}",
+                            n_results=5,
+                        )
+                        if client_context:
+                            system_prompt += (
+                                f"\n\nRelevant client history from practice memory:\n{client_context}"
+                            )
+                    elif last_text:
+                        memory_context = store.format_for_prompt(last_text, n_results=5)
+                        if memory_context:
+                            system_prompt += f"\n\n{memory_context}"
                 except Exception as e:
                     logger.warning(f"Memory context injection skipped: {e}")
 
@@ -1198,8 +1215,35 @@ def chat():
             system=system_prompt,
             messages=messages,
         )
+        response_text = response.content[0].text
+
+        # Persist the exchange under the client so future turns and other
+        # plugins (Smart Responder etc.) can recall the advice given.
+        if client_name and agent.id != "plugin_builder":
+            try:
+                from client_utils import normalise_client_name
+                store = _get_memory_store()
+                if store is not None:
+                    normalised = normalise_client_name(client_name)
+                    summary = (
+                        f"[{agent.name}] Q: {last_text[:200]} → A: {response_text[:300]}"
+                    )
+                    store.store_client_interaction(
+                        client_name=normalised,
+                        entity_name=entity_name,
+                        interaction_type="ai_chat",
+                        summary=summary,
+                        metadata={
+                            "agent_id": agent.id,
+                            "agent_name": agent.name,
+                            "full_question": last_text[:1000],
+                        },
+                    )
+            except Exception as e:
+                logger.warning(f"AI chat memory write skipped: {e}")
+
         return ok({
-            "content": response.content[0].text,
+            "content": response_text,
             "model": model,
             "agent_id": agent.id,
             "agent_name": agent.name,
@@ -1210,6 +1254,20 @@ def chat():
         })
     except Exception as e:
         return err(f"Chat error: {str(e)}")
+
+
+@app.route("/api/clients/names", methods=["GET"])
+def get_client_names():
+    """Return all known client names for autocomplete in the Chat UI."""
+    store = _get_memory_store()
+    if store is None:
+        return jsonify({"ok": True, "clients": []})
+    try:
+        names = store.get_all_clients()
+        return jsonify({"ok": True, "clients": names})
+    except Exception as e:
+        logger.error(f"get_client_names failed: {e}", exc_info=True)
+        return jsonify({"ok": True, "clients": []})
 
 
 # ── System ─────────────────────────────────────────────────────────────────────
@@ -1770,8 +1828,17 @@ def chat_export():
     body = request.get_json(silent=True) or {}
     agent_name = (body.get("agent_name") or "Assistant").strip() or "Assistant"
     messages = body.get("messages") or []
+    client_name = (body.get("client_name") or "").strip() or None
+    entity_name = (body.get("entity_name") or "").strip() or None
     if not isinstance(messages, list) or not messages:
         return err("No messages to export")
+
+    if client_name:
+        try:
+            from client_utils import normalise_client_name
+            client_name = normalise_client_name(client_name)
+        except Exception:
+            pass
 
     doc = Document()
 
@@ -1785,6 +1852,13 @@ def chat_export():
     date_str = datetime.now().strftime("%d %B %Y, %I:%M %p")
     subtitle = doc.add_paragraph()
     subtitle.add_run(f"Date: {date_str}  |  Agent: {agent_name}").italic = True
+
+    if client_name:
+        client_para = doc.add_paragraph()
+        run = client_para.add_run(f"Client: {client_name}")
+        run.bold = True
+        if entity_name:
+            client_para.add_run(f"  |  Entity: {entity_name}")
 
     doc.add_paragraph()  # blank spacer
 
