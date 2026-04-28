@@ -52,6 +52,7 @@ def _save_token_cache(cache: msal.SerializableTokenCache) -> None:
 GRAPH_SCOPES = [
     "Mail.ReadWrite",
     "Mail.Send",
+    "Sites.Read.All",
     "Sites.ReadWrite.All",
     "Files.ReadWrite.All",
 ]
