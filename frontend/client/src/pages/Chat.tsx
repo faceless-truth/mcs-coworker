@@ -108,6 +108,8 @@ export default function Chat() {
   const [loading, setLoading] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<ChatFileRef[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [uploadingFiles, setUploadingFiles] = useState<{ name: string; size: number }[]>([]);
+  const [dragActive, setDragActive] = useState(false);
   const [clientName, setClientName] = useState("");
   const [entityName, setEntityName] = useState("");
   const [clientNamesList, setClientNamesList] = useState<string[]>([]);
@@ -187,26 +189,71 @@ export default function Chat() {
     if (agent) toast(`Switched to ${agent.name} — conversation cleared.`);
   };
 
-  const handleFilePick = async (ev: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(ev.target.files || []);
+  const uploadFiles = async (files: File[]) => {
     if (files.length === 0) return;
     if (attachedFiles.length + files.length > 5) {
       toast.error("Max 5 files per message");
-      ev.target.value = "";
       return;
     }
     setUploading(true);
+    setUploadingFiles(files.map(f => ({ name: f.name, size: f.size })));
     try {
       for (const f of files) {
-        const ref = await uploadChatFile(f);
-        setAttachedFiles(prev => [...prev, ref]);
+        try {
+          const ref = await uploadChatFile(f);
+          setAttachedFiles(prev => [...prev, ref]);
+        } catch (e: any) {
+          toast.error(`Upload failed: ${f.name}`, { description: e?.message ?? "" });
+        } finally {
+          setUploadingFiles(prev => prev.filter(p => p.name !== f.name));
+        }
       }
-    } catch (e: any) {
-      toast.error("Upload failed", { description: e?.message ?? "" });
     } finally {
       setUploading(false);
-      ev.target.value = "";
+      setUploadingFiles([]);
     }
+  };
+
+  const handleFilePick = async (ev: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(ev.target.files || []);
+    await uploadFiles(files);
+    ev.target.value = "";
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    if (!selectedAgent?.supports_files) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (!dragActive) setDragActive(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only deactivate when leaving the outer container.
+    if (e.currentTarget === e.target) setDragActive(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    if (!selectedAgent?.supports_files) return;
+    const files = Array.from(e.dataTransfer.files || []);
+    if (files.length === 0) return;
+    // Filter by accepted extensions.
+    const accepted = (selectedAgent.file_types || []).map(t => t.toLowerCase());
+    const valid = accepted.length === 0
+      ? files
+      : files.filter(f => {
+          const dot = f.name.lastIndexOf(".");
+          const ext = dot >= 0 ? f.name.slice(dot).toLowerCase() : "";
+          return accepted.includes(ext);
+        });
+    if (valid.length < files.length) {
+      toast.error(`${files.length - valid.length} file(s) skipped — unsupported type`);
+    }
+    await uploadFiles(valid);
   };
 
   const removeAttached = (id: string) => {
@@ -394,7 +441,30 @@ export default function Chat() {
   const acceptAttr = (selectedAgent?.file_types || []).join(",");
 
   return (
-    <div className="flex flex-col h-full">
+    <div
+      className="flex flex-col h-full relative"
+      onDragOver={handleDragOver}
+      onDragEnter={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
+      {dragActive && selectedAgent?.supports_files && (
+        <div
+          className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none"
+          style={{ background: "rgba(59, 130, 246, 0.08)" }}
+        >
+          <div className="bg-white border-2 border-dashed border-blue-400 rounded-2xl px-10 py-8 shadow-lg text-center">
+            <Paperclip className="w-8 h-8 text-blue-500 mx-auto mb-2" />
+            <div className="text-base font-semibold text-blue-700">
+              Drop files here
+            </div>
+            <div className="text-xs text-blue-600/70 mt-1">
+              PDFs, Excel, Word, CSV, images — up to 5 per message
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-white">
         <div>
@@ -620,8 +690,8 @@ export default function Chat() {
         </div>
       )}
 
-      {/* Attached-file chips */}
-      {attachedFiles.length > 0 && (
+      {/* Attached-file chips (uploaded + in-progress) */}
+      {(attachedFiles.length > 0 || uploadingFiles.length > 0) && (
         <div className="px-6 pb-2">
           <div className="flex flex-wrap gap-1.5">
             {attachedFiles.map(f => (
@@ -639,6 +709,19 @@ export default function Chat() {
                 >
                   <X className="w-3 h-3" />
                 </button>
+              </span>
+            ))}
+            {uploadingFiles.map(f => (
+              <span
+                key={`up-${f.name}`}
+                className="inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-xs bg-slate-50 border border-slate-200 text-slate-600"
+              >
+                <span
+                  className="w-3 h-3 rounded-full border-2 border-slate-300 border-t-blue-500 animate-spin"
+                  aria-hidden
+                />
+                {f.name}
+                <span className="text-slate-400">· {formatBytes(f.size)}</span>
               </span>
             ))}
           </div>
@@ -696,6 +779,11 @@ export default function Chat() {
         </div>
         <div className="text-xs text-muted-foreground mt-2 text-center">
           Shift+Enter for new line
+          {selectedAgent?.supports_files && acceptAttr && (
+            <>
+              {" · "}Accepts {acceptAttr}{" · "}drop files here or use the paperclip
+            </>
+          )}
         </div>
       </div>
     </div>

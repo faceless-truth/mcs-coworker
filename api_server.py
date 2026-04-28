@@ -1263,6 +1263,7 @@ def chat():
                 "input_tokens": response.usage.input_tokens,
                 "output_tokens": response.usage.output_tokens,
             },
+            "files_processed": len(file_content_blocks),
         })
     except Exception as e:
         return err(f"Chat error: {str(e)}")
