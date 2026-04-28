@@ -31,8 +31,11 @@ Default: every 1 minute.
 from __future__ import annotations
 
 import html
+import logging
 import re
 from typing import Iterable
+
+logger = logging.getLogger(__name__)
 
 from plugin_base import (
     AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory,
@@ -223,6 +226,21 @@ class SmartEmailResponderPlugin(AgentPlugin):
                     context.log(f"🧠 Couldn't mark read '{subject}' after drafting: {e}")
                 self._mark_as_processed(message_id, draft_id=draft_id, action="drafted")
                 drafted += 1
+                # Visible notification path for the accountant — shows up
+                # in the Activity Log / Dashboard SSE feed so they know a
+                # draft is awaiting review without having to poll Outlook.
+                from_block = email.get("from") or {}
+                sender_name = (
+                    (from_block.get("emailAddress") or {}).get("name")
+                    or sender
+                )
+                logger.info(
+                    "Draft reply created for %s — RE: %s",
+                    sender_name, subject,
+                )
+                context.log(
+                    f"📝 Draft reply created for {sender_name} — RE: {subject}"
+                )
                 log_activity(sender, subject, "smart_responder",
                              "drafted", 1, 0)
                 # Persist a memory entry under the normalised sender name so
