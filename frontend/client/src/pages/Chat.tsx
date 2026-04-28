@@ -64,6 +64,12 @@ const AGENT_EXAMPLES: Record<string, string[]> = {
     "s100A risk on a family trust distribution",
     "Vesting date extension — resettlement risk?",
   ],
+  tax_structure: [
+    "New client starting a consulting business — best structure?",
+    "Restructure from sole trader to trust — client earns $180k",
+    "IT contractor, single client, $200k profit — PSI implications?",
+    "Family with 3 adult beneficiaries, business profit $300k",
+  ],
   individual_tax: [
     "Teacher with rental property — deduction checklist",
     "Nurse claiming car and uniform expenses",

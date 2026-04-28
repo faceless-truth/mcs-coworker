@@ -111,6 +111,17 @@ def get_all_agents() -> Dict[str, SpecialistAgent]:
             model_preference="opus",
         ),
         SpecialistAgent(
+            id="tax_structure",
+            name="Tax Structure Specialist",
+            description="Business structure advice — Sole Trader vs Company vs Trust with ranked recommendations",
+            icon="🏗️",
+            category="tax",
+            system_prompt=_load_prompt("tax_structure.md"),
+            supports_files=True,
+            file_types=[".pdf", ".docx", ".xlsx", ".csv", ".txt"],
+            model_preference="opus",
+        ),
+        SpecialistAgent(
             id="individual_tax",
             name="Individual Tax Deductions",
             description="Occupation-specific deductions, rental property, audit risk assessment",
