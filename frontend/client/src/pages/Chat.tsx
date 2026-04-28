@@ -70,6 +70,12 @@ const AGENT_EXAMPLES: Record<string, string[]> = {
     "IT contractor, single client, $200k profit — PSI implications?",
     "Family with 3 adult beneficiaries, business profit $300k",
   ],
+  payroll: [
+    "New receptionist in a law firm — what award and rate?",
+    "Casual kitchen hand in a cafe — pay rates and penalties",
+    "Is this contractor arrangement legitimate?",
+    "Qualified carpenter, full-time, Melbourne — full pay rate card",
+  ],
   individual_tax: [
     "Teacher with rental property — deduction checklist",
     "Nurse claiming car and uniform expenses",
@@ -463,7 +469,7 @@ export default function Chat() {
   for (const a of agents) {
     (grouped[a.category] = grouped[a.category] || []).push(a);
   }
-  const categoryOrder = ["general", "tax", "documents", "compliance"];
+  const categoryOrder = ["general", "tax", "compliance", "documents"];
   const orderedCats = categoryOrder.filter(c => grouped[c]?.length);
 
   const exampleList = AGENT_EXAMPLES[selectedAgentId] || [];

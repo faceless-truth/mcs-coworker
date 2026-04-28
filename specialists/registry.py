@@ -133,6 +133,17 @@ def get_all_agents() -> Dict[str, SpecialistAgent]:
             model_preference="sonnet",
         ),
         SpecialistAgent(
+            id="payroll",
+            name="Payroll Specialist",
+            description="Fair Work award rates, pay conditions, leave entitlements, and contractor screening",
+            icon="💼",
+            category="compliance",
+            system_prompt=_load_prompt("payroll.md"),
+            supports_files=True,
+            file_types=[".pdf", ".docx", ".xlsx", ".csv", ".txt"],
+            model_preference="sonnet",
+        ),
+        SpecialistAgent(
             id="ato_portal",
             name="ATO Portal Assistant",
             description="Generate remission letters, payment arrangement requests, and portal notes",
