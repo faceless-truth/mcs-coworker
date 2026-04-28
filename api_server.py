@@ -114,7 +114,7 @@ ALLOWED_UPLOAD_EXTENSIONS = {
 
 
 def _cleanup_old_uploads():
-    """Remove chat uploads older than 24 hours. Called once at module load."""
+    """Remove chat uploads older than 24 hours."""
     try:
         cutoff = time.time() - 86400
         for f in CHAT_UPLOAD_DIR.iterdir():
@@ -127,7 +127,19 @@ def _cleanup_old_uploads():
         logger.warning(f"chat_uploads cleanup skipped: {e}")
 
 
-_cleanup_old_uploads()
+def _schedule_upload_cleanup():
+    """Run upload cleanup now and every 6 hours thereafter.
+
+    The app is designed to run continuously, so a one-shot cleanup at
+    startup is not enough — old files would otherwise accumulate.
+    """
+    _cleanup_old_uploads()
+    timer = threading.Timer(6 * 3600, _schedule_upload_cleanup)
+    timer.daemon = True
+    timer.start()
+
+
+_schedule_upload_cleanup()
 
 # Shared state — populated by main.py on startup
 _loader: PluginLoader | None = None
