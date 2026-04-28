@@ -245,13 +245,14 @@ class SmartEmailResponderPlugin(AgentPlugin):
                              "drafted", 1, 0)
                 # Persist a memory entry under the normalised sender name so
                 # other plugins (and future AI Chat sessions) can recall it.
+                client_name = None
                 try:
                     memory = getattr(context, "memory", None)
+                    from_block = email.get("from") or {}
+                    from_name = ((from_block.get("emailAddress") or {})
+                                 .get("name") or "")
+                    client_name = normalise_client_name(from_name or sender)
                     if memory is not None:
-                        from_block = email.get("from") or {}
-                        from_name = ((from_block.get("emailAddress") or {})
-                                     .get("name") or "")
-                        client_name = normalise_client_name(from_name or sender)
                         draft_preview = self._plain_text(reply_body)[:200]
                         memory.store_client_interaction(
                             client_name=client_name,
@@ -265,6 +266,36 @@ class SmartEmailResponderPlugin(AgentPlugin):
                         )
                 except Exception as e:
                     context.log(f"🧠 memory write skipped: {e}")
+
+                # Best-effort copy of the draft to the client's SharePoint
+                # folder so the correspondence file is visible alongside
+                # other client documents. Skip silently if SharePoint is
+                # not configured or the upload fails — the draft itself
+                # has already been created successfully.
+                try:
+                    sharepoint_url = get_setting("sharepoint_site_url", "")
+                    if sharepoint_url and client_name:
+                        from datetime import datetime as _dt
+                        ts = _dt.now().strftime("%Y-%m-%d_%H%M")
+                        outlook_email = get_setting("outlook_email", "elio@mcands.com.au")
+                        body_text = self._plain_text(reply_body)
+                        content = (
+                            f"Subject: {subject}\n"
+                            f"Date: {_dt.now().strftime('%d %B %Y %H:%M')}\n"
+                            f"From: {outlook_email}\n"
+                            f"To: {sender}\n"
+                            f"Status: Draft created by CoWorker\n"
+                            f"\n---\n\n"
+                            f"{body_text}\n"
+                        )
+                        graph.upload_to_sharepoint(
+                            file_content=content.encode("utf-8"),
+                            filename=f"correspondence_{ts}.txt",
+                            client_name=client_name,
+                            subfolder="CoWorker Correspondence",
+                        )
+                except Exception as e:
+                    logger.warning("SharePoint auto-file failed (non-fatal): %s", e)
             except Exception as e:
                 context.log(f"🧠 Draft creation failed for '{subject}': {e}")
                 log_activity(sender, subject, "smart_responder",
