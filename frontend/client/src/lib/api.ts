@@ -177,11 +177,32 @@ export async function sendChatMessage(
   messages: { role: string; content: string }[],
   agentId: string = "plugin_builder",
   files: ChatFileRef[] = [],
+  clientName: string | null = null,
+  entityName: string | null = null,
 ) {
   return apiFetch("/api/chat", {
     method: "POST",
-    body: JSON.stringify({ messages, agent_id: agentId, files }),
+    body: JSON.stringify({
+      messages,
+      agent_id: agentId,
+      files,
+      client_name: clientName,
+      entity_name: entityName,
+    }),
   });
+}
+
+export async function fetchClientNames(): Promise<string[]> {
+  try {
+    const res = await fetch(`${BASE}/api/clients/names`, {
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!res.ok) return [];
+    const json = await res.json();
+    return Array.isArray(json.clients) ? json.clients : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function fetchAgents() {

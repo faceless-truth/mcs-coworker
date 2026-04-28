@@ -1,11 +1,12 @@
 // Design: Refined Dark Professional — AI Chat page (specialist agents)
 
-import { useState, useRef, useEffect } from "react";
-import { Bot, Send, User, Paperclip, X, FileText, Download, Copy } from "lucide-react";
+import { useState, useRef, useEffect, useMemo } from "react";
+import { Bot, Send, User, Paperclip, X, FileText, Download, Copy, Check } from "lucide-react";
 import { toast } from "sonner";
 import {
   sendChatMessage,
   fetchAgents,
+  fetchClientNames,
   uploadChatFile,
   type ChatFileRef,
 } from "@/lib/api";
@@ -101,10 +102,26 @@ export default function Chat() {
   const [loading, setLoading] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<ChatFileRef[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [clientName, setClientName] = useState("");
+  const [entityName, setEntityName] = useState("");
+  const [clientNamesList, setClientNamesList] = useState<string[]>([]);
+  const [showClientSuggestions, setShowClientSuggestions] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const selectedAgent = agents.find(a => a.id === selectedAgentId);
+  const isSpecialist =
+    !!selectedAgent &&
+    selectedAgent.id !== "plugin_builder" &&
+    selectedAgent.id !== "general";
+
+  const clientSuggestions = useMemo(() => {
+    const q = clientName.trim().toLowerCase();
+    if (!q) return [];
+    return clientNamesList
+      .filter(n => n.toLowerCase().includes(q))
+      .slice(0, 8);
+  }, [clientName, clientNamesList]);
 
   useEffect(() => {
     (async () => {
@@ -117,17 +134,40 @@ export default function Chat() {
     })();
   }, []);
 
+  // Cache the known client list once for autocomplete.
+  useEffect(() => {
+    (async () => {
+      try {
+        const names = await fetchClientNames();
+        setClientNamesList(names);
+      } catch {
+        // Autocomplete falls back to empty — typing a new name still works.
+      }
+    })();
+  }, []);
+
   // Seed a greeting whenever the selected agent changes.
   useEffect(() => {
     const agent = agents.find(a => a.id === selectedAgentId);
     if (!agent) return;
-    const greeting =
-      agent.id === "plugin_builder"
-        ? "Hi! I'm the MCS CoWorker assistant. I can help you build new automation plugins, answer questions about your practice, or analyse client data. What would you like to build?"
-        : `${agent.icon} ${agent.name} here. ${agent.description}${agent.supports_files ? " You can attach relevant source documents (PDFs, Excel, CSV, Word) using the paperclip button." : ""} How can I help?`;
+    const isSpec =
+      agent.id !== "plugin_builder" && agent.id !== "general";
+    let greeting: string;
+    if (agent.id === "plugin_builder") {
+      greeting = "Hi! I'm the MCS CoWorker assistant. I can help you build new automation plugins, answer questions about your practice, or analyse client data. What would you like to build?";
+    } else if (isSpec && clientName.trim()) {
+      greeting = `${agent.icon} ${agent.name} here. Working on ${clientName.trim()}. How can I help?`;
+    } else if (isSpec) {
+      greeting = `${agent.icon} ${agent.name} here. ${agent.description}${agent.supports_files ? " You can attach relevant source documents (PDFs, Excel, CSV, Word) using the paperclip button." : ""} Is this query for a specific client?`;
+    } else {
+      greeting = `${agent.icon} ${agent.name} here. ${agent.description}${agent.supports_files ? " You can attach relevant source documents (PDFs, Excel, CSV, Word) using the paperclip button." : ""} How can I help?`;
+    }
     setMessages([{ id: 0, role: "assistant", content: greeting }]);
     setAttachedFiles([]);
     setInput("");
+    // Clear client context when switching agents.
+    setClientName("");
+    setEntityName("");
   }, [selectedAgentId, agents]);
 
   useEffect(() => {
@@ -186,7 +226,13 @@ export default function Chat() {
 
     try {
       const history = nextMessages.map(m => ({ role: m.role, content: m.content }));
-      const resp: any = await sendChatMessage(history, selectedAgentId, currentFiles);
+      const resp: any = await sendChatMessage(
+        history,
+        selectedAgentId,
+        currentFiles,
+        clientName.trim() || null,
+        entityName.trim() || null,
+      );
       const assistantMsg: Message = {
         id: Date.now() + 1,
         role: "assistant",
@@ -269,6 +315,8 @@ export default function Chat() {
         body: JSON.stringify({
           agent_name: agentName,
           messages: convo.map(m => ({ role: m.role, content: m.content })),
+          client_name: clientName.trim() || null,
+          entity_name: entityName.trim() || null,
         }),
       });
       if (!res.ok) {
@@ -409,6 +457,77 @@ export default function Chat() {
               </div>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Client context bar (specialist agents only) */}
+      {isSpecialist && (
+        <div className="px-6 py-2.5 border-b border-border bg-amber-50/40 flex flex-wrap items-center gap-3 text-sm">
+          <span className="inline-flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            📋 Client
+          </span>
+
+          <div className="relative flex-1 min-w-[220px] max-w-md">
+            <input
+              type="text"
+              value={clientName}
+              onChange={e => {
+                setClientName(e.target.value);
+                setShowClientSuggestions(true);
+              }}
+              onFocus={() => setShowClientSuggestions(true)}
+              onBlur={() => setTimeout(() => setShowClientSuggestions(false), 150)}
+              placeholder="Who is this query for? (Surname, First Name)"
+              className="w-full px-3 py-1.5 pr-8 rounded-lg border border-border bg-white text-sm focus:outline-none focus:border-blue-400"
+            />
+            {clientName && (
+              <button
+                type="button"
+                onClick={() => setClientName("")}
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700"
+                title="Clear"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+            {showClientSuggestions && clientSuggestions.length > 0 && (
+              <div className="absolute z-10 left-0 right-0 mt-1 bg-white border border-border rounded-lg shadow-lg max-h-56 overflow-y-auto">
+                {clientSuggestions.map(name => (
+                  <button
+                    type="button"
+                    key={name}
+                    onMouseDown={e => {
+                      // onMouseDown so it fires before the input's onBlur.
+                      e.preventDefault();
+                      setClientName(name);
+                      setShowClientSuggestions(false);
+                    }}
+                    className="block w-full text-left px-3 py-1.5 text-sm hover:bg-blue-50"
+                  >
+                    {name}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {clientName.trim() && (
+            <span className="inline-flex items-center gap-1 text-xs text-emerald-700">
+              <Check className="w-3.5 h-3.5" />
+              {clientName.trim()}
+            </span>
+          )}
+
+          <span className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+            Entity
+          </span>
+          <input
+            type="text"
+            value={entityName}
+            onChange={e => setEntityName(e.target.value)}
+            placeholder="(optional)"
+            className="flex-1 min-w-[180px] max-w-xs px-3 py-1.5 rounded-lg border border-border bg-white text-sm focus:outline-none focus:border-blue-400"
+          />
         </div>
       )}
 
