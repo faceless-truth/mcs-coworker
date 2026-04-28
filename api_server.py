@@ -2248,6 +2248,35 @@ def list_sharepoint_folders():
     return jsonify({"ok": True, "files": files})
 
 
+@app.route("/api/sharepoint/debug", methods=["GET"])
+def debug_sharepoint():
+    graph = _graph_client
+    if not graph or not graph.is_authenticated():
+        return jsonify({"ok": False, "error": "Not authenticated", "is_auth": graph.is_authenticated() if graph else False})
+    from config import get_setting
+    site_url = get_setting("sharepoint_site_url", "")
+    from urllib.parse import urlparse
+    parsed = urlparse(site_url)
+    hostname = parsed.hostname
+    site_path = parsed.path
+    graph_url = f"https://graph.microsoft.com/v1.0/sites/{hostname}:{site_path}"
+    try:
+        token = graph._get_token()
+        import requests as req
+        resp = req.get(graph_url, headers={"Authorization": f"Bearer {token}"})
+        return jsonify({
+            "site_url_setting": site_url,
+            "hostname": hostname,
+            "site_path": site_path,
+            "graph_url": graph_url,
+            "status_code": resp.status_code,
+            "response": resp.json(),
+            "token_exists": bool(token),
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
 @app.route("/api/chat/export/sharepoint", methods=["POST"])
 def export_to_sharepoint():
     """Export a chat conversation directly to a client's SharePoint folder."""
