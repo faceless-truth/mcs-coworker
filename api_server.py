@@ -1221,13 +1221,37 @@ def chat():
                 except Exception as e:
                     logger.warning(f"Memory context injection skipped: {e}")
 
-        response = client.messages.create(
-            model=model,
-            max_tokens=max_tokens,
-            system=system_prompt,
-            messages=messages,
-        )
-        response_text = response.content[0].text
+        # Specialists whose prompts instruct them to pull live data
+        # (Fair Work, ATO, ASIC, etc.) need the Claude web search tool to
+        # avoid fabricating rates from training data.
+        AGENTS_NEEDING_SEARCH = {
+            "gst", "smsf", "div7a", "trusts", "tax_structure",
+            "payroll", "individual_tax", "general",
+        }
+        create_kwargs = {
+            "model": model,
+            "max_tokens": max_tokens,
+            "system": system_prompt,
+            "messages": messages,
+        }
+        if agent.id in AGENTS_NEEDING_SEARCH:
+            create_kwargs["tools"] = [{
+                "type": "web_search_20250305",
+                "name": "web_search",
+            }]
+
+        response = client.messages.create(**create_kwargs)
+        # With web search, content may include tool_use / search_result blocks
+        # alongside text. Concatenate every text block in order.
+        response_text = ""
+        for block in response.content:
+            text = getattr(block, "text", None)
+            if text:
+                response_text += text
+        if not response_text and response.content:
+            # Fallback for unexpected content shapes.
+            first = response.content[0]
+            response_text = getattr(first, "text", "") or ""
 
         # Persist the exchange under the client so future turns and other
         # plugins (Smart Responder etc.) can recall the advice given.
