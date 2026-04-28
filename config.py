@@ -239,6 +239,8 @@ def init_db():
         # Installation mode
         "reception_mode":         "0",   # 1 = reception inbox (NOA/ASIC/Debtor/FuseSign active)
         "staff_profile":          "elio", # reception | elio | ross | harry | brooke | louise | lyn
+        # Per-machine processing mode — 'active' runs plugins, 'passive' is monitor-only
+        "processing_mode":        "active",
         # Stream 3 — Heartbeat interval
         "heartbeat_interval_seconds": "60",
         # Stream 6 — Approval queue
@@ -313,6 +315,16 @@ def set_setting(key, value):
 def save_setting(key, value):
     """Alias for set_setting — kept for naming consistency with get_setting."""
     set_setting(key, value)
+
+
+def is_active_mode() -> bool:
+    """Check if this machine is in active processing mode.
+
+    Active machines run plugins and create drafts. Passive machines are
+    monitor-only and skip all plugin execution so two installs sharing the
+    same Outlook mailbox don't draft duplicate replies.
+    """
+    return get_setting("processing_mode", "active").lower() == "active"
 
 
 def ensure_api_token() -> str:

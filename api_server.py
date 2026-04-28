@@ -426,6 +426,12 @@ def list_approvals():
 
 @app.route("/api/approvals/<action_id>/approve", methods=["POST"])
 def approve_action(action_id):
+    from config import is_active_mode
+    if not is_active_mode():
+        return jsonify({
+            "ok": False,
+            "error": "Cannot approve actions in passive mode. Switch to active mode first.",
+        }), 403
     if _approval_queue is None:
         return err("Approval queue not initialised", 503)
     body = request.get_json(silent=True) or {}
@@ -436,6 +442,12 @@ def approve_action(action_id):
 
 @app.route("/api/approvals/<action_id>/reject", methods=["POST"])
 def reject_action(action_id):
+    from config import is_active_mode
+    if not is_active_mode():
+        return jsonify({
+            "ok": False,
+            "error": "Cannot reject actions in passive mode. Switch to active mode first.",
+        }), 403
     if _approval_queue is None:
         return err("Approval queue not initialised", 503)
     body = request.get_json(silent=True) or {}
@@ -1303,7 +1315,35 @@ def system_status():
         "version": get_setting("app_version", "2.4.1"),
         "updateAvailable": False,
         "offlineMode": get_setting("_offline_mode", "false") == "true",
+        "processing_mode": get_setting("processing_mode", "active"),
     })
+
+
+@app.route("/api/processing-mode", methods=["GET"])
+def get_processing_mode():
+    """Return the current per-machine processing mode."""
+    from config import is_active_mode
+    return jsonify({
+        "ok": True,
+        "mode": "active" if is_active_mode() else "passive",
+    })
+
+
+@app.route("/api/processing-mode", methods=["POST"])
+def set_processing_mode():
+    """Set the per-machine processing mode. Active runs plugins; passive
+    is monitor-only so a second machine on the same mailbox doesn't draft
+    duplicates."""
+    body = request.get_json(silent=True) or {}
+    mode = (body.get("mode") or "active").lower()
+    if mode not in ("active", "passive"):
+        return jsonify({
+            "ok": False,
+            "error": "Invalid mode. Use 'active' or 'passive'.",
+        }), 400
+    from config import save_setting
+    save_setting("processing_mode", mode)
+    return jsonify({"ok": True, "mode": mode})
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────

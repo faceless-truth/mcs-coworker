@@ -14,6 +14,126 @@ import {
 
 const KB_CATEGORIES = ["Pricing", "Checklists", "Procedures", "Firm Policies", "Staff Info", "Other"];
 
+function ProcessingModeToggle() {
+  const [mode, setMode] = useState<"active" | "passive" | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:7842/api/processing-mode");
+        if (res.ok) {
+          const json = await res.json();
+          const m = (json?.mode || "active").toLowerCase();
+          setMode(m === "passive" ? "passive" : "active");
+        } else {
+          setMode("active");
+        }
+      } catch {
+        setMode("active");
+      }
+    })();
+  }, []);
+
+  const change = async (next: "active" | "passive") => {
+    if (next === mode || saving) return;
+    setSaving(true);
+    const prev = mode;
+    setMode(next);
+    try {
+      const res = await fetch("http://127.0.0.1:7842/api/processing-mode", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode: next }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      if (next === "passive") {
+        toast.success("Switched to Passive mode — plugins will not run on this machine");
+      } else {
+        toast.success("Switched to Active mode — plugins will run on the next tick");
+      }
+      window.dispatchEvent(new CustomEvent("processing-mode-changed", { detail: next }));
+    } catch (e: any) {
+      setMode(prev);
+      toast.error("Failed to change processing mode", { description: e?.message ?? "" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (mode === null) {
+    return (
+      <div className="bg-white rounded-lg border border-border shadow-sm p-5 flex items-center gap-2 text-sm text-muted-foreground">
+        <Loader2 className="w-4 h-4 animate-spin" /> Loading processing mode...
+      </div>
+    );
+  }
+
+  const isActive = mode === "active";
+
+  return (
+    <div className="bg-white rounded-lg border border-border shadow-sm overflow-hidden">
+      <div className="px-5 py-3.5 border-b border-border bg-slate-50">
+        <div className="text-sm font-semibold text-foreground">Processing Mode</div>
+        <div className="text-xs text-muted-foreground mt-0.5">
+          Per-machine setting. Use Passive when running CoWorker on a second machine that shares the same Outlook mailbox — only one machine should be Active at a time.
+        </div>
+      </div>
+      <div className="p-5 space-y-4">
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            onClick={() => change("active")}
+            disabled={saving}
+            data-testid="processing-mode-active"
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-all ${
+              isActive
+                ? "border-emerald-500 bg-emerald-50 text-emerald-800"
+                : "border-border bg-white text-slate-600 hover:border-emerald-300"
+            }`}
+          >
+            <span
+              className="inline-block w-2.5 h-2.5 rounded-full"
+              style={{ background: isActive ? "oklch(0.7 0.18 145)" : "oklch(0.75 0.01 240)" }}
+            />
+            Active
+          </button>
+          <button
+            type="button"
+            onClick={() => change("passive")}
+            disabled={saving}
+            data-testid="processing-mode-passive"
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium border transition-all ${
+              !isActive
+                ? "border-slate-400 bg-slate-100 text-slate-700"
+                : "border-border bg-white text-slate-600 hover:border-slate-300"
+            }`}
+          >
+            <span
+              className="inline-block w-2.5 h-2.5 rounded-full"
+              style={{ background: !isActive ? "oklch(0.55 0.01 240)" : "oklch(0.85 0.01 240)" }}
+            />
+            Passive
+          </button>
+        </div>
+        <div className="text-xs text-muted-foreground space-y-1.5 leading-relaxed">
+          <div>
+            <span className="font-semibold text-emerald-700">Active:</span>{" "}
+            This machine processes emails, creates drafts, and runs plugin automations.
+          </div>
+          <div>
+            <span className="font-semibold text-slate-700">Passive:</span>{" "}
+            Monitor only — no drafts created, no emails sent. AI Chat and specialist agents still work.
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function ModeToggle() {
   const [mode, setMode] = useState<"reception" | "accountant" | null>(null);
   const [saving, setSaving] = useState(false);
@@ -1035,6 +1155,9 @@ export default function Settings() {
           {saving ? "Saving…" : saved ? "Saved!" : "Save Changes"}
         </button>
       </div>
+
+      {/* Processing mode — Active runs plugins; Passive is monitor-only */}
+      <ProcessingModeToggle />
 
       {/* Mode toggle — gates which plugins show up */}
       <ModeToggle />

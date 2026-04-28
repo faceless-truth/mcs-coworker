@@ -214,10 +214,27 @@ export default function Dashboard() {
   const byDay = usage?.byDay ?? usage?.by_day ?? [];
 
   const allOk = system?.status === "ok" || (!loading && plugins.length > 0);
+  const processingMode = (system?.processing_mode ?? system?.processingMode ?? "active").toLowerCase();
+  const isPassive = processingMode === "passive";
 
   return (
     <div className="p-6 space-y-6">
       {showBriefing && <MorningBriefingModal onClose={() => setShowBriefing(false)} />}
+
+      {isPassive && (
+        <div
+          className="flex items-start gap-3 px-4 py-3 rounded-lg border"
+          style={{
+            borderColor: "oklch(0.85 0.04 240)",
+            background: "oklch(0.97 0.01 240)",
+          }}
+        >
+          <span className="text-base leading-none mt-0.5">ℹ️</span>
+          <div className="text-sm text-slate-700">
+            This machine is in <strong>Passive</strong> mode — email automation is disabled. Switch to Active in Settings.
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <div className="flex items-center justify-between">
@@ -359,7 +376,9 @@ export default function Dashboard() {
           <div className="px-4 py-3 border-b border-border flex items-center gap-2">
             <Cpu className="w-4 h-4 text-muted-foreground" />
             <span className="text-sm font-semibold text-foreground">Active Plugins</span>
-            <span className="ml-auto badge info">{runningPlugins.length} running</span>
+            <span className="ml-auto badge info">
+              {runningPlugins.length} running{isPassive ? " (passive mode)" : ""}
+            </span>
           </div>
           <div className="divide-y divide-border">
             {loading ? (

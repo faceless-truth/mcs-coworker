@@ -20,6 +20,7 @@ export default function Plugins() {
   const [filter, setFilter] = useState("all");
   const [plugins, setPlugins] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isPassive, setIsPassive] = useState(false);
 
   useEffect(() => {
     const fetchPlugins = async () => {
@@ -36,13 +37,31 @@ export default function Plugins() {
         setLoading(false);
       }
     };
+    const fetchMode = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/api/processing-mode`);
+        if (res.ok) {
+          const json = await res.json();
+          setIsPassive((json?.mode || "active").toLowerCase() === "passive");
+        }
+      } catch (_) {
+        // best effort
+      }
+    };
     fetchPlugins();
-    const interval = setInterval(fetchPlugins, 30000);
+    fetchMode();
+    const interval = setInterval(() => { fetchPlugins(); fetchMode(); }, 30000);
     const onModeChanged = () => fetchPlugins();
+    const onProcModeChanged = (e: Event) => {
+      const detail = (e as CustomEvent).detail as string;
+      setIsPassive((detail || "active").toLowerCase() === "passive");
+    };
     window.addEventListener("reception-mode-changed", onModeChanged);
+    window.addEventListener("processing-mode-changed", onProcModeChanged);
     return () => {
       clearInterval(interval);
       window.removeEventListener("reception-mode-changed", onModeChanged);
+      window.removeEventListener("processing-mode-changed", onProcModeChanged);
     };
   }, []);
 
@@ -71,6 +90,12 @@ export default function Plugins() {
   };
 
   const runNow = async (id: string) => {
+    if (isPassive) {
+      toast.error("Disabled in passive mode", {
+        description: "Switch to Active in Settings to run plugins on this machine.",
+      });
+      return;
+    }
     const plugin = plugins.find((p: any) => p.id === id);
     if (!plugin) return;
     toast(`Running ${plugin.name}...`, { description: "Plugin triggered manually — check Activity Log for results." });
@@ -162,7 +187,8 @@ export default function Plugins() {
                 <div className="flex-1" />
                 <button
                   onClick={() => runNow(plugin.id)}
-                  disabled={!plugin.enabled}
+                  disabled={!plugin.enabled || isPassive}
+                  title={isPassive ? "Disabled in passive mode" : undefined}
                   className="flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium border border-border hover:border-blue-300 hover:text-blue-600 transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <Play className="w-3 h-3" />

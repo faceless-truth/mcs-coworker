@@ -55,7 +55,8 @@ def _safe_log(callback: "Callable[[str], None]") -> "Callable[[str], None]":
 
 
 from config import (
-    get_setting, get_plugin_state, save_plugin_state, get_all_plugin_states
+    get_setting, get_plugin_state, save_plugin_state, get_all_plugin_states,
+    is_active_mode,
 )
 from event_bus import EventBus, HeartbeatPlugin
 from event_wiring import wire_all, apply_all_patches, Events
@@ -450,6 +451,9 @@ class PluginLoader:
         block fast ones. Each run is fire-and-forget; errors are caught inside
         run_plugin() and logged by _on_plugin_complete.
         """
+        if not is_active_mode():
+            logger.debug("Skipping plugin runs — passive mode")
+            return
         for pid, lp in list(self._plugins.items()):
             if not lp.is_due():
                 continue
@@ -519,6 +523,8 @@ class PluginLoader:
     def _on_heartbeat_tick(self, event) -> None:
         """Called on every heartbeat tick — runs any due plugins."""
         if not self._running:
+            return
+        if not is_active_mode():
             return
         # Respect configured business hours — without this the heartbeat will
         # fire plugins at midnight on weekends regardless of the setting.

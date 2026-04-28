@@ -35,6 +35,8 @@ interface SystemStatus {
   reasoning_model?: string;
   memoryRecords?: number;
   memory_records?: number;
+  processing_mode?: string;
+  processingMode?: string;
 }
 
 function useSystemStatus() {
@@ -110,6 +112,8 @@ export default function Sidebar({ activePage, onNavigate, pendingApprovals }: Si
   const fastModel = sys?.fastModel ?? sys?.fast_model ?? "—";
   const reasoningModel = sys?.reasoningModel ?? sys?.reasoning_model ?? "—";
   const memoryRecords = sys?.memoryRecords ?? sys?.memory_records;
+  const processingMode = (sys?.processing_mode ?? sys?.processingMode ?? "active").toLowerCase();
+  const isPassive = processingMode === "passive";
 
   return (
     <aside
@@ -185,6 +189,26 @@ export default function Sidebar({ activePage, onNavigate, pendingApprovals }: Si
         className="px-3 py-3 space-y-2"
         style={{ borderTop: "1px solid oklch(0.25 0.02 245)" }}
       >
+        <div className="flex items-center gap-2">
+          <span
+            className="inline-block w-2 h-2 rounded-full"
+            style={{
+              background: isPassive
+                ? "oklch(0.55 0.01 240)"
+                : "oklch(0.7 0.18 145)",
+            }}
+          />
+          <span
+            className="text-xs font-semibold uppercase tracking-wide"
+            style={{
+              color: isPassive
+                ? "oklch(0.55 0.01 240)"
+                : "oklch(0.78 0.14 145)",
+            }}
+          >
+            {isPassive ? "Passive" : "Active"}
+          </span>
+        </div>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <span className="status-dot running" />
