@@ -134,6 +134,14 @@ def _init_backend():
     api_server.set_kpi_monitor(km)
     api_server.set_graph_client(graph)
 
+    # Sanity check the SharePoint endpoints share the loader's authenticated
+    # GraphClient. If these IDs ever diverge, plugins and SharePoint will
+    # disagree about whether the user is signed in.
+    log.info(
+        f"GraphClient wiring: loader={id(loader._graph)} "
+        f"api_server={id(graph)} same={loader._graph is graph}"
+    )
+
     return loader, aq, km
 
 

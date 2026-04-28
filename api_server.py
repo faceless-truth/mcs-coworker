@@ -167,6 +167,19 @@ def set_kpi_monitor(km: KPIMonitor):
 def set_graph_client(gc):
     global _graph_client
     _graph_client = gc
+    logger.info(f"api_server._graph_client set to id={id(gc)}")
+
+
+def _get_graph():
+    """Return the authenticated GraphClient shared with the plugin loader.
+
+    Prefers the loader's instance so SharePoint and plugins can never end
+    up with different objects (e.g. if startup wiring order changes).
+    """
+    gc = _loader._graph if _loader is not None else None
+    if gc is None:
+        gc = _graph_client
+    return gc
 
 
 # ── API token auth ─────────────────────────────────────────────────────────────
@@ -2230,9 +2243,11 @@ def chat_export():
 @app.route("/api/sharepoint/test", methods=["POST"])
 def test_sharepoint():
     """Test the SharePoint connection from the Settings page."""
-    if _graph_client is None:
+    graph = _get_graph()
+    logger.info(f"/api/sharepoint/test using GraphClient id={id(graph) if graph else None}")
+    if graph is None:
         return jsonify({"ok": False, "error": "Graph client not initialised"})
-    return jsonify(_graph_client.test_sharepoint_connection())
+    return jsonify(graph.test_sharepoint_connection())
 
 
 @app.route("/api/sharepoint/folders", methods=["GET"])
@@ -2240,41 +2255,14 @@ def list_sharepoint_folders():
     """List files in a client's SharePoint folder."""
     client_name = request.args.get("client", "").strip()
     entity_name = request.args.get("entity", "").strip()
-    if _graph_client is None:
+    graph = _get_graph()
+    logger.info(f"/api/sharepoint/folders using GraphClient id={id(graph) if graph else None}")
+    if graph is None:
         return jsonify({"ok": False, "error": "Graph client not initialised"})
-    files = _graph_client.list_sharepoint_folder(
+    files = graph.list_sharepoint_folder(
         client_name or None, entity_name or None,
     )
     return jsonify({"ok": True, "files": files})
-
-
-@app.route("/api/sharepoint/debug", methods=["GET"])
-def debug_sharepoint():
-    graph = _graph_client
-    if not graph or not graph.is_authenticated():
-        return jsonify({"ok": False, "error": "Not authenticated", "is_auth": graph.is_authenticated() if graph else False})
-    from config import get_setting
-    site_url = get_setting("sharepoint_site_url", "")
-    from urllib.parse import urlparse
-    parsed = urlparse(site_url)
-    hostname = parsed.hostname
-    site_path = parsed.path
-    graph_url = f"https://graph.microsoft.com/v1.0/sites/{hostname}:{site_path}"
-    try:
-        token = graph._get_token()
-        import requests as req
-        resp = req.get(graph_url, headers={"Authorization": f"Bearer {token}"})
-        return jsonify({
-            "site_url_setting": site_url,
-            "hostname": hostname,
-            "site_path": site_path,
-            "graph_url": graph_url,
-            "status_code": resp.status_code,
-            "response": resp.json(),
-            "token_exists": bool(token),
-        })
-    except Exception as e:
-        return jsonify({"ok": False, "error": str(e)})
 
 
 @app.route("/api/chat/export/sharepoint", methods=["POST"])
@@ -2293,7 +2281,9 @@ def export_to_sharepoint():
         return jsonify({"ok": False, "error": "Invalid export_type — use transcript, summary, or recommendation"}), 400
     if not isinstance(messages, list) or not messages:
         return jsonify({"ok": False, "error": "No messages to export"}), 400
-    if _graph_client is None:
+    graph = _get_graph()
+    logger.info(f"/api/chat/export/sharepoint using GraphClient id={id(graph) if graph else None}")
+    if graph is None:
         return jsonify({"ok": False, "error": "Graph client not initialised"}), 500
 
     try:
@@ -2309,7 +2299,7 @@ def export_to_sharepoint():
         status = 400 if "recommendation to export" in error else 500
         return jsonify({"ok": False, "error": error}), status
 
-    url = _graph_client.upload_to_sharepoint(
+    url = graph.upload_to_sharepoint(
         file_content=buf.read(),
         filename=filename,
         client_name=client_name,
