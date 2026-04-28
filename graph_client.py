@@ -297,7 +297,10 @@ class GraphClient:
         if reply_to_id:
             try:
                 draft_id = self._create_threaded_reply_draft(reply_to_id, body_html)
-                self._reopen_original(reply_to_id)
+                # Do NOT mark the original as unread — that creates an infinite
+                # loop where the next plugin run sees it as unread again and
+                # drafts a duplicate reply. Callers are responsible for
+                # marking the original as read after a successful draft.
                 return draft_id
             except Exception as e:
                 logger.warning(
@@ -693,8 +696,8 @@ class GraphClient:
                 r = requests.post(att_url, headers=self._headers(), timeout=30, json=att_payload)
                 r.raise_for_status()
 
-        if threaded:
-            self._reopen_original(reply_to_id)
+        # Intentionally do NOT mark the original as unread here — the caller
+        # must mark it read after drafting to avoid duplicate-draft loops.
 
         return draft_id
 

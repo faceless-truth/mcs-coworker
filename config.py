@@ -179,6 +179,13 @@ def init_db():
             notes              TEXT,
             created_at         TEXT DEFAULT CURRENT_TIMESTAMP
         );
+
+        CREATE TABLE IF NOT EXISTS smart_responder_processed (
+            message_id   TEXT PRIMARY KEY,
+            processed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            draft_id     TEXT,
+            action       TEXT
+        );
     """)
 
     # Add display_name column if upgrading from older schema

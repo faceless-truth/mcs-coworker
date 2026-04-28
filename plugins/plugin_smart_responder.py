@@ -38,7 +38,7 @@ from plugin_base import (
     AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory,
 )
 from config import (
-    get_setting, log_activity, get_knowledge_entries,
+    get_setting, log_activity, get_knowledge_entries, get_db,
 )
 from prompt_utils import wrap_untrusted_content, UNTRUSTED_CONTENT_SYSTEM_PROMPT
 from bas_dates import format_bas_dates_for_prompt
@@ -138,6 +138,13 @@ class SmartEmailResponderPlugin(AgentPlugin):
             result.summary = "No unread emails."
             return result
 
+        # Drop processed-tracking rows older than 30 days so the table doesn't
+        # grow indefinitely.
+        try:
+            self._cleanup_old_processed(days=30)
+        except Exception as e:
+            context.log(f"🧠 processed-table cleanup failed: {e}")
+
         kb_block = self._knowledge_base_block()
         practice_name = get_setting("practice_name", "MC & S")
         user_name     = get_setting("user_name", "")
@@ -157,6 +164,12 @@ class SmartEmailResponderPlugin(AgentPlugin):
                 (email.get("body") or {}).get("content", "")
                 or email.get("bodyPreview", "")
             )
+
+            # Belt-and-braces: even if mark_as_read fails or the email comes
+            # back as unread, never re-process the same Graph message id.
+            if message_id and self._is_already_processed(message_id):
+                skipped += 1
+                continue
 
             try:
                 reply_body = self._ask_claude(
@@ -184,6 +197,7 @@ class SmartEmailResponderPlugin(AgentPlugin):
                     graph.mark_as_read(message_id)
                 except Exception as e:
                     context.log(f"🧠 Couldn't mark read '{subject}': {e}")
+                self._mark_as_processed(message_id, draft_id=None, action="no_reply")
                 log_activity(sender, subject, "smart_responder",
                              "no_reply", 0, 0)
                 skipped += 1
@@ -192,12 +206,21 @@ class SmartEmailResponderPlugin(AgentPlugin):
             reply_subject = subject if subject.lower().startswith("re:") \
                 else f"Re: {subject}"
             try:
-                graph.create_draft(
+                draft_id = graph.create_draft(
                     to_address=sender,
                     subject=reply_subject,
                     body_html=self._ensure_html(reply_body),
                     reply_to_id=message_id,
                 )
+                # IMMEDIATELY mark the original as read so the next 60-second
+                # tick doesn't see it as unread and draft another reply. The
+                # processed-tracking row below is the second layer of defence
+                # in case mark_as_read fails (transient Graph error).
+                try:
+                    graph.mark_as_read(message_id)
+                except Exception as e:
+                    context.log(f"🧠 Couldn't mark read '{subject}' after drafting: {e}")
+                self._mark_as_processed(message_id, draft_id=draft_id, action="drafted")
                 drafted += 1
                 log_activity(sender, subject, "smart_responder",
                              "drafted", 1, 0)
@@ -218,6 +241,60 @@ class SmartEmailResponderPlugin(AgentPlugin):
             result.success = False
             result.error = result.summary
         return result
+
+    # ── Processed-message tracking ────────────────────────────────────────────
+
+    @staticmethod
+    def _is_already_processed(message_id: str) -> bool:
+        """Return True if we have a row in ``smart_responder_processed`` for
+        this Graph message id. Prevents duplicate drafts even if mark_as_read
+        previously failed."""
+        if not message_id:
+            return False
+        try:
+            conn = get_db()
+            row = conn.execute(
+                "SELECT 1 FROM smart_responder_processed WHERE message_id = ?",
+                (message_id,),
+            ).fetchone()
+            conn.close()
+            return row is not None
+        except Exception:
+            return False
+
+    @staticmethod
+    def _mark_as_processed(message_id: str, draft_id: str | None,
+                            action: str) -> None:
+        """Record that we have handled this Graph message id."""
+        if not message_id:
+            return
+        try:
+            conn = get_db()
+            conn.execute(
+                "INSERT OR REPLACE INTO smart_responder_processed "
+                "(message_id, draft_id, action, processed_at) "
+                "VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
+                (message_id, draft_id or "", action),
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
+
+    @staticmethod
+    def _cleanup_old_processed(days: int = 30) -> None:
+        """Drop processed-tracking rows older than N days."""
+        try:
+            conn = get_db()
+            conn.execute(
+                "DELETE FROM smart_responder_processed "
+                "WHERE processed_at < datetime('now', ?)",
+                (f"-{int(days)} days",),
+            )
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
 
     # ── Helpers ───────────────────────────────────────────────────────────────
 
