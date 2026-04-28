@@ -2061,37 +2061,25 @@ def _find_recommendation_message(messages: list) -> str | None:
     return best if best_score >= 2 else None
 
 
-@app.route("/api/chat/export", methods=["POST"])
-def chat_export():
-    """Render the supplied conversation as a Word document.
+def _build_export_document(
+    messages: list,
+    agent_name: str,
+    export_type: str,
+    client_name: str | None,
+    entity_name: str | None,
+) -> tuple:
+    """Build a chat export Document and return (buffer, filename, error).
 
-    Body:
-      agent_name:   str
-      messages:     [{"role", "content"}, ...]
-      client_name:  optional
-      entity_name:  optional
-      export_type:  "transcript" (default) | "summary" | "recommendation"
+    On success: (BytesIO, filename, None).
+    On failure: (None, None, error_message).
+
+    Shared by the download (`/api/chat/export`) and SharePoint
+    (`/api/chat/export/sharepoint`) endpoints so both routes produce
+    bit-identical .docx files.
     """
     from docx import Document
     from docx.shared import Pt
-
-    body = request.get_json(silent=True) or {}
-    agent_name = (body.get("agent_name") or "Assistant").strip() or "Assistant"
-    messages = body.get("messages") or []
-    client_name = (body.get("client_name") or "").strip() or None
-    entity_name = (body.get("entity_name") or "").strip() or None
-    export_type = (body.get("export_type") or "transcript").lower()
-    if export_type not in ("transcript", "summary", "recommendation"):
-        return err("Invalid export_type — use transcript, summary, or recommendation")
-    if not isinstance(messages, list) or not messages:
-        return err("No messages to export")
-
-    if client_name:
-        try:
-            from client_utils import normalise_client_name
-            client_name = normalise_client_name(client_name)
-        except Exception:
-            pass
+    from io import BytesIO
 
     safe_agent = re.sub(r"[^a-z0-9]+", "_", agent_name.lower()).strip("_") or "chat"
     ts = datetime.now().strftime("%Y-%m-%d_%H%M")
@@ -2101,7 +2089,7 @@ def chat_export():
             import anthropic as anthropic_lib
             api_key = get_setting("anthropic_api_key", "")
             if not api_key:
-                return err("Anthropic API key not configured")
+                return (None, None, "Anthropic API key not configured")
             client = anthropic_lib.Anthropic(api_key=api_key)
             convo_text = "\n\n".join(
                 f"{m.get('role', 'user').upper()}: {m.get('content', '')}"
@@ -2121,25 +2109,22 @@ def chat_export():
             )
             summary_md = summary_resp.content[0].text
         except Exception as e:
-            return err(f"Summary generation failed: {e}")
-
+            return (None, None, f"Summary generation failed: {e}")
         doc = _markdown_to_docx(
             summary_md,
             title=f"{agent_name} — Conversation Summary",
             client_name=client_name,
             entity_name=entity_name,
         )
-        return _docx_response(doc, f"{safe_agent}_summary_{ts}.docx")
-
-    if export_type == "recommendation":
-        # Scan every assistant turn — the recommendation may have been
-        # produced earlier in the dialogue with a follow-up on top.
+        filename = f"{safe_agent}_summary_{ts}.docx"
+    elif export_type == "recommendation":
         rec = _find_recommendation_message(messages)
         if rec is None:
-            return err(
-                "No structured recommendation to export — ask the specialist to "
-                "produce one first.",
-                400,
+            return (
+                None,
+                None,
+                "No structured recommendation to export — ask the specialist "
+                "to produce one first.",
             )
         doc = _markdown_to_docx(
             rec,
@@ -2147,50 +2132,164 @@ def chat_export():
             client_name=client_name,
             entity_name=entity_name,
         )
-        return _docx_response(doc, f"{safe_agent}_recommendation_{ts}.docx")
+        filename = f"{safe_agent}_recommendation_{ts}.docx"
+    elif export_type == "transcript":
+        doc = Document()
+        normal = doc.styles["Normal"]
+        normal.font.name = "Arial"
+        normal.font.size = Pt(11)
+        doc.add_heading(f"{agent_name} — Chat Export", level=1)
+        date_str = datetime.now().strftime("%d %B %Y, %I:%M %p")
+        subtitle = doc.add_paragraph()
+        subtitle.add_run(f"Date: {date_str}  |  Agent: {agent_name}").italic = True
+        if client_name:
+            client_para = doc.add_paragraph()
+            run = client_para.add_run(f"Client: {client_name}")
+            run.bold = True
+            if entity_name:
+                client_para.add_run(f"  |  Entity: {entity_name}")
+        doc.add_paragraph()  # blank spacer
+        for m in messages:
+            if not isinstance(m, dict):
+                continue
+            role = m.get("role")
+            content = m.get("content", "")
+            if not isinstance(content, str):
+                content = str(content)
+            label = "User:" if role == "user" else f"{agent_name}:"
+            para = doc.add_paragraph()
+            label_run = para.add_run(label + " ")
+            label_run.bold = True
+            para.add_run(content)
+            doc.add_paragraph()  # blank line between turns
+        for section in doc.sections:
+            footer_para = section.footer.paragraphs[0]
+            footer_para.text = "MC & S Pty Ltd — Confidential"
+            for run in footer_para.runs:
+                run.font.name = "Arial"
+                run.font.size = Pt(9)
+        filename = f"{safe_agent}_{ts}.docx"
+    else:
+        return (None, None, "Invalid export_type — use transcript, summary, or recommendation")
 
-    # Default: transcript
-    doc = Document()
-    normal = doc.styles["Normal"]
-    normal.font.name = "Arial"
-    normal.font.size = Pt(11)
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return (buf, filename, None)
 
-    doc.add_heading(f"{agent_name} — Chat Export", level=1)
-    date_str = datetime.now().strftime("%d %B %Y, %I:%M %p")
-    subtitle = doc.add_paragraph()
-    subtitle.add_run(f"Date: {date_str}  |  Agent: {agent_name}").italic = True
+
+@app.route("/api/chat/export", methods=["POST"])
+def chat_export():
+    """Render the supplied conversation as a Word document.
+
+    Body:
+      agent_name:   str
+      messages:     [{"role", "content"}, ...]
+      client_name:  optional
+      entity_name:  optional
+      export_type:  "transcript" (default) | "summary" | "recommendation"
+    """
+    body = request.get_json(silent=True) or {}
+    agent_name = (body.get("agent_name") or "Assistant").strip() or "Assistant"
+    messages = body.get("messages") or []
+    client_name = (body.get("client_name") or "").strip() or None
+    entity_name = (body.get("entity_name") or "").strip() or None
+    export_type = (body.get("export_type") or "transcript").lower()
+    if export_type not in ("transcript", "summary", "recommendation"):
+        return err("Invalid export_type — use transcript, summary, or recommendation")
+    if not isinstance(messages, list) or not messages:
+        return err("No messages to export")
 
     if client_name:
-        client_para = doc.add_paragraph()
-        run = client_para.add_run(f"Client: {client_name}")
-        run.bold = True
-        if entity_name:
-            client_para.add_run(f"  |  Entity: {entity_name}")
+        try:
+            from client_utils import normalise_client_name
+            client_name = normalise_client_name(client_name)
+        except Exception:
+            pass
 
-    doc.add_paragraph()  # blank spacer
+    buf, filename, error = _build_export_document(
+        messages, agent_name, export_type, client_name, entity_name,
+    )
+    if error:
+        # Recommendation-missing is a 400 (user can fix); generation failures 500.
+        if "recommendation to export" in error:
+            return err(error, 400)
+        if "Anthropic" in error or "Summary generation" in error:
+            return err(error, 500)
+        return err(error)
 
-    for m in messages:
-        if not isinstance(m, dict):
-            continue
-        role = m.get("role")
-        content = m.get("content", "")
-        if not isinstance(content, str):
-            content = str(content)
-        label = "User:" if role == "user" else f"{agent_name}:"
-        para = doc.add_paragraph()
-        label_run = para.add_run(label + " ")
-        label_run.bold = True
-        para.add_run(content)
-        doc.add_paragraph()  # blank line between turns
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        as_attachment=True,
+        download_name=filename,
+    )
 
-    for section in doc.sections:
-        footer_para = section.footer.paragraphs[0]
-        footer_para.text = "MC & S Pty Ltd — Confidential"
-        for run in footer_para.runs:
-            run.font.name = "Arial"
-            run.font.size = Pt(9)
 
-    return _docx_response(doc, f"{safe_agent}_{ts}.docx")
+# ── SharePoint ────────────────────────────────────────────────────────────────
+@app.route("/api/sharepoint/test", methods=["POST"])
+def test_sharepoint():
+    """Test the SharePoint connection from the Settings page."""
+    if _graph_client is None:
+        return jsonify({"ok": False, "error": "Graph client not initialised"})
+    return jsonify(_graph_client.test_sharepoint_connection())
+
+
+@app.route("/api/sharepoint/folders", methods=["GET"])
+def list_sharepoint_folders():
+    """List files in a client's SharePoint folder."""
+    client_name = request.args.get("client", "").strip()
+    entity_name = request.args.get("entity", "").strip()
+    if _graph_client is None:
+        return jsonify({"ok": False, "error": "Graph client not initialised"})
+    files = _graph_client.list_sharepoint_folder(
+        client_name or None, entity_name or None,
+    )
+    return jsonify({"ok": True, "files": files})
+
+
+@app.route("/api/chat/export/sharepoint", methods=["POST"])
+def export_to_sharepoint():
+    """Export a chat conversation directly to a client's SharePoint folder."""
+    body = request.get_json(silent=True) or {}
+    agent_name = (body.get("agent_name") or "Assistant").strip() or "Assistant"
+    messages = body.get("messages") or []
+    client_name = (body.get("client_name") or "").strip()
+    entity_name = (body.get("entity_name") or "").strip() or None
+    export_type = (body.get("export_type") or "transcript").lower()
+
+    if not client_name:
+        return jsonify({"ok": False, "error": "Client name is required to save to SharePoint"}), 400
+    if export_type not in ("transcript", "summary", "recommendation"):
+        return jsonify({"ok": False, "error": "Invalid export_type — use transcript, summary, or recommendation"}), 400
+    if not isinstance(messages, list) or not messages:
+        return jsonify({"ok": False, "error": "No messages to export"}), 400
+    if _graph_client is None:
+        return jsonify({"ok": False, "error": "Graph client not initialised"}), 500
+
+    try:
+        from client_utils import normalise_client_name
+        client_name = normalise_client_name(client_name)
+    except Exception:
+        pass
+
+    buf, filename, error = _build_export_document(
+        messages, agent_name, export_type, client_name, entity_name,
+    )
+    if error:
+        status = 400 if "recommendation to export" in error else 500
+        return jsonify({"ok": False, "error": error}), status
+
+    url = _graph_client.upload_to_sharepoint(
+        file_content=buf.read(),
+        filename=filename,
+        client_name=client_name,
+        entity_name=entity_name,
+        subfolder="CoWorker Exports",
+    )
+    if url:
+        return jsonify({"ok": True, "url": url, "filename": filename})
+    return jsonify({"ok": False, "error": "Failed to upload to SharePoint. Check connection settings."}), 500
 
 
 # ── Microsoft OAuth callback ─────────────────────────────────────────────────
