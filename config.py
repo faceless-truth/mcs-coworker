@@ -361,20 +361,22 @@ def get_claude_model_reasoning() -> str:
 
 def update_claude_models(api_key: str) -> dict:
     """
-    Query the Anthropic models API and update both stored model slots:
+    Query the Anthropic models API and update all three stored model slots:
       - claude_model_fast      → newest available Haiku model
       - claude_model_reasoning → newest available Sonnet model
+      - opus_model             → newest available Opus model
 
     Also keeps the legacy 'claude_model' key in sync with the fast model
     for backward compatibility with older plugins.
 
-    Returns a dict with keys 'fast' and 'reasoning'.
+    Returns a dict with keys 'fast', 'reasoning', and 'opus'.
     Falls back to currently stored values on any error.
     """
     import urllib.request
     fast_current = get_claude_model_fast()
     reasoning_current = get_claude_model_reasoning()
-    result = {"fast": fast_current, "reasoning": reasoning_current}
+    opus_current = get_setting("opus_model", "claude-opus-4-6")
+    result = {"fast": fast_current, "reasoning": reasoning_current, "opus": opus_current}
     try:
         req = urllib.request.Request(
             "https://api.anthropic.com/v1/models",
@@ -410,6 +412,16 @@ def update_claude_models(api_key: str) -> dict:
             newest_sonnet = sonnet_models[0]["id"]
             set_setting("claude_model_reasoning", newest_sonnet)
             result["reasoning"] = newest_sonnet
+
+        # ── Opus model: newest Opus ───────────────────────────────────────────
+        opus_models = [
+            m for m in all_models if "opus" in m.get("id", "").lower()
+        ]
+        if opus_models:
+            opus_models.sort(key=lambda m: m.get("created_at", ""), reverse=True)
+            newest_opus = opus_models[0]["id"]
+            set_setting("opus_model", newest_opus)
+            result["opus"] = newest_opus
 
     except Exception:
         pass  # return current values on any error

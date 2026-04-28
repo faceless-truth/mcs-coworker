@@ -46,6 +46,11 @@ def normalise_client_name(name: str) -> str:
       'Korkie Family Trust'  → 'Korkie Family Trust'  (entities kept as-is)
       'Gordon J Korkie'      → 'Korkie, Gordon J'
 
+    Known limitation: multi-word surnames ("Van Der Berg", "De La Cruz") are
+    treated as single-word surnames — the function takes the LAST whitespace
+    token as the surname. For these clients, staff should enter the name in
+    'Surname, First' format directly so it round-trips correctly.
+
     Returns the normalised name string.
     """
     if not name or not name.strip():
