@@ -1856,13 +1856,155 @@ def clear_chat_history():
 
 
 # ── Chat export (Word .docx) ──────────────────────────────────────────────────
+
+def _add_formatted_text(paragraph, text: str):
+    """Parse inline markdown formatting (**bold**, *italic*) into Word runs."""
+    parts = re.split(r"(\*\*.*?\*\*|\*.*?\*)", text)
+    for part in parts:
+        if not part:
+            continue
+        if part.startswith("**") and part.endswith("**") and len(part) >= 4:
+            run = paragraph.add_run(part[2:-2])
+            run.bold = True
+        elif part.startswith("*") and part.endswith("*") and len(part) >= 2:
+            run = paragraph.add_run(part[1:-1])
+            run.italic = True
+        else:
+            paragraph.add_run(part)
+
+
+def _markdown_to_docx(
+    markdown_text: str,
+    title: str,
+    client_name: str | None = None,
+    entity_name: str | None = None,
+):
+    """Convert markdown-formatted text into a styled python-docx Document.
+
+    Returns the Document object so callers can extend it before saving.
+    """
+    from docx import Document
+    from docx.shared import Pt
+
+    doc = Document()
+    style = doc.styles["Normal"]
+    style.font.name = "Arial"
+    style.font.size = Pt(11)
+
+    doc.add_heading(title, level=0)
+
+    if client_name:
+        p = doc.add_paragraph()
+        p.add_run(f"Client: {client_name}").bold = True
+        if entity_name:
+            p.add_run(f"  —  {entity_name}")
+
+    doc.add_paragraph(f"Date: {datetime.now().strftime('%d %B %Y')}")
+    doc.add_paragraph("")  # spacer
+
+    lines = (markdown_text or "").split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip()
+        stripped = line.strip()
+
+        if stripped.startswith("# "):
+            doc.add_heading(stripped[2:].strip(), level=1)
+        elif stripped.startswith("## "):
+            doc.add_heading(stripped[3:].strip(), level=2)
+        elif stripped.startswith("### "):
+            doc.add_heading(stripped[4:].strip(), level=3)
+        elif stripped.startswith("- ") or stripped.startswith("* "):
+            p = doc.add_paragraph(style="List Bullet")
+            _add_formatted_text(p, stripped[2:])
+        elif re.match(r"^\d+\.\s", stripped):
+            p = doc.add_paragraph(style="List Number")
+            _add_formatted_text(p, re.sub(r"^\d+\.\s", "", stripped))
+        elif stripped.startswith("|") and "|" in stripped[1:]:
+            # Collect contiguous markdown table rows.
+            table_lines = []
+            while i < len(lines) and lines[i].lstrip().startswith("|"):
+                table_lines.append(lines[i].strip())
+                i += 1
+            # Drop the separator row (--- | ---) if present.
+            rows = [
+                [c.strip() for c in r.strip("|").split("|")]
+                for r in table_lines
+                if not re.match(r"^\|?\s*[-:|\s]+\|?\s*$", r)
+            ]
+            if rows:
+                cols = max(len(r) for r in rows)
+                table = doc.add_table(rows=len(rows), cols=cols)
+                table.style = "Light List"
+                for r_idx, row in enumerate(rows):
+                    cells = table.rows[r_idx].cells
+                    for c_idx in range(cols):
+                        text = row[c_idx] if c_idx < len(row) else ""
+                        cell_para = cells[c_idx].paragraphs[0]
+                        if r_idx == 0:
+                            run = cell_para.add_run(text)
+                            run.bold = True
+                        else:
+                            _add_formatted_text(cell_para, text)
+            continue  # already advanced i
+        elif stripped == "---":
+            doc.add_paragraph("_" * 50)
+        elif stripped:
+            p = doc.add_paragraph()
+            _add_formatted_text(p, stripped)
+        else:
+            doc.add_paragraph("")
+        i += 1
+
+    for section in doc.sections:
+        footer_para = section.footer.paragraphs[0]
+        footer_para.text = "MC & S Pty Ltd — Confidential"
+        for run in footer_para.runs:
+            run.font.name = "Arial"
+            run.font.size = Pt(9)
+
+    return doc
+
+
+def _docx_response(doc, filename: str):
+    """Serialise a python-docx Document and return a Flask file response."""
+    from io import BytesIO
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return send_file(
+        buf,
+        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        as_attachment=True,
+        download_name=filename,
+    )
+
+
+def _last_assistant_message(messages: list) -> str:
+    for m in reversed(messages or []):
+        if isinstance(m, dict) and m.get("role") == "assistant":
+            content = m.get("content", "")
+            return content if isinstance(content, str) else str(content)
+    return ""
+
+
+def _has_structured_recommendation(text: str) -> bool:
+    if not text:
+        return False
+    return bool(re.search(r"^#{1,3}\s", text, re.MULTILINE))
+
+
 @app.route("/api/chat/export", methods=["POST"])
 def chat_export():
-    """Render the supplied conversation as a real Word document.
+    """Render the supplied conversation as a Word document.
 
-    Body: {"agent_name": str, "messages": [{"role": "user"|"assistant", "content": str}, ...]}
+    Body:
+      agent_name:   str
+      messages:     [{"role", "content"}, ...]
+      client_name:  optional
+      entity_name:  optional
+      export_type:  "transcript" (default) | "summary" | "recommendation"
     """
-    from io import BytesIO
     from docx import Document
     from docx.shared import Pt
 
@@ -1871,6 +2013,9 @@ def chat_export():
     messages = body.get("messages") or []
     client_name = (body.get("client_name") or "").strip() or None
     entity_name = (body.get("entity_name") or "").strip() or None
+    export_type = (body.get("export_type") or "transcript").lower()
+    if export_type not in ("transcript", "summary", "recommendation"):
+        return err("Invalid export_type — use transcript, summary, or recommendation")
     if not isinstance(messages, list) or not messages:
         return err("No messages to export")
 
@@ -1881,14 +2026,66 @@ def chat_export():
         except Exception:
             pass
 
-    doc = Document()
+    safe_agent = re.sub(r"[^a-z0-9]+", "_", agent_name.lower()).strip("_") or "chat"
+    ts = datetime.now().strftime("%Y-%m-%d_%H%M")
 
-    # Arial 11pt as the default for the Normal style.
+    if export_type == "summary":
+        try:
+            import anthropic as anthropic_lib
+            api_key = get_setting("anthropic_api_key", "")
+            if not api_key:
+                return err("Anthropic API key not configured")
+            client = anthropic_lib.Anthropic(api_key=api_key)
+            convo_text = "\n\n".join(
+                f"{m.get('role', 'user').upper()}: {m.get('content', '')}"
+                for m in messages
+                if isinstance(m, dict)
+            )
+            summary_resp = client.messages.create(
+                model=get_claude_model_reasoning(),
+                max_tokens=2048,
+                system=(
+                    "Summarise the following conversation into a concise professional "
+                    "document suitable for filing in a client folder. Include key "
+                    "decisions, advice given, and action items. Format with clear "
+                    "markdown headings (##, ###), bullet points, and bold for emphasis."
+                ),
+                messages=[{"role": "user", "content": convo_text[:80000]}],
+            )
+            summary_md = summary_resp.content[0].text
+        except Exception as e:
+            return err(f"Summary generation failed: {e}")
+
+        doc = _markdown_to_docx(
+            summary_md,
+            title=f"{agent_name} — Conversation Summary",
+            client_name=client_name,
+            entity_name=entity_name,
+        )
+        return _docx_response(doc, f"{safe_agent}_summary_{ts}.docx")
+
+    if export_type == "recommendation":
+        last = _last_assistant_message(messages)
+        if not _has_structured_recommendation(last):
+            return err(
+                "No structured recommendation to export — ask the specialist to "
+                "produce one first.",
+                400,
+            )
+        doc = _markdown_to_docx(
+            last,
+            title=f"{agent_name} — Recommendation",
+            client_name=client_name,
+            entity_name=entity_name,
+        )
+        return _docx_response(doc, f"{safe_agent}_recommendation_{ts}.docx")
+
+    # Default: transcript
+    doc = Document()
     normal = doc.styles["Normal"]
     normal.font.name = "Arial"
     normal.font.size = Pt(11)
 
-    # Title (Heading 1) + subtitle.
     doc.add_heading(f"{agent_name} — Chat Export", level=1)
     date_str = datetime.now().strftime("%d %B %Y, %I:%M %p")
     subtitle = doc.add_paragraph()
@@ -1917,7 +2114,6 @@ def chat_export():
         para.add_run(content)
         doc.add_paragraph()  # blank line between turns
 
-    # Footer on all sections.
     for section in doc.sections:
         footer_para = section.footer.paragraphs[0]
         footer_para.text = "MC & S Pty Ltd — Confidential"
@@ -1925,20 +2121,7 @@ def chat_export():
             run.font.name = "Arial"
             run.font.size = Pt(9)
 
-    buf = BytesIO()
-    doc.save(buf)
-    buf.seek(0)
-
-    safe_agent = re.sub(r"[^a-z0-9]+", "_", agent_name.lower()).strip("_") or "chat"
-    ts = datetime.now().strftime("%Y-%m-%d_%H%M")
-    filename = f"{safe_agent}_{ts}.docx"
-
-    return send_file(
-        buf,
-        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        as_attachment=True,
-        download_name=filename,
-    )
+    return _docx_response(doc, f"{safe_agent}_{ts}.docx")
 
 
 # ── Microsoft OAuth callback ─────────────────────────────────────────────────

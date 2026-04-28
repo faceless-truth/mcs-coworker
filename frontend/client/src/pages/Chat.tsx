@@ -110,6 +110,8 @@ export default function Chat() {
   const [uploading, setUploading] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState<{ name: string; size: number }[]>([]);
   const [dragActive, setDragActive] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [exportingType, setExportingType] = useState<"transcript" | "summary" | "recommendation" | null>(null);
   const [clientName, setClientName] = useState("");
   const [entityName, setEntityName] = useState("");
   const [clientNamesList, setClientNamesList] = useState<string[]>([]);
@@ -353,7 +355,9 @@ export default function Chat() {
     return plain ? plain[1].trim() : null;
   };
 
-  const handleExport = async () => {
+  const handleExport = async (
+    exportType: "transcript" | "summary" | "recommendation" = "transcript",
+  ) => {
     const agentName = selectedAgent?.name || "Assistant";
     const firstUserIdx = messages.findIndex(m => m.role === "user");
     const convo = firstUserIdx >= 0 ? messages.slice(firstUserIdx) : [];
@@ -361,15 +365,23 @@ export default function Chat() {
       toast.error("Nothing to export yet");
       return;
     }
+    setExportingType(exportType);
+    if (exportType === "summary") {
+      toast("Generating summary…", {
+        description: "Claude is condensing the conversation — this takes a few seconds.",
+      });
+    }
     try {
       const res = await fetch("http://127.0.0.1:7842/api/chat/export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           agent_name: agentName,
+          agent_id: selectedAgentId,
           messages: convo.map(m => ({ role: m.role, content: m.content })),
           client_name: clientName.trim() || null,
           entity_name: entityName.trim() || null,
+          export_type: exportType,
         }),
       });
       if (!res.ok) {
@@ -388,11 +400,28 @@ export default function Chat() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-      toast.success("Conversation exported");
+      toast.success(
+        exportType === "transcript"
+          ? "Transcript exported"
+          : exportType === "summary"
+          ? "Summary exported"
+          : "Recommendation exported",
+      );
     } catch (e: any) {
       toast.error("Export failed", { description: e?.message ?? "" });
+    } finally {
+      setExportingType(null);
+      setExportMenuOpen(false);
     }
   };
+
+  const lastAssistantContent = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === "assistant") return messages[i].content;
+    }
+    return "";
+  })();
+  const hasStructuredRecommendation = /^#{1,3}\s/m.test(lastAssistantContent);
 
   const handleCopyAll = async () => {
     try {
@@ -491,14 +520,61 @@ export default function Chat() {
               <Copy className="w-3.5 h-3.5" />
               Copy all
             </button>
-            <button
-              onClick={handleExport}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-border bg-white text-slate-700 hover:border-blue-300 hover:text-blue-600 transition-all"
-              title="Download conversation as a Word document"
-            >
-              <Download className="w-3.5 h-3.5" />
-              Export
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setExportMenuOpen(o => !o)}
+                onBlur={() => setTimeout(() => setExportMenuOpen(false), 150)}
+                disabled={exportingType !== null}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium border border-border bg-white text-slate-700 hover:border-blue-300 hover:text-blue-600 transition-all disabled:opacity-60"
+                title="Download as Word document"
+              >
+                <Download className="w-3.5 h-3.5" />
+                {exportingType === "summary" ? "Generating summary…"
+                  : exportingType ? "Exporting…"
+                  : "Export"}
+                <span className="text-slate-400">▾</span>
+              </button>
+              {exportMenuOpen && (
+                <div className="absolute right-0 mt-1 z-30 w-64 bg-white border border-border rounded-lg shadow-lg overflow-hidden">
+                  <button
+                    type="button"
+                    onMouseDown={e => { e.preventDefault(); handleExport("transcript"); }}
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 border-b border-border"
+                  >
+                    <div className="font-semibold text-slate-700">Download Transcript (.docx)</div>
+                    <div className="text-slate-500">Full conversation as a Word doc</div>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={e => { e.preventDefault(); handleExport("summary"); }}
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 border-b border-border"
+                  >
+                    <div className="font-semibold text-slate-700">Download Summary (.docx)</div>
+                    <div className="text-slate-500">Claude-generated summary for the client file</div>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={e => {
+                      if (!hasStructuredRecommendation) return;
+                      e.preventDefault();
+                      handleExport("recommendation");
+                    }}
+                    disabled={!hasStructuredRecommendation}
+                    title={hasStructuredRecommendation
+                      ? undefined
+                      : "No structured recommendation to export — ask the specialist to produce one first."}
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 disabled:opacity-50 disabled:hover:bg-white disabled:cursor-not-allowed"
+                  >
+                    <div className="font-semibold text-slate-700">Download Recommendation (.docx)</div>
+                    <div className="text-slate-500">
+                      {hasStructuredRecommendation
+                        ? "Specialist's structured output as a formatted document"
+                        : "Available once the specialist produces a structured doc"}
+                    </div>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         )}
       </div>
