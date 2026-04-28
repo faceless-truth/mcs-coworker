@@ -301,49 +301,19 @@ class BASReminderPlugin(AgentPlugin):
         so the firm's ATO tax-agent program dates (with weekend rollovers) are used —
         not the standard ATO public dates.
         """
+        # Delegate to bas_dates so monthly/annual/quarterly all share the
+        # same weekend rollover and 10-business-day data-request logic.
         upcoming: list = []
-        freq = (frequency or "").strip().lower()
-
-        if freq == "monthly":
-            # Monthly lodgers: BAS due 21st of the following month.
-            for offset in range(3):
-                month = today.month + offset
-                year  = today.year
-                while month > 12:
-                    month -= 12
-                    year  += 1
-                try:
-                    due = date(year, month, 21)
-                except ValueError:
-                    continue
-                days_until = (due - today).days
-                if 0 <= days_until <= lead_days:
-                    upcoming.append(due)
-
-        elif freq == "annual":
-            day, month = ANNUAL_DUE_DATE
-            for year_offset in (0, 1):
-                year = today.year + year_offset
-                try:
-                    due = date(year, month, day)
-                except ValueError:
-                    due = date(year, month, 28)
-                if due < today:
-                    continue
-                days_until = (due - today).days
-                if 0 <= days_until <= lead_days:
-                    upcoming.append(due)
-                    break
-
-        else:
-            # Default / quarterly — driven by bas_dates utility (tax agent program).
-            seen: set = set()
-            for q in get_upcoming_deadlines(days_ahead=lead_days, reference_date=today):
-                due = q.get("agent_due")
-                if due and due not in seen:
-                    seen.add(due)
-                    upcoming.append(due)
-
+        seen: set = set()
+        for q in get_upcoming_deadlines(
+            days_ahead=lead_days,
+            reference_date=today,
+            frequency=frequency or "Quarterly",
+        ):
+            due = q.get("agent_due")
+            if due and due not in seen:
+                seen.add(due)
+                upcoming.append(due)
         return upcoming
 
     def _reminder_stage(self, due_date: date, frequency: str,

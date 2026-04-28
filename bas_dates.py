@@ -170,28 +170,131 @@ def get_next_due_quarter(reference_date: Optional[date] = None) -> Optional[Dict
     return None
 
 
-def get_upcoming_deadlines(days_ahead: int = 30, reference_date: Optional[date] = None) -> List[Dict]:
-    """Get all BAS deadlines within the next N days."""
+def get_upcoming_deadlines(
+    days_ahead: int = 30,
+    reference_date: Optional[date] = None,
+    frequency: str = "Quarterly",
+) -> List[Dict]:
+    """Get all BAS deadlines within the next N days for a given frequency.
+
+    frequency: "Quarterly" (default) | "Monthly" | "Annual".
+    """
     if reference_date is None:
         reference_date = date.today()
     cutoff = reference_date + timedelta(days=days_ahead)
-
     fy = get_financial_year(reference_date)
-    all_quarters = get_bas_dates(fy) + get_bas_dates(fy + 1)
+
+    freq = (frequency or "Quarterly").strip().lower()
+    if freq == "monthly":
+        periods = get_monthly_bas_dates(fy) + get_monthly_bas_dates(fy + 1)
+    elif freq == "annual":
+        a = get_annual_bas_dates(fy)
+        b = get_annual_bas_dates(fy + 1)
+        periods = [a, b]
+    else:
+        periods = get_bas_dates(fy) + get_bas_dates(fy + 1)
 
     upcoming = []
-    for q in all_quarters:
-        if reference_date <= q["agent_due"] <= cutoff:
-            days_until = (q["agent_due"] - reference_date).days
+    for q in periods:
+        agent_due = q.get("agent_due")
+        data_request_by = q.get("data_request_by")
+        if agent_due and reference_date <= agent_due <= cutoff:
             q_copy = dict(q)
-            q_copy["days_until_due"] = days_until
+            q_copy["days_until_due"] = (agent_due - reference_date).days
             upcoming.append(q_copy)
-        if reference_date <= q["data_request_by"] <= cutoff:
-            days_until = (q["data_request_by"] - reference_date).days
+        if data_request_by and reference_date <= data_request_by <= cutoff:
             q_copy = dict(q)
-            q_copy["days_until_data_request"] = days_until
+            q_copy["days_until_data_request"] = (data_request_by - reference_date).days
             upcoming.append(q_copy)
     return upcoming
+
+
+def get_monthly_bas_dates(financial_year: Optional[int] = None) -> List[Dict]:
+    """Calculate monthly BAS due dates for a given financial year.
+
+    Standard lodgement is due the 21st of the following month. The tax-agent
+    concession lifts this to the 21st (no extra weeks for monthly lodgers).
+    Weekend due dates roll forward to the next business day.
+    """
+    if financial_year is None:
+        financial_year = get_financial_year()
+    fy_start = financial_year - 1
+
+    months: List[Dict] = []
+    # Iterate Jul (fy_start) through Jun (financial_year).
+    cursor = date(fy_start, 7, 1)
+    end = date(financial_year, 6, 30)
+    while cursor <= end:
+        # Period is the calendar month containing cursor.
+        if cursor.month == 12:
+            period_end = date(cursor.year, 12, 31)
+            next_month_first = date(cursor.year + 1, 1, 1)
+        else:
+            period_end = date(cursor.year, cursor.month + 1, 1) - timedelta(days=1)
+            next_month_first = date(cursor.year, cursor.month + 1, 1)
+
+        # Standard due: 21st of the following month.
+        if next_month_first.month == 12:
+            due_year = next_month_first.year
+            due_month = next_month_first.month
+        else:
+            due_year = next_month_first.year
+            due_month = next_month_first.month
+        standard_due_raw = date(due_year, due_month, 21)
+        standard_due = _next_business_day(standard_due_raw)
+        agent_due = standard_due  # No tax-agent extension for monthly.
+        data_request_by = _subtract_business_days(agent_due, 10)
+
+        period_label = cursor.strftime("%b %Y")
+        description = (
+            f"{period_label}: Standard due {standard_due.strftime('%d %b %Y')}"
+        )
+
+        months.append({
+            "quarter": period_label,
+            "period": period_label,
+            "period_start": cursor,
+            "period_end": period_end,
+            "standard_due": standard_due,
+            "agent_due": agent_due,
+            "has_extension": False,
+            "data_request_by": data_request_by,
+            "description": description,
+            "frequency": "Monthly",
+        })
+
+        cursor = next_month_first
+    return months
+
+
+def get_annual_bas_dates(financial_year: Optional[int] = None) -> Dict:
+    """Annual GST return — due 28 February following the end of the FY."""
+    if financial_year is None:
+        financial_year = get_financial_year()
+    fy_start = financial_year - 1
+
+    period_start = date(fy_start, 7, 1)
+    period_end = date(financial_year, 6, 30)
+    standard_due = _next_business_day(date(financial_year, 2, 28))
+    agent_due = standard_due
+    data_request_by = _subtract_business_days(agent_due, 10)
+
+    period_label = f"FY{str(fy_start)[2:]}-{str(financial_year)[2:]}"
+    return {
+        "quarter": "Annual",
+        "period": period_label,
+        "period_start": period_start,
+        "period_end": period_end,
+        "standard_due": standard_due,
+        "agent_due": agent_due,
+        "has_extension": False,
+        "data_request_by": data_request_by,
+        "description": (
+            f"Annual GST ({period_label}): Standard due "
+            f"{standard_due.strftime('%d %b %Y')}"
+        ),
+        "frequency": "Annual",
+    }
 
 
 def format_bas_dates_for_prompt(financial_year: Optional[int] = None) -> str:
