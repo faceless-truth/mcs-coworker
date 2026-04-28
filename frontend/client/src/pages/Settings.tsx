@@ -278,13 +278,152 @@ function KnowledgeBaseSection() {
 const BAS_FREQUENCIES = ["Monthly", "Quarterly", "Annual"];
 const BAS_STATUSES = ["Awaiting Data", "Data Received", "Lodged"];
 const BAS_API = "http://127.0.0.1:7842/api/bas-clients";
+const BAS_DATES_API = "http://127.0.0.1:7842/api/bas-dates";
+
+type BasQuarter = {
+  quarter: string;
+  period: string;
+  period_start: string;
+  period_end: string;
+  standard_due: string;
+  agent_due: string;
+  has_extension: boolean;
+  data_request_by: string;
+  description: string;
+};
+
+type BasDatesPayload = {
+  ok: boolean;
+  financial_year: string;
+  current_year: BasQuarter[];
+  next_year: BasQuarter[];
+  next_due: BasQuarter | null;
+  upcoming_60_days: BasQuarter[];
+};
+
+function formatDayMonthYear(iso: string): string {
+  const d = new Date(iso + "T00:00:00");
+  return d.toLocaleDateString("en-AU", { day: "2-digit", month: "short", year: "numeric" });
+}
+
+function daysBetween(isoDate: string): number {
+  const target = new Date(isoDate + "T00:00:00");
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return Math.round((target.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function deadlineTone(days: number): { bg: string; text: string; label: string } {
+  if (days < 0) return { bg: "bg-rose-50 border-rose-200", text: "text-rose-700", label: "OVERDUE" };
+  if (days <= 14) return { bg: "bg-rose-50 border-rose-200", text: "text-rose-700", label: `${days} days` };
+  if (days <= 30) return { bg: "bg-amber-50 border-amber-200", text: "text-amber-700", label: `${days} days` };
+  return { bg: "bg-emerald-50 border-emerald-200", text: "text-emerald-700", label: `${days} days` };
+}
+
+function BasDatesCard() {
+  const [data, setData] = useState<BasDatesPayload | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(BAS_DATES_API);
+        const body = await res.json();
+        if (!res.ok || !body.ok) throw new Error(body.error || `HTTP ${res.status}`);
+        setData(body as BasDatesPayload);
+      } catch (e: any) {
+        setError(e.message || "Failed to load BAS dates");
+      } finally {
+        setLoading(false);
+      }
+    })();
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="rounded-md border border-border bg-slate-50 px-4 py-3 text-xs text-muted-foreground flex items-center gap-2">
+        <Loader2 className="w-3.5 h-3.5 animate-spin" /> Loading BAS dates…
+      </div>
+    );
+  }
+  if (error || !data) {
+    return (
+      <div className="rounded-md border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-700">
+        BAS dates unavailable: {error}
+      </div>
+    );
+  }
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayIso = today.toISOString().slice(0, 10);
+  const currentQuarter =
+    data.current_year.find(q => q.period_start <= todayIso && todayIso <= q.period_end) ||
+    data.next_year.find(q => q.period_start <= todayIso && todayIso <= q.period_end) ||
+    null;
+  const nextDue = data.next_due;
+
+  const renderQuarter = (q: BasQuarter, label: string) => {
+    const days = daysBetween(q.agent_due);
+    const tone = deadlineTone(days);
+    return (
+      <div className={`rounded-md border ${tone.bg} px-4 py-3`}>
+        <div className="flex items-center justify-between mb-1">
+          <div className="text-xs font-semibold text-foreground">
+            📅 {label}: {q.quarter} ({q.period})
+          </div>
+          <div className={`text-xs font-medium ${tone.text}`}>{tone.label}</div>
+        </div>
+        <div className="text-xs text-muted-foreground space-y-0.5">
+          <div>Standard due: <span className="font-medium text-foreground">{formatDayMonthYear(q.standard_due)}</span></div>
+          <div>
+            Tax agent due: <span className="font-medium text-foreground">{formatDayMonthYear(q.agent_due)}</span>
+            {!q.has_extension && <span className="ml-1 italic">(no extension)</span>}
+          </div>
+          <div>Client data needed by: <span className="font-medium text-foreground">{formatDayMonthYear(q.data_request_by)}</span></div>
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-baseline justify-between">
+        <div className="text-xs font-semibold text-foreground">BAS Lodgement Dates</div>
+        <div className="text-xs text-muted-foreground">{data.financial_year} (tax agent program)</div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {currentQuarter && renderQuarter(currentQuarter, "Current Quarter")}
+        {nextDue && (!currentQuarter || nextDue.quarter !== currentQuarter.quarter || nextDue.period_start !== currentQuarter.period_start)
+          ? renderQuarter(nextDue, "Next Due")
+          : null}
+      </div>
+    </div>
+  );
+}
 
 function BasClientsSection() {
   const [clients, setClients] = useState<BasClient[]>([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [nextDueAgentDate, setNextDueAgentDate] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch(BAS_DATES_API);
+        const body = await res.json();
+        if (res.ok && body.ok && body.next_due) {
+          setNextDueAgentDate(body.next_due.agent_due as string);
+        }
+      } catch {
+        // non-fatal — column just won't render the badge
+      }
+    })();
+  }, []);
 
   const load = async () => {
     try {
@@ -416,6 +555,8 @@ function BasClientsSection() {
       </div>
 
       <div className="p-5 space-y-4">
+        <BasDatesCard />
+
         <div
           onClick={() => inputRef.current?.click()}
           onDragOver={e => { e.preventDefault(); setDragging(true); }}
@@ -473,6 +614,7 @@ function BasClientsSection() {
                   <th className="px-2 py-2 text-left font-medium">Client Email</th>
                   <th className="px-2 py-2 text-left font-medium">Last Data Received</th>
                   <th className="px-2 py-2 text-left font-medium">Status</th>
+                  <th className="px-2 py-2 text-left font-medium">Days Until Due</th>
                   <th className="px-2 py-2"></th>
                 </tr>
               </thead>
@@ -537,6 +679,24 @@ function BasClientsSection() {
                       >
                         {BAS_STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
                       </select>
+                    </td>
+                    <td className="px-2 py-1">
+                      {(() => {
+                        const freq = (row.frequency || "Quarterly").toLowerCase();
+                        if (freq !== "quarterly" || !nextDueAgentDate) {
+                          return <span className="text-xs text-muted-foreground italic">—</span>;
+                        }
+                        if ((row.status || "Awaiting Data") === "Lodged") {
+                          return <span className="text-xs text-muted-foreground italic">lodged</span>;
+                        }
+                        const days = daysBetween(nextDueAgentDate);
+                        const tone = deadlineTone(days);
+                        return (
+                          <span className={`inline-block px-2 py-0.5 rounded ${tone.bg} ${tone.text} text-xs font-medium`}>
+                            {tone.label}
+                          </span>
+                        );
+                      })()}
                     </td>
                     <td className="px-2 py-1 text-right">
                       <button

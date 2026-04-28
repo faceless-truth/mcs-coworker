@@ -1706,6 +1706,45 @@ def bas_clients_template():
     )
 
 
+@app.route("/api/bas-dates", methods=["GET"])
+def get_bas_dates_endpoint():
+    """Return calculated BAS dates for current and next financial year."""
+    from bas_dates import (
+        get_bas_dates,
+        get_next_due_quarter,
+        get_upcoming_deadlines,
+        get_financial_year,
+    )
+
+    fy = get_financial_year()
+    current_dates = get_bas_dates(fy)
+    next_dates = get_bas_dates(fy + 1)
+    next_due = get_next_due_quarter()
+    upcoming = get_upcoming_deadlines(days_ahead=60)
+
+    def serialise(q):
+        return {
+            "quarter": q["quarter"],
+            "period": q["period"],
+            "period_start": q["period_start"].isoformat(),
+            "period_end": q["period_end"].isoformat(),
+            "standard_due": q["standard_due"].isoformat(),
+            "agent_due": q["agent_due"].isoformat(),
+            "has_extension": q["has_extension"],
+            "data_request_by": q["data_request_by"].isoformat(),
+            "description": q["description"],
+        }
+
+    return jsonify({
+        "ok": True,
+        "financial_year": f"FY{fy-1}-{str(fy)[2:]}",
+        "current_year": [serialise(q) for q in current_dates],
+        "next_year": [serialise(q) for q in next_dates],
+        "next_due": serialise(next_due) if next_due else None,
+        "upcoming_60_days": [serialise(q) for q in upcoming],
+    })
+
+
 # ── Chat history ──────────────────────────────────────────────────────────────
 @app.route("/api/chat/history")
 def chat_history():
