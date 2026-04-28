@@ -36,6 +36,7 @@ from pathlib import Path
 
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity, get_db
+from client_utils import normalise_client_name
 
 
 # ── Database setup for correspondence ────────────────────────────────────────
@@ -362,7 +363,9 @@ class CorrespondenceLoggerPlugin(AgentPlugin):
                         continue
 
                     # Extract client name from subject or recipient
-                    client_name = self._extract_name_from_email(to_email)
+                    client_name = normalise_client_name(
+                        self._extract_name_from_email(to_email) or to_email
+                    )
 
                     log_correspondence(
                         direction="outgoing",
@@ -417,7 +420,9 @@ class CorrespondenceLoggerPlugin(AgentPlugin):
 
                     log_correspondence(
                         direction="incoming",
-                        client_name=from_name or self._extract_name_from_email(from_addr),
+                        client_name=normalise_client_name(
+                            from_name or self._extract_name_from_email(from_addr) or from_addr
+                        ),
                         client_email=from_addr,
                         subject=subject,
                         description=f"Email received from {from_name or from_addr}",

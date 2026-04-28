@@ -31,6 +31,7 @@ import re
 from datetime import datetime
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity, get_active_lessons
+from client_utils import normalise_client_name
 
 
 # Keywords that indicate a meeting-related email
@@ -118,7 +119,7 @@ class MeetingPrepPlugin(AgentPlugin):
             if context.memory:
                 try:
                     context.memory.store_client_interaction(
-                        client_name=client_name,
+                        client_name=normalise_client_name(client_name),
                         interaction_type="meeting_prep",
                         summary=f"Meeting prep brief generated for: {subject}",
                         metadata={"subject": subject, "sender": sender_email})
@@ -194,7 +195,7 @@ class MeetingPrepPlugin(AgentPlugin):
             return ""
         try:
             results = context.memory.get_client_context(
-                client_name=client_name, n_results=5)
+                client_name=normalise_client_name(client_name), n_results=5)
             return results or ""
         except Exception:
             return ""

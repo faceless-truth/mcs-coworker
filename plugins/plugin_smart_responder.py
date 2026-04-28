@@ -42,6 +42,7 @@ from config import (
 )
 from prompt_utils import wrap_untrusted_content, UNTRUSTED_CONTENT_SYSTEM_PROMPT
 from bas_dates import format_bas_dates_for_prompt
+from client_utils import normalise_client_name
 
 
 NO_REPLY_TOKEN = "NO_REPLY"
@@ -224,6 +225,28 @@ class SmartEmailResponderPlugin(AgentPlugin):
                 drafted += 1
                 log_activity(sender, subject, "smart_responder",
                              "drafted", 1, 0)
+                # Persist a memory entry under the normalised sender name so
+                # other plugins (and future AI Chat sessions) can recall it.
+                try:
+                    memory = getattr(context, "memory", None)
+                    if memory is not None:
+                        from_block = email.get("from") or {}
+                        from_name = ((from_block.get("emailAddress") or {})
+                                     .get("name") or "")
+                        client_name = normalise_client_name(from_name or sender)
+                        draft_preview = self._plain_text(reply_body)[:200]
+                        memory.store_client_interaction(
+                            client_name=client_name,
+                            client_email=sender,
+                            interaction_type="email_draft",
+                            summary=f"Draft reply RE: {subject} — {draft_preview}",
+                            metadata={
+                                "subject": subject[:200],
+                                "draft_id": draft_id or "",
+                            },
+                        )
+                except Exception as e:
+                    context.log(f"🧠 memory write skipped: {e}")
             except Exception as e:
                 context.log(f"🧠 Draft creation failed for '{subject}': {e}")
                 log_activity(sender, subject, "smart_responder",

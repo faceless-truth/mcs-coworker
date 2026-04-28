@@ -30,6 +30,7 @@ Default: 1st of every month at 08:00.
 from datetime import datetime, date
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity
+from client_utils import normalise_client_name
 
 
 class DebtorFollowUpPlugin(AgentPlugin):
@@ -188,7 +189,7 @@ class DebtorFollowUpPlugin(AgentPlugin):
             if context.memory:
                 try:
                     context.memory.store_client_interaction(
-                        client_name=client_name,
+                        client_name=normalise_client_name(client_name),
                         interaction_type="debtor_followup",
                         summary=f"Follow-up #{prior_followups + 1} sent. "
                                 f"Balance: ${balance:,.2f}, {days_overdue} days overdue.",

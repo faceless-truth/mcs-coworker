@@ -30,6 +30,7 @@ Default: every 15 minutes.
 from datetime import datetime, date, timedelta
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity
+from client_utils import normalise_client_name
 
 
 class FuseSignMonitorPlugin(AgentPlugin):
@@ -130,7 +131,7 @@ class FuseSignMonitorPlugin(AgentPlugin):
                         if context.memory:
                             try:
                                 context.memory.store_client_interaction(
-                                    client_name=client_name,
+                                    client_name=normalise_client_name(client_name),
                                     interaction_type="signing_reminder",
                                     summary=f"Signing reminder #{prior_reminders + 1} for '{env_name}'",
                                     metadata={"envelope_id": env_id,
@@ -198,7 +199,7 @@ class FuseSignMonitorPlugin(AgentPlugin):
                 if context.memory:
                     try:
                         context.memory.store_client_interaction(
-                            client_name=client_name,
+                            client_name=normalise_client_name(client_name),
                             interaction_type="signing_completed",
                             summary=f"'{env_name}' signed and completed.",
                             metadata={"envelope_id": env_id,

@@ -31,6 +31,7 @@ Default: every 10 minutes (event-driven via email scan).
 from datetime import datetime
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity
+from client_utils import normalise_client_name
 
 
 TRIGGER_PHRASES = [
@@ -169,7 +170,7 @@ class EngagementLetterPlugin(AgentPlugin):
             if context.memory:
                 try:
                     context.memory.store_client_interaction(
-                        client_name=client_name,
+                        client_name=normalise_client_name(client_name),
                         interaction_type="engagement_letter",
                         summary=f"Engagement letter generated for: {', '.join(detected_services)}",
                         metadata={"services": ", ".join(detected_services),

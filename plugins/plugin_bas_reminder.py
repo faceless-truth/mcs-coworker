@@ -32,6 +32,7 @@ STATUS WORKFLOW
 
 from datetime import datetime, date, timedelta
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
+from client_utils import normalise_client_name
 from config import (
     get_setting, log_activity,
     get_bas_clients, update_bas_client,
@@ -102,6 +103,7 @@ class BASReminderPlugin(AgentPlugin):
         for client in clients:
             client_name  = (client.get("client_name") or "").strip()
             client_email = (client.get("client_email") or "").strip()
+            entity_name  = (client.get("entity_name") or "").strip()
             frequency    = (client.get("frequency") or "Quarterly").strip()
             status       = (client.get("status") or "Awaiting Data").strip()
 
@@ -180,8 +182,9 @@ class BASReminderPlugin(AgentPlugin):
                 if context.memory:
                     try:
                         context.memory.store_client_interaction(
-                            client_name=client_name,
+                            client_name=normalise_client_name(client_name),
                             client_email=client_email,
+                            entity_name=entity_name or None,
                             interaction_type="bas_reminder",
                             summary=(f"BAS reminder ({frequency}) sent for "
                                      f"due date {due_date.isoformat()}"),

@@ -52,6 +52,7 @@ from config import (
     DATA_DIR,
 )
 from prompt_utils import wrap_untrusted_content, UNTRUSTED_CONTENT_SYSTEM_PROMPT
+from client_utils import normalise_client_name
 
 logger = logging.getLogger(__name__)
 
@@ -416,13 +417,14 @@ class NOAProcessorPlugin(AgentPlugin):
                         )
                         context.memory.store_client_interaction(
                             content=memory_text,
+                            client_name=normalise_client_name(client_name) if client_name else None,
                             client_email=client_email,
+                            entity_name=entity_name or None,
                             interaction_type="noa_outcome",
                             extra_meta={
                                 "outcome": outcome,
                                 "amount": amount,
                                 "tax_year": tax_year,
-                                "entity_name": entity_name,
                             },
                         )
                     except Exception:

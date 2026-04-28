@@ -29,6 +29,7 @@ Default: every Monday at 8:30 AM.
 from datetime import datetime, date, timedelta
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
 from config import get_setting, log_activity
+from client_utils import normalise_client_name
 
 
 class AnnualReviewPlugin(AgentPlugin):
@@ -188,7 +189,7 @@ class AnnualReviewPlugin(AgentPlugin):
             if context.memory:
                 try:
                     context.memory.store_client_interaction(
-                        client_name=client_name,
+                        client_name=normalise_client_name(client_name),
                         interaction_type="annual_review_prompt",
                         summary="Annual review invitation sent.",
                         metadata={"email": client_email,
