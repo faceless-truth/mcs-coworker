@@ -30,6 +30,10 @@ def _load_token_cache() -> msal.SerializableTokenCache:
     """Load the token cache from disk, or return a fresh one on first run."""
     cache = msal.SerializableTokenCache()
     cache_path = _get_cache_path()
+    logger.info(
+        f"MSAL cache loaded from {cache_path}: "
+        f"{'found' if cache_path.exists() else 'not found (fresh start)'}"
+    )
     if cache_path.exists():
         try:
             cache.deserialize(cache_path.read_text(encoding="utf-8"))
@@ -39,13 +43,31 @@ def _load_token_cache() -> msal.SerializableTokenCache:
 
 
 def _save_token_cache(cache: msal.SerializableTokenCache) -> None:
-    """Persist the cache to disk when MSAL flags it as dirty."""
+    """Persist the cache to disk after a token acquisition.
+
+    Writes when MSAL marks the cache dirty OR when the file doesn't yet
+    exist (first run). The fresh-start branch is needed because the dirty
+    flag can be cleared between acquisition and the first save attempt,
+    which previously left the cache file uncreated forever.
+    """
     if cache is None:
         return
-    if not getattr(cache, "has_state_changed", False):
-        return
+    cache_path = _get_cache_path()
+    state_changed = bool(getattr(cache, "has_state_changed", False))
+    logger.debug(
+        f"_save_token_cache called: has_state_changed={state_changed}, "
+        f"path={cache_path}, path_exists={cache_path.exists()}"
+    )
     try:
-        _get_cache_path().write_text(cache.serialize(), encoding="utf-8")
+        if state_changed or not cache_path.exists():
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            cache_path.write_text(cache.serialize(), encoding="utf-8")
+            logger.info(
+                f"MSAL token cache saved to {cache_path} "
+                f"(state_changed={state_changed})"
+            )
+        else:
+            logger.debug("MSAL token cache unchanged, skipping save")
     except Exception as e:
         logger.error(f"Failed to save MSAL cache: {e}")
 
@@ -167,6 +189,7 @@ class GraphClient:
                     accounts = self._app.get_accounts()
                     if accounts:
                         self._account = accounts[0]
+                    logger.info("MSAL token cache saved after authentication")
                     if callback:
                         callback(success=True, error=None)
                 else:
