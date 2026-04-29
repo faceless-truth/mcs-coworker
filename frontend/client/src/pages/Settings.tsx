@@ -9,8 +9,8 @@ import {
   fetchSettings, saveSettings,
   fetchKnowledge, createKnowledge, updateKnowledge, deleteKnowledge,
   fetchBasClients, createBasClient, updateBasClient, deleteBasClient,
-  testSharepointConnection,
-  type KnowledgeEntry, type BasClient,
+  testSharepointConnection, fetchSharepointIndexStatus, runSharepointIndex,
+  type KnowledgeEntry, type BasClient, type SharepointIndexStatus,
 } from "@/lib/api";
 
 const KB_CATEGORIES = ["Pricing", "Checklists", "Procedures", "Firm Policies", "Staff Info", "Other"];
@@ -1141,6 +1141,41 @@ export default function Settings() {
 
   const [sharepointTesting, setSharepointTesting] = useState(false);
   const [sharepointStatus, setSharepointStatus] = useState<{ ok: boolean; message?: string } | null>(null);
+  const [indexStatus, setIndexStatus] = useState<SharepointIndexStatus | null>(null);
+  const [indexRunning, setIndexRunning] = useState(false);
+
+  // Fetch index status on mount
+  useEffect(() => {
+    fetchSharepointIndexStatus().then(s => setIndexStatus(s)).catch(() => {});
+  }, []);
+
+  const handleRunIndex = async () => {
+    setIndexRunning(true);
+    try {
+      await runSharepointIndex(true);
+      toast.success("SharePoint index started", { description: "Indexing client files in the background. Check back in a few minutes." });
+      // Poll for completion
+      const poll = setInterval(async () => {
+        try {
+          const s = await fetchSharepointIndexStatus();
+          setIndexStatus(s);
+          if (s.status !== "running") {
+            clearInterval(poll);
+            setIndexRunning(false);
+            if (s.status === "error") {
+              toast.error("Index failed", { description: s.last_error });
+            } else {
+              toast.success("Index complete", { description: `${s.last_count} files indexed` });
+            }
+          }
+        } catch { clearInterval(poll); setIndexRunning(false); }
+      }, 5000);
+    } catch (e: any) {
+      toast.error("Failed to start index", { description: e?.message });
+      setIndexRunning(false);
+    }
+  };
+
   const handleTestSharepoint = async () => {
     setSharepointTesting(true);
     setSharepointStatus(null);
@@ -1248,6 +1283,7 @@ export default function Settings() {
         title="SharePoint — Client File Storage"
         description="Save AI Chat exports and correspondence to client folders"
       >
+        {/* Connection test row */}
         <div className="flex items-center gap-3">
           <span className="text-sm font-medium text-foreground">SharePoint:</span>
           <button
@@ -1268,6 +1304,35 @@ export default function Settings() {
               <span>{sharepointStatus.ok ? "Connected" : `Not connected — ${sharepointStatus.message}`}</span>
             </div>
           )}
+        </div>
+
+        {/* Memory index row */}
+        <div className="flex items-center gap-3 mt-3 pt-3 border-t border-border">
+          <span className="text-sm font-medium text-foreground">Memory Index:</span>
+          <button
+            onClick={handleRunIndex}
+            disabled={indexRunning || indexStatus?.status === "running"}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-md text-xs font-medium border border-border hover:border-purple-300 hover:text-purple-600 transition-all disabled:opacity-60 flex-shrink-0"
+          >
+            {(indexRunning || indexStatus?.status === "running")
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <TestTube className="w-3.5 h-3.5" />}
+            {(indexRunning || indexStatus?.status === "running") ? "Indexing…" : "Run Now"}
+          </button>
+          <div className="text-xs text-muted-foreground">
+            {indexStatus?.status === "running" && <span className="text-purple-600">Indexing in progress…</span>}
+            {indexStatus?.status === "error" && <span className="text-rose-600">Error: {indexStatus.last_error}</span>}
+            {indexStatus?.status === "idle" && indexStatus.last_run && (
+              <span>
+                Last indexed: {new Date(indexStatus.last_run).toLocaleDateString("en-AU", { weekday: "short", day: "numeric", month: "short" })}
+                {" · "}{indexStatus.last_count} file{indexStatus.last_count !== 1 ? "s" : ""} indexed
+                {" · "}Runs automatically every Monday at 10am
+              </span>
+            )}
+            {indexStatus?.status === "idle" && !indexStatus.last_run && (
+              <span className="text-muted-foreground">Never run — click Run Now to index client files into memory</span>
+            )}
+          </div>
         </div>
       </Section>
 

@@ -2336,6 +2336,59 @@ def export_to_sharepoint():
     return jsonify({"ok": False, "error": "Failed to upload to SharePoint. Check connection settings."}), 500
 
 
+# ── SharePoint Indexer ───────────────────────────────────────────────────────
+
+@app.route("/api/sharepoint/index/status", methods=["GET"])
+def sharepoint_index_status():
+    """Return the current SharePoint indexer status for the Settings UI."""
+    try:
+        from sharepoint_indexer import get_index_status
+        return jsonify({"ok": True, **get_index_status()})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)})
+
+
+@app.route("/api/sharepoint/index/run", methods=["POST"])
+def sharepoint_index_run():
+    """Trigger a SharePoint index run (manual or scheduled)."""
+    try:
+        from sharepoint_indexer import SharePointIndexer, get_index_status, SETTING_STATUS
+        from config import get_setting, set_setting
+
+        # Prevent concurrent runs
+        if get_setting(SETTING_STATUS) == "running":
+            return jsonify({"ok": False, "error": "Index is already running"}), 409
+
+        graph = _get_graph()
+        if graph is None:
+            return jsonify({"ok": False, "error": "Graph client not initialised"}), 500
+
+        store = _get_memory_store()
+        if store is None:
+            return jsonify({"ok": False, "error": "Memory store unavailable"}), 500
+
+        body = request.get_json(silent=True) or {}
+        incremental = body.get("incremental", True)
+
+        # Run in background thread so the HTTP response returns immediately
+        import threading
+        def _run():
+            try:
+                indexer = SharePointIndexer(graph, store)
+                result = indexer.run(incremental=incremental)
+                logger.info("[Indexer] Background run complete: %s", result)
+            except Exception as e:
+                logger.error("[Indexer] Background run failed: %s", e)
+
+        t = threading.Thread(target=_run, daemon=True)
+        t.start()
+
+        return jsonify({"ok": True, "message": "Index started in background"})
+    except Exception as e:
+        logger.error("sharepoint_index_run failed: %s", e)
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+
 # ── Microsoft OAuth callback ─────────────────────────────────────────────────
 @app.route("/auth/callback")
 def auth_callback():

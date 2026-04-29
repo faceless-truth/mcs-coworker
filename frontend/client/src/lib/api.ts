@@ -341,3 +341,22 @@ export async function addLesson(lesson: string, source = "") {
 export async function deleteLesson(lessonId: number) {
   return apiFetch(`/api/lessons/${lessonId}`, { method: "DELETE" });
 }
+
+// ── SharePoint Indexer ────────────────────────────────────────────────────────
+export interface SharepointIndexStatus {
+  status: "idle" | "running" | "error";
+  last_run: string;
+  last_count: number;
+  last_error: string;
+}
+
+export async function fetchSharepointIndexStatus(): Promise<SharepointIndexStatus> {
+  return apiFetch<SharepointIndexStatus>("/api/sharepoint/index/status");
+}
+
+export async function runSharepointIndex(incremental = true) {
+  return apiFetch("/api/sharepoint/index/run", {
+    method: "POST",
+    body: JSON.stringify({ incremental }),
+  });
+}

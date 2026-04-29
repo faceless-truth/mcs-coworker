@@ -142,6 +142,53 @@ def _init_backend():
         f"api_server={id(graph)} same={loader._graph is graph}"
     )
 
+    # ── SharePoint indexer — Monday 10am scheduler ─────────────────────────
+    # Runs in a daemon thread so it never blocks startup or the UI.
+    # Uses catch-up logic: if the app wasn't running last Monday at 10am,
+    # it will index on the next startup after that time.
+    def _start_sharepoint_index_scheduler():
+        import time as _time
+        from sharepoint_indexer import SharePointIndexer, is_index_due, SETTING_STATUS
+        from config import get_setting as _get_setting
+        try:
+            # Wait for the memory store to be available (it initialises async)
+            for _ in range(30):
+                store = api_server._get_memory_store()
+                if store is not None:
+                    break
+                _time.sleep(2)
+            else:
+                log.warning("[Indexer] Memory store not ready after 60s — skipping scheduler")
+                return
+
+            # Catch-up: run immediately if overdue
+            if is_index_due() and _get_setting(SETTING_STATUS) != "running":
+                log.info("[Indexer] Catch-up run triggered on startup")
+                try:
+                    indexer = SharePointIndexer(graph, store)
+                    indexer.run(incremental=True)
+                except Exception as e:
+                    log.error("[Indexer] Catch-up run failed: %s", e)
+
+            # Weekly loop — check every hour if Monday 10am window has passed
+            while True:
+                _time.sleep(3600)  # check every hour
+                try:
+                    if is_index_due() and _get_setting(SETTING_STATUS) != "running":
+                        log.info("[Indexer] Scheduled Monday 10am run triggered")
+                        store = api_server._get_memory_store()
+                        if store:
+                            indexer = SharePointIndexer(graph, store)
+                            indexer.run(incremental=True)
+                except Exception as e:
+                    log.error("[Indexer] Scheduled run failed: %s", e)
+        except Exception as e:
+            log.error("[Indexer] Scheduler thread crashed: %s", e)
+
+    index_thread = threading.Thread(target=_start_sharepoint_index_scheduler, daemon=True)
+    index_thread.start()
+    log.info("[Indexer] SharePoint index scheduler started")
+
     return loader, aq, km
 
 
