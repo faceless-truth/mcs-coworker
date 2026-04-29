@@ -619,6 +619,27 @@ def delete_memory(record_id):
         return err(str(e))
 
 
+@app.route("/api/memory/<record_id>", methods=["PATCH"])
+def update_memory(record_id):
+    """Update client_name and/or entity_name on a memory record."""
+    try:
+        store = _get_memory_store()
+        if store is None:
+            return err("Memory store unavailable")
+        body = request.get_json(silent=True) or {}
+        allowed = {"client_name", "entity_name"}
+        updates = {k: v for k, v in body.items() if k in allowed and isinstance(v, str)}
+        if not updates:
+            return err("No valid fields to update. Allowed: client_name, entity_name")
+        success = store.update_metadata(record_id, updates)
+        if not success:
+            return err(f"Record {record_id} not found", 404)
+        return ok({"updated": record_id, "fields": updates})
+    except Exception as e:
+        logger.error("PATCH /api/memory/%s failed: %s", record_id, e)
+        return err(str(e))
+
+
 # ── Events ─────────────────────────────────────────────────────────────────────
 @app.route("/api/events")
 def list_events():

@@ -1,9 +1,9 @@
 // Design: Refined Dark Professional — Memory Browser page
 
 import { useEffect, useState } from "react";
-import { Brain, Search, Trash2 } from "lucide-react";
+import { Brain, Search, Trash2, Pencil, Check, X } from "lucide-react";
 import { toast } from "sonner";
-import { fetchMemory, fetchMemoryStats, deleteMemory } from "@/lib/api";
+import { fetchMemory, fetchMemoryStats, deleteMemory, updateMemory } from "@/lib/api";
 
 interface ServerMemory {
   id?: string;
@@ -16,6 +16,7 @@ interface ServerMemory {
 interface ViewMemory {
   id: string;
   client: string;
+  entity: string;
   type: string;
   summary: string;
   date: string;
@@ -26,6 +27,11 @@ interface MemoryStats {
   interactions: number;
   lessons: number;
   documents: number;
+}
+
+interface EditState {
+  client: string;
+  entity: string;
 }
 
 function relativeTime(iso: string | undefined, epoch?: number): string {
@@ -53,6 +59,7 @@ function normalise(raw: ServerMemory, idx: number): ViewMemory {
   return {
     id: String(raw.id ?? meta.id ?? meta.doc_id ?? idx),
     client: String(meta.client_name ?? meta.client_email ?? meta.client ?? "Unknown"),
+    entity: String(meta.entity_name ?? ""),
     type: String(meta.interaction_type ?? meta.type ?? "entry"),
     summary: (raw.content || "").slice(0, 300),
     date: relativeTime(meta.timestamp ?? meta.date ?? meta.stored_at, meta.epoch),
@@ -66,6 +73,9 @@ export default function Memory() {
   const [search, setSearch] = useState("");
   const [debouncedSearch, setDebouncedSearch] = useState("");
   const [stats, setStats] = useState<MemoryStats | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editState, setEditState] = useState<EditState>({ client: "", entity: "" });
+  const [saving, setSaving] = useState(false);
 
   // Debounce the search term so every keystroke doesn't hit the backend.
   useEffect(() => {
@@ -103,7 +113,7 @@ export default function Memory() {
       }
     })();
     return () => { cancelled = true; };
-  }, [debouncedSearch]); // refresh stats after searches too (new entries may have landed)
+  }, [debouncedSearch]);
 
   const deleteRecord = async (id: string) => {
     try {
@@ -112,6 +122,41 @@ export default function Memory() {
       toast("Memory record deleted");
     } catch (e: any) {
       toast.error("Delete failed", { description: e?.message });
+    }
+  };
+
+  const startEdit = (mem: ViewMemory) => {
+    setEditingId(mem.id);
+    setEditState({ client: mem.client, entity: mem.entity });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditState({ client: "", entity: "" });
+  };
+
+  const saveEdit = async (id: string) => {
+    if (!editState.client.trim()) {
+      toast.error("Client name cannot be empty");
+      return;
+    }
+    setSaving(true);
+    try {
+      await updateMemory(id, {
+        client_name: editState.client.trim(),
+        ...(editState.entity.trim() ? { entity_name: editState.entity.trim() } : {}),
+      });
+      setRecords(prev => prev.map(r =>
+        r.id === id
+          ? { ...r, client: editState.client.trim(), entity: editState.entity.trim() }
+          : r
+      ));
+      toast.success("Memory record updated");
+      setEditingId(null);
+    } catch (e: any) {
+      toast.error("Update failed", { description: e?.message });
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -146,29 +191,93 @@ export default function Memory() {
               style={{ background: "oklch(0.94 0.05 300)" }}>
               <Brain className="w-4 h-4" style={{ color: "oklch(0.5 0.15 300)" }} />
             </div>
+
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-1">
-                <span className="text-sm font-semibold text-foreground">{mem.client}</span>
-                <span className="badge info">{mem.type}</span>
-                {mem.date && <span className="text-xs text-muted-foreground">{mem.date}</span>}
-              </div>
-              <div className="text-sm text-muted-foreground leading-relaxed">{mem.summary}</div>
+              {editingId === mem.id ? (
+                /* ── Edit mode ── */
+                <div className="space-y-2 mb-2">
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-muted-foreground w-16 flex-shrink-0">Client</label>
+                    <input
+                      autoFocus
+                      value={editState.client}
+                      onChange={e => setEditState(s => ({ ...s, client: e.target.value }))}
+                      onKeyDown={e => { if (e.key === "Enter") saveEdit(mem.id); if (e.key === "Escape") cancelEdit(); }}
+                      placeholder="Surname, First Name"
+                      className="flex-1 text-sm border border-blue-300 rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400/30"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-xs text-muted-foreground w-16 flex-shrink-0">Entity</label>
+                    <input
+                      value={editState.entity}
+                      onChange={e => setEditState(s => ({ ...s, entity: e.target.value }))}
+                      onKeyDown={e => { if (e.key === "Enter") saveEdit(mem.id); if (e.key === "Escape") cancelEdit(); }}
+                      placeholder="e.g. 000 Pool Care Pty Ltd (optional)"
+                      className="flex-1 text-sm border border-border rounded px-2 py-1 focus:outline-none focus:ring-2 focus:ring-blue-400/30"
+                    />
+                  </div>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      onClick={() => saveEdit(mem.id)}
+                      disabled={saving}
+                      className="flex items-center gap-1 text-xs px-2.5 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                    >
+                      <Check className="w-3 h-3" />
+                      {saving ? "Saving…" : "Save"}
+                    </button>
+                    <button
+                      onClick={cancelEdit}
+                      className="flex items-center gap-1 text-xs px-2.5 py-1 border border-border rounded hover:bg-muted transition-colors"
+                    >
+                      <X className="w-3 h-3" />
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                /* ── View mode ── */
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-sm font-semibold text-foreground">{mem.client}</span>
+                  {mem.entity && (
+                    <span className="text-xs text-muted-foreground">— {mem.entity}</span>
+                  )}
+                  <span className="badge info">{mem.type}</span>
+                  {mem.date && <span className="text-xs text-muted-foreground">{mem.date}</span>}
+                </div>
+              )}
+              {editingId !== mem.id && (
+                <div className="text-sm text-muted-foreground leading-relaxed">{mem.summary}</div>
+              )}
             </div>
-            <div className="flex items-center gap-3 flex-shrink-0">
-              {isSearching && mem.relevance !== null && (
-                <div className="text-right">
+
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              {isSearching && mem.relevance !== null && editingId !== mem.id && (
+                <div className="text-right mr-1">
                   <div className="text-sm font-mono font-semibold text-foreground">
                     {Math.round(mem.relevance * 100)}%
                   </div>
                   <div className="text-xs text-muted-foreground">relevance</div>
                 </div>
               )}
-              <button
-                onClick={() => deleteRecord(mem.id)}
-                className="p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-500 transition-all"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
+              {editingId !== mem.id && (
+                <>
+                  <button
+                    onClick={() => startEdit(mem)}
+                    className="p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-blue-50 hover:text-blue-500 transition-all"
+                    title="Edit client / entity"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => deleteRecord(mem.id)}
+                    className="p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-rose-50 hover:text-rose-500 transition-all"
+                    title="Delete record"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              )}
             </div>
           </div>
         ))}

@@ -450,6 +450,32 @@ class MemoryStore:
             pass
         return None
 
+    def update_metadata(self, doc_id: str, updates: dict, collection: str = "interactions") -> bool:
+        """Update metadata fields on an existing record without changing its content or embedding.
+
+        Only the keys present in `updates` are changed; all other metadata is preserved.
+        Normalises `client_name` if present so it stays in Surname, First Name format.
+        """
+        if not doc_id or not updates:
+            return False
+        try:
+            col = self._get_collection(collection)
+            existing = col.get(ids=[doc_id])
+            if not existing or not existing.get("ids"):
+                logger.warning("update_metadata: record %s not found in %s", doc_id, collection)
+                return False
+            current_meta = (existing.get("metadatas") or [{}])[0] or {}
+            # Normalise client_name if being updated
+            if "client_name" in updates and updates["client_name"]:
+                updates["client_name"] = normalise_client_name(updates["client_name"])
+            merged = {**current_meta, **updates}
+            col.update(ids=[doc_id], metadatas=[merged])
+            logger.info("Memory record %s metadata updated: %s", doc_id, updates)
+            return True
+        except Exception as e:
+            logger.error("update_metadata failed for %s: %s", doc_id, e)
+            return False
+
     def delete(self, doc_id: str = "", collection: Optional[str] = None, **_kwargs) -> bool:
         """Delete a document by ID. If collection is given, only try that one."""
         if not doc_id:

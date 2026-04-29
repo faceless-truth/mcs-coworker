@@ -92,6 +92,12 @@ export async function fetchMemoryStats() {
 export async function deleteMemory(recordId: string) {
   return apiFetch(`/api/memory/${recordId}`, { method: "DELETE" });
 }
+export async function updateMemory(recordId: string, fields: { client_name?: string; entity_name?: string }) {
+  return apiFetch(`/api/memory/${recordId}`, {
+    method: "PATCH",
+    body: JSON.stringify(fields),
+  });
+}
 
 // ── Events ────────────────────────────────────────────────────────────────────
 export async function fetchEvents(limit = 50) {
