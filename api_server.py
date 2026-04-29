@@ -2247,7 +2247,11 @@ def test_sharepoint():
     logger.info(f"/api/sharepoint/test using GraphClient id={id(graph) if graph else None}")
     if graph is None:
         return jsonify({"ok": False, "error": "Graph client not initialised"})
-    return jsonify(graph.test_sharepoint_connection())
+    try:
+        return jsonify(graph.test_sharepoint_connection())
+    except Exception as e:
+        logger.error("SharePoint test endpoint error: %s", e)
+        return jsonify({"ok": False, "error": str(e)})
 
 
 @app.route("/api/sharepoint/folders", methods=["GET"])

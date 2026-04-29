@@ -889,11 +889,11 @@ class GraphClient:
         """
         method_upper = method.upper()
         print(f"[Graph API] {method_upper} {url}")
-        request_headers = self._headers() if auth else {}
-        if headers:
-            # Allow Content-Type override (e.g., octet-stream for uploads).
-            request_headers.update(headers)
         try:
+            request_headers = self._headers() if auth else {}
+            if headers:
+                # Allow Content-Type override (e.g., octet-stream for uploads).
+                request_headers.update(headers)
             kwargs = {"headers": request_headers, "timeout": timeout}
             if json is not None:
                 kwargs["json"] = json
@@ -1121,30 +1121,42 @@ class GraphClient:
         """
         print("[SharePoint Test] Starting connection test...")
 
-        # Step 1 — find the site
-        site_id = self.get_sharepoint_site_id()
-        if not site_id:
-            return {"ok": False, "error": f"Could not find SharePoint site at {SHAREPOINT_SITE_URL}"}
+        # Gate: check M365 authentication before attempting any Graph calls.
+        # If not authenticated, give a clear actionable error instead of a
+        # cryptic 'Connection failed'.
+        try:
+            self._get_token()
+        except ValueError as e:
+            return {"ok": False, "error": f"Not signed in to Microsoft 365 — {e}"}
 
-        # Step 2 — find the drive
-        drive_id = self.get_sharepoint_drive_id(site_id)
-        if not drive_id:
-            return {"ok": False, "error": f"Could not find document library '{SHAREPOINT_LIBRARY}'"}
+        try:
+            # Step 1 — find the site
+            site_id = self.get_sharepoint_site_id()
+            if not site_id:
+                return {"ok": False, "error": f"Could not find SharePoint site at {SHAREPOINT_SITE_URL}"}
 
-        # Step 3 — check the client base folder
-        config = self._get_sharepoint_config()
-        url = f"{GRAPH_BASE}/drives/{drive_id}/root:/{config['client_base']}:/children?$top=1"
-        result = self._make_request("GET", url)
-        if result and "value" in result:
+            # Step 2 — find the drive
+            drive_id = self.get_sharepoint_drive_id(site_id)
+            if not drive_id:
+                return {"ok": False, "error": f"Could not find document library '{SHAREPOINT_LIBRARY}'"}
+
+            # Step 3 — check the client base folder
+            config = self._get_sharepoint_config()
+            url = f"{GRAPH_BASE}/drives/{drive_id}/root:/{config['client_base']}:/children?$top=1"
+            result = self._make_request("GET", url)
+            if result and "value" in result:
+                return {
+                    "ok": True,
+                    "message": f"Connected to SharePoint. Found client folders in /{config['client_base']}/",
+                }
+
             return {
-                "ok": True,
-                "message": f"Connected to SharePoint. Found client folders in /{config['client_base']}/",
+                "ok": False,
+                "error": f"Connected to site but could not find /{config['client_base']}/ folder",
             }
-
-        return {
-            "ok": False,
-            "error": f"Connected to site but could not find /{config['client_base']}/ folder",
-        }
+        except Exception as e:
+            logger.error("SharePoint connection test failed: %s", e)
+            return {"ok": False, "error": f"SharePoint test error: {e}"}
 
     # ── Calendar ──────────────────────────────────────────────────────────────
 
