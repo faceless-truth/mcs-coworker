@@ -164,17 +164,9 @@ export default function Chat() {
     })();
   }, []);
 
-  // Check whether SharePoint is configured so the "Save to Client Folder"
-  // option can be greyed out with an explanatory tooltip.
+  // SharePoint config is now hardcoded for MC&S, so always treat it as configured.
   useEffect(() => {
-    (async () => {
-      try {
-        const s: any = await fetchSettings();
-        setSharepointConfigured(!!(s?.sharepoint_site_url && s.sharepoint_site_url.trim()));
-      } catch {
-        setSharepointConfigured(false);
-      }
-    })();
+    setSharepointConfigured(true);
   }, []);
 
   // Seed a greeting whenever the selected agent changes.

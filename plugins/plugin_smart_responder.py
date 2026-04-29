@@ -273,8 +273,7 @@ class SmartEmailResponderPlugin(AgentPlugin):
                 # not configured or the upload fails — the draft itself
                 # has already been created successfully.
                 try:
-                    sharepoint_url = get_setting("sharepoint_site_url", "")
-                    if sharepoint_url and client_name:
+                    if client_name:
                         from datetime import datetime as _dt
                         ts = _dt.now().strftime("%Y-%m-%d_%H%M")
                         outlook_email = get_setting("outlook_email", "elio@mcands.com.au")

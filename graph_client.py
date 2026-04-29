@@ -74,10 +74,14 @@ def _save_token_cache(cache: msal.SerializableTokenCache) -> None:
 GRAPH_SCOPES = [
     "Mail.ReadWrite",
     "Mail.Send",
+    "User.Read",
+    "Files.Read.All",
+    "Files.ReadWrite.All",
     "Sites.Read.All",
     "Sites.ReadWrite.All",
-    "Files.ReadWrite.All",
 ]
+
+print(f"[Auth] Requesting scopes: {GRAPH_SCOPES}")
 
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 REDIRECT_URI = "http://localhost:7842/auth/callback"
@@ -85,6 +89,16 @@ REDIRECT_URI = "http://localhost:7842/auth/callback"
 # Hardcoded MC&S Entra ID credentials — accountants don't need Azure setup
 MCS_TENANT_ID = "88ea4eb1-1dce-414e-bbfe-ce0c51a5bd98"
 MCS_CLIENT_ID = "0bad4828-f05f-4580-8e6f-ede96c098642"
+
+# MC&S SharePoint — hardcoded, same for all accountants
+SHAREPOINT_SITE_URL = "https://mcandscomau.sharepoint.com/sites/MCS354"
+SHAREPOINT_LIBRARY = "Shared Documents"
+SHAREPOINT_CLIENT_BASE = "Server/Clients"
+
+print(f"[SharePoint] GRAPH_SCOPES = {GRAPH_SCOPES}")
+print(f"[SharePoint] Site URL = {SHAREPOINT_SITE_URL}")
+print(f"[SharePoint] Library = {SHAREPOINT_LIBRARY}")
+print(f"[SharePoint] Client base = {SHAREPOINT_CLIENT_BASE}")
 
 
 def _odata_escape(value: str) -> str:
@@ -867,6 +881,8 @@ class GraphClient:
         so callers can degrade gracefully rather than raising. Existing
         Outlook methods keep their explicit raise_for_status() behaviour.
         """
+        method_upper = method.upper()
+        print(f"[Graph API] {method_upper} {url}")
         request_headers = self._headers()
         if headers:
             # Allow Content-Type override (e.g., octet-stream for uploads).
@@ -877,8 +893,8 @@ class GraphClient:
                 kwargs["json"] = json
             if data is not None:
                 kwargs["data"] = data
-            method_upper = method.upper()
             r = requests.request(method_upper, url, **kwargs)
+            print(f"[Graph API] {method_upper} {url} -> {r.status_code}")
             if r.status_code == 404:
                 return None
             if r.status_code >= 400:
@@ -886,6 +902,7 @@ class GraphClient:
                     "Graph API %s %s returned %s: %s",
                     method_upper, url, r.status_code, r.text[:200],
                 )
+                print(f"[Graph API] error body: {r.text[:500]}")
                 return None
             try:
                 return r.json()
@@ -893,56 +910,57 @@ class GraphClient:
                 return {}
         except Exception as e:
             logger.error("Graph API %s %s failed: %s", method, url, e)
+            print(f"[Graph API] {method_upper} {url} EXCEPTION: {e}")
             return None
 
     def _get_sharepoint_config(self) -> dict:
-        """Read SharePoint config from settings."""
-        from config import get_setting
+        """Return the hardcoded MC&S SharePoint config."""
         return {
-            "site_url": get_setting("sharepoint_site_url", ""),
-            "library": get_setting("sharepoint_library", "Documents"),
-            "client_base": get_setting("sharepoint_client_base", "Clients"),
+            "site_url": SHAREPOINT_SITE_URL,
+            "library": SHAREPOINT_LIBRARY,
+            "client_base": SHAREPOINT_CLIENT_BASE,
         }
 
     def get_sharepoint_site_id(self) -> str | None:
-        """Resolve the SharePoint site ID from the configured URL.
+        """Resolve the SharePoint site ID via the same auth path as email.
 
         Strategy 1: GET /sites/{hostname}:{path} (exact path match).
-        Strategy 2: GET /sites?search={site_name} (fallback when path
-        encoding or trailing-slash issues defeat the first form).
+        Strategy 2: GET /sites?search={site_name} (fallback).
         """
         config = self._get_sharepoint_config()
-        if not config["site_url"]:
-            return None
         parsed = urlparse(config["site_url"])
         hostname = parsed.hostname
         site_path = parsed.path or ""
-        logger.info(
-            "SharePoint site lookup: configured_url=%s hostname=%s site_path=%s",
-            config["site_url"], hostname, site_path,
+        print(
+            f"[SharePoint] site lookup: hostname={hostname} site_path={site_path}"
         )
         if not hostname:
             return None
 
-        # Strategy 1 — direct hostname:/path lookup
+        # Strategy 1 — direct hostname:/path lookup, via _make_request
+        # (the SAME method that works for email).
         url = f"{GRAPH_BASE}/sites/{hostname}:{site_path}"
         result = self._make_request("GET", url)
         if result and "id" in result:
+            print(f"[SharePoint] site resolved via direct lookup: {result['id']}")
             return result["id"]
 
         # Strategy 2 — search by site name (last path segment)
         site_name = site_path.rstrip("/").split("/")[-1] if site_path else ""
         if site_name:
             search_url = f"{GRAPH_BASE}/sites?search={site_name}"
-            logger.info("SharePoint site direct lookup failed; trying search: %s", search_url)
+            print(f"[SharePoint] direct lookup failed; trying search: {search_url}")
             search_result = self._make_request("GET", search_url)
             if search_result and "value" in search_result:
                 target = config["site_url"].rstrip("/").lower()
                 for site in search_result["value"]:
                     if site.get("webUrl", "").rstrip("/").lower() == target:
+                        print(f"[SharePoint] site resolved via search (exact): {site['id']}")
                         return site["id"]
                 if search_result["value"]:
-                    return search_result["value"][0]["id"]
+                    sid = search_result["value"][0]["id"]
+                    print(f"[SharePoint] site resolved via search (first match): {sid}")
+                    return sid
         return None
 
     def get_sharepoint_drive_id(self, site_id: str) -> str | None:
@@ -991,11 +1009,11 @@ class GraphClient:
         """
         site_id = self.get_sharepoint_site_id()
         if not site_id:
-            logger.error("SharePoint site ID not found — check sharepoint_site_url setting")
+            logger.error("SharePoint site ID not found at %s", SHAREPOINT_SITE_URL)
             return None
         drive_id = self.get_sharepoint_drive_id(site_id)
         if not drive_id:
-            logger.error("SharePoint drive ID not found — check sharepoint_library setting")
+            logger.error("SharePoint drive ID not found for library '%s'", SHAREPOINT_LIBRARY)
             return None
 
         config = self._get_sharepoint_config()
@@ -1079,164 +1097,39 @@ class GraphClient:
         return []
 
     def test_sharepoint_connection(self) -> dict:
-        """Test the SharePoint connection with detailed diagnostics.
+        """Test the SharePoint connection using the SAME token path as email.
 
-        Bypasses _make_request's error suppression so we can return the
-        actual HTTP status + response body to the frontend.
+        Routes every Graph call through `_make_request`, which is the helper
+        the working email methods rely on. If this fails, the console output
+        from `_make_request` shows the exact URL and HTTP status.
         """
-        config = self._get_sharepoint_config()
-        diagnostics: dict = {
-            "configured_url": config["site_url"],
-            "library": config["library"],
-            "client_base": config["client_base"],
-            "attempts": [],
-        }
+        if not self.is_authenticated():
+            return {"ok": False, "error": "Not signed into Microsoft. Please sign in first."}
 
-        if not config["site_url"]:
-            return {
-                "ok": False,
-                "error": "SharePoint site URL is not set. Configure sharepoint_site_url in settings.",
-                "diagnostics": diagnostics,
-            }
-
-        parsed = urlparse(config["site_url"])
-        hostname = parsed.hostname
-        site_path = parsed.path or ""
-        diagnostics["parsed_hostname"] = hostname
-        diagnostics["parsed_path"] = site_path
-
-        if not hostname:
-            return {
-                "ok": False,
-                "error": (
-                    f"Could not parse hostname from URL '{config['site_url']}'. "
-                    "Expected something like https://yourcompany.sharepoint.com/sites/SiteName"
-                ),
-                "diagnostics": diagnostics,
-            }
-
-        try:
-            headers = self._headers()
-        except Exception as e:
-            return {
-                "ok": False,
-                "error": f"Could not obtain Microsoft Graph access token: {e}",
-                "diagnostics": diagnostics,
-            }
-
-        site_id: str | None = None
-
-        # Attempt 1 — direct hostname:/path lookup
-        url1 = f"{GRAPH_BASE}/sites/{hostname}:{site_path}"
-        try:
-            r = requests.get(url1, headers=headers, timeout=60)
-            attempt = {
-                "method": "hostname:/path",
-                "url": url1,
-                "status": r.status_code,
-                "body": r.text[:500],
-            }
-            diagnostics["attempts"].append(attempt)
-            if r.status_code == 200:
-                data = r.json()
-                if "id" in data:
-                    site_id = data["id"]
-                    attempt["resolved_id"] = site_id
-        except Exception as e:
-            diagnostics["attempts"].append(
-                {"method": "hostname:/path", "url": url1, "error": str(e)}
-            )
-
-        # Attempt 2 — search fallback
+        # Step 1 — find the site
+        site_id = self.get_sharepoint_site_id()
         if not site_id:
-            site_name = site_path.rstrip("/").split("/")[-1] if site_path else ""
-            if site_name:
-                url2 = f"{GRAPH_BASE}/sites?search={site_name}"
-                try:
-                    r = requests.get(url2, headers=headers, timeout=60)
-                    attempt = {
-                        "method": "search",
-                        "url": url2,
-                        "status": r.status_code,
-                        "body": r.text[:500],
-                    }
-                    diagnostics["attempts"].append(attempt)
-                    if r.status_code == 200:
-                        matches = r.json().get("value", [])
-                        attempt["match_count"] = len(matches)
-                        target = config["site_url"].rstrip("/").lower()
-                        for site in matches:
-                            if site.get("webUrl", "").rstrip("/").lower() == target:
-                                site_id = site["id"]
-                                attempt["resolved_id"] = site_id
-                                attempt["resolved_via"] = "exact_url_match"
-                                break
-                        if not site_id and matches:
-                            site_id = matches[0]["id"]
-                            attempt["resolved_id"] = site_id
-                            attempt["resolved_via"] = "first_match"
-                except Exception as e:
-                    diagnostics["attempts"].append(
-                        {"method": "search", "url": url2, "error": str(e)}
-                    )
-            else:
-                diagnostics["attempts"].append(
-                    {"method": "search", "skipped": "empty site_path — cannot derive site name"}
-                )
+            return {"ok": False, "error": f"Could not find SharePoint site at {SHAREPOINT_SITE_URL}"}
 
-        if not site_id:
-            return {
-                "ok": False,
-                "error": (
-                    "Could not resolve SharePoint site via direct lookup or search. "
-                    "Inspect diagnostics.attempts for the actual Graph response."
-                ),
-                "diagnostics": diagnostics,
-            }
-        diagnostics["site_id"] = site_id
-
-        # Drive lookup
+        # Step 2 — find the drive
         drive_id = self.get_sharepoint_drive_id(site_id)
         if not drive_id:
-            return {
-                "ok": False,
-                "error": (
-                    f"Site found but document library '{config['library']}' "
-                    "was not. Check the library name in settings."
-                ),
-                "diagnostics": diagnostics,
-            }
-        diagnostics["drive_id"] = drive_id
+            return {"ok": False, "error": f"Could not find document library '{SHAREPOINT_LIBRARY}'"}
 
-        # Client base folder check
-        url3 = f"{GRAPH_BASE}/drives/{drive_id}/root:/{config['client_base']}:/children?$top=1"
-        try:
-            r = requests.get(url3, headers=headers, timeout=60)
-            diagnostics["client_base_check"] = {
-                "url": url3,
-                "status": r.status_code,
-                "body": r.text[:500] if r.status_code >= 400 else None,
-            }
-            if r.status_code == 200:
-                return {
-                    "ok": True,
-                    "message": f"Connected. Found client folders in /{config['client_base']}/",
-                    "diagnostics": diagnostics,
-                }
+        # Step 3 — check the client base folder
+        config = self._get_sharepoint_config()
+        url = f"{GRAPH_BASE}/drives/{drive_id}/root:/{config['client_base']}:/children?$top=1"
+        result = self._make_request("GET", url)
+        if result and "value" in result:
             return {
-                "ok": False,
-                "error": (
-                    f"Could not access /{config['client_base']}/ "
-                    f"(HTTP {r.status_code}). Check the client folder base path."
-                ),
-                "diagnostics": diagnostics,
+                "ok": True,
+                "message": f"Connected to SharePoint. Found client folders in /{config['client_base']}/",
             }
-        except Exception as e:
-            return {
-                "ok": False,
-                "error": f"Error accessing /{config['client_base']}/: {e}",
-                "diagnostics": diagnostics,
-            }
+
+        return {
+            "ok": False,
+            "error": f"Connected to site but could not find /{config['client_base']}/ folder",
+        }
 
     # ── Calendar ──────────────────────────────────────────────────────────────
 
