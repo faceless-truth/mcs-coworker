@@ -874,21 +874,27 @@ class GraphClient:
     # ── SharePoint ───────────────────────────────────────────────────────────
 
     def _make_request(self, method: str, url: str, json=None,
-                      data=None, headers: dict = None):
+                      data=None, headers: dict = None,
+                      auth: bool = True, timeout: int = 60):
         """Generic Graph API helper used by SharePoint methods.
 
-        Returns the parsed JSON body on success, or None on 404 / HTTP error
-        so callers can degrade gracefully rather than raising. Existing
-        Outlook methods keep their explicit raise_for_status() behaviour.
+        Supports GET / POST / PUT / PATCH. Returns the parsed JSON body on
+        success, or None on 404 / HTTP error so callers can degrade gracefully
+        rather than raising. Existing Outlook methods keep their explicit
+        raise_for_status() behaviour.
+
+        Set ``auth=False`` for pre-authenticated URLs (e.g. SharePoint upload
+        session chunks) where Microsoft's docs explicitly say not to add an
+        Authorization header.
         """
         method_upper = method.upper()
         print(f"[Graph API] {method_upper} {url}")
-        request_headers = self._headers()
+        request_headers = self._headers() if auth else {}
         if headers:
             # Allow Content-Type override (e.g., octet-stream for uploads).
             request_headers.update(headers)
         try:
-            kwargs = {"headers": request_headers, "timeout": 60}
+            kwargs = {"headers": request_headers, "timeout": timeout}
             if json is not None:
                 kwargs["json"] = json
             if data is not None:
@@ -940,7 +946,9 @@ class GraphClient:
         # Strategy 1 — direct hostname:/path lookup, via _make_request
         # (the SAME method that works for email).
         url = f"{GRAPH_BASE}/sites/{hostname}:{site_path}"
+        print(f"[SharePoint] Looking up site: {url}")
         result = self._make_request("GET", url)
+        print(f"[SharePoint] Result: {result}")
         if result and "id" in result:
             print(f"[SharePoint] site resolved via direct lookup: {result['id']}")
             return result["id"]
@@ -1051,15 +1059,20 @@ class GraphClient:
                     "Content-Range": f"bytes {i}-{end - 1}/{total}",
                     "Content-Type": "application/octet-stream",
                 }
-                resp = requests.put(upload_url, data=chunk, headers=chunk_headers, timeout=120)
-                if resp.status_code not in (200, 201, 202):
-                    logger.error("Upload chunk failed: %s", resp.status_code)
+                # Pre-authenticated upload session URL — must NOT carry the
+                # Bearer token, per Microsoft Graph upload-session docs.
+                chunk_result = self._make_request(
+                    "PUT", upload_url, data=chunk,
+                    headers=chunk_headers, auth=False, timeout=120,
+                )
+                if chunk_result is None:
+                    logger.error("Upload chunk failed at offset %d", i)
                     return None
-                if resp.status_code in (200, 201):
-                    try:
-                        result = resp.json()
-                    except ValueError:
-                        result = None
+                # The final chunk's response is the created file's metadata
+                # (contains webUrl); intermediate chunks return a JSON body
+                # with nextExpectedRanges.
+                if "webUrl" in chunk_result:
+                    result = chunk_result
 
         if result and "webUrl" in result:
             logger.info("Uploaded to SharePoint: %s", file_path)
@@ -1100,11 +1113,13 @@ class GraphClient:
         """Test the SharePoint connection using the SAME token path as email.
 
         Routes every Graph call through `_make_request`, which is the helper
-        the working email methods rely on. If this fails, the console output
-        from `_make_request` shows the exact URL and HTTP status.
+        the working email methods rely on. No `is_authenticated()` gate — that
+        check reads the on-disk MSAL cache and was returning false even when
+        the in-memory access token was perfectly valid (and email was working
+        fine through the same client). If `_make_request` can't authenticate,
+        its console output shows the exact URL and HTTP status.
         """
-        if not self.is_authenticated():
-            return {"ok": False, "error": "Not signed into Microsoft. Please sign in first."}
+        print("[SharePoint Test] Starting connection test...")
 
         # Step 1 — find the site
         site_id = self.get_sharepoint_site_id()
