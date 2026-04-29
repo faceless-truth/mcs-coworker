@@ -92,7 +92,7 @@ MCS_CLIENT_ID = "0bad4828-f05f-4580-8e6f-ede96c098642"
 
 # MC&S SharePoint — hardcoded, same for all accountants
 SHAREPOINT_SITE_URL = "https://mcandscomau.sharepoint.com/sites/MCS354"
-SHAREPOINT_LIBRARY = "Shared Documents"
+SHAREPOINT_LIBRARY = "Documents"
 SHAREPOINT_CLIENT_BASE = "Server/Clients"
 
 print(f"[SharePoint] GRAPH_SCOPES = {GRAPH_SCOPES}")
