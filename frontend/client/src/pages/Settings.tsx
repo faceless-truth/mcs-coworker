@@ -9,6 +9,7 @@ import {
   fetchSettings, saveSettings,
   fetchKnowledge, createKnowledge, updateKnowledge, deleteKnowledge,
   fetchBasClients, createBasClient, updateBasClient, deleteBasClient,
+  testSharepointConnection,
   type KnowledgeEntry, type BasClient,
 } from "@/lib/api";
 
@@ -1144,8 +1145,7 @@ export default function Settings() {
     setSharepointTesting(true);
     setSharepointStatus(null);
     try {
-      const res = await fetch("http://127.0.0.1:7842/api/sharepoint/test", { method: "POST" });
-      const body = await res.json().catch(() => ({}));
+      const body = await testSharepointConnection() as any;
       if (body.ok) {
         setSharepointStatus({ ok: true, message: body.message || "Connected." });
         toast.success("SharePoint connection successful", { description: body.message });

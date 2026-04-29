@@ -9,9 +9,17 @@
 
 const BASE = "http://127.0.0.1:7842";
 
+function getApiToken(): string {
+  return (window as any).__API_TOKEN__ || "";
+}
+
 async function apiFetch<T>(path: string, opts?: RequestInit): Promise<T> {
+  const token = getApiToken();
   const res = await fetch(`${BASE}${path}`, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
     ...opts,
   });
   if (!res.ok) {
@@ -113,6 +121,10 @@ export async function testConnection(service: "xpm" | "fusesign" | "teams") {
   return apiFetch(`/api/settings/test/${service}`, { method: "POST" });
 }
 
+export async function testSharepointConnection() {
+  return apiFetch("/api/sharepoint/test", { method: "POST" });
+}
+
 // ── Xero OAuth ────────────────────────────────────────────────────────────────
 export async function fetchXeroStatus() {
   return apiFetch("/api/xero/status");
@@ -194,8 +206,12 @@ export async function sendChatMessage(
 
 export async function fetchClientNames(): Promise<string[]> {
   try {
+    const token = getApiToken();
     const res = await fetch(`${BASE}/api/clients/names`, {
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
     });
     if (!res.ok) return [];
     const json = await res.json();
@@ -206,8 +222,12 @@ export async function fetchClientNames(): Promise<string[]> {
 }
 
 export async function fetchAgents() {
+  const token = getApiToken();
   const res = await fetch(`${BASE}/api/agents`, {
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const json = await res.json();
@@ -217,7 +237,12 @@ export async function fetchAgents() {
 export async function uploadChatFile(file: File): Promise<ChatFileRef> {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${BASE}/api/chat/upload`, { method: "POST", body: form });
+  const token = getApiToken();
+  const res = await fetch(`${BASE}/api/chat/upload`, {
+    method: "POST",
+    body: form,
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error || `Upload failed (HTTP ${res.status})`);
