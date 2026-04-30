@@ -2340,6 +2340,65 @@ def chat_export():
     })
 
 
+@app.route("/api/chat/create-draft", methods=["POST"])
+def create_draft_from_chat():
+    """Create an Outlook draft email from AI Chat content.
+
+    Body:
+      to:              recipient address
+      subject:         email subject
+      body:            HTML body (signature is appended by GraphClient)
+      attachment_ids:  optional list of chat-upload file IDs to attach
+    """
+    data = request.get_json(silent=True) or {}
+    to_address = (data.get("to") or "").strip()
+    subject = (data.get("subject") or "").strip()
+    body_html = data.get("body") or ""
+    attachment_ids = data.get("attachment_ids") or []
+
+    if not to_address or not subject or not body_html:
+        return err("Missing to, subject, or body", 400)
+
+    graph = _get_graph()
+    if not graph:
+        return err("Not connected to Microsoft", 500)
+
+    attachment_paths: list[str] = []
+    for fid in attachment_ids:
+        if not isinstance(fid, str):
+            continue
+        # Files in CHAT_UPLOAD_DIR are saved as `{file_id}{ext}` so we resolve
+        # by stem (the random id without extension).
+        match = next((p for p in CHAT_UPLOAD_DIR.iterdir() if p.stem == fid), None)
+        if match is not None:
+            attachment_paths.append(str(match))
+        else:
+            logger.warning("create-draft: attachment id %s not found on disk", fid)
+
+    try:
+        if attachment_paths:
+            draft_id = graph.create_draft_with_attachments(
+                to_address=to_address,
+                subject=subject,
+                body_html=body_html,
+                attachment_paths=attachment_paths,
+            )
+        else:
+            draft_id = graph.create_draft(
+                to_address=to_address,
+                subject=subject,
+                body_html=body_html,
+            )
+        return jsonify({
+            "ok": True,
+            "draft_id": draft_id,
+            "attachments": len(attachment_paths),
+        })
+    except Exception as e:
+        logger.error("Failed to create draft from chat: %s", e, exc_info=True)
+        return err(f"Failed to create draft: {e}", 500)
+
+
 @app.route("/api/chat/save-conversation", methods=["POST"])
 def save_conversation():
     """Persist an entire chat conversation to the memory store.

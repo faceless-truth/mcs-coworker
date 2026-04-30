@@ -1,7 +1,7 @@
 // Design: Refined Dark Professional — AI Chat page (specialist agents)
 
 import { useState, useRef, useEffect, useMemo } from "react";
-import { Bot, Send, User, Paperclip, X, FileText, Download, Copy, Check } from "lucide-react";
+import { Bot, Send, User, Paperclip, X, FileText, Download, Copy, Check, Mail } from "lucide-react";
 import { toast } from "sonner";
 import {
   sendChatMessage,
@@ -107,6 +107,109 @@ const CATEGORY_LABELS: Record<string, string> = {
 
 const MAX_FILES_PER_MESSAGE = 50;
 
+interface EmailBlock {
+  blockKey: string;       // stable key per (msgId, blockIndex)
+  blockIndex: number;     // ordinal within the message
+  rangeStart: number;     // char offset of block start in the source content
+  rangeEnd: number;       // char offset of block end (exclusive)
+  title: string;          // e.g. "Korkie, Gordon"
+  to: string;             // raw To: value (may be a placeholder)
+  subject: string;
+  attachments: string[];  // filenames the assistant referenced
+  body: string;           // cleaned body text
+  flagged: boolean;       // true if this block is a "do not send" flag
+}
+
+const EMAIL_HEADER_RE = /^###\s*Email(?:\s+\d+(?:\s+of\s+\d+)?)?\s*:?\s*(.+)$/m;
+
+function parseEmailBlocks(content: string, msgId: number | string): EmailBlock[] {
+  if (!content || typeof content !== "string") return [];
+  const blocks: EmailBlock[] = [];
+  // Split by Email N headings while keeping their offsets.
+  const lines = content.split("\n");
+  const headers: { idx: number; title: string; charOffset: number }[] = [];
+  let charOffset = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(EMAIL_HEADER_RE);
+    if (m) {
+      headers.push({ idx: i, title: m[1].trim(), charOffset });
+    }
+    charOffset += lines[i].length + 1; // +1 for the \n
+  }
+  if (headers.length === 0) return [];
+
+  for (let h = 0; h < headers.length; h++) {
+    const start = headers[h].idx;
+    const end = h + 1 < headers.length ? headers[h + 1].idx : lines.length;
+    const segLines = lines.slice(start, end);
+    const seg = segLines.join("\n");
+    const segStart = headers[h].charOffset;
+    const segEnd = segStart + seg.length;
+
+    const flagged = /flagged for review/i.test(seg) || /do not send/i.test(seg);
+
+    const toMatch = seg.match(/\*\*To:\*\*\s*([^\n]+)/i);
+    const subjectMatch = seg.match(/\*\*Subject:\*\*\s*([^\n]+)/i);
+    const attMatch = seg.match(/\*\*Attachments?:\*\*\s*([^\n]+)/i);
+
+    let body = seg;
+    body = body.replace(/^###[^\n]*\n?/, "");
+    body = body.replace(/\*\*To:\*\*[^\n]*\n?/i, "");
+    body = body.replace(/\*\*Subject:\*\*[^\n]*\n?/i, "");
+    body = body.replace(/\*\*Attachments?:\*\*[^\n]*\n?/i, "");
+    body = body.replace(/\[No sign-off[^\]]*\]/i, "");
+    body = body.replace(/^---+\s*$/gm, "");
+    body = body.trim();
+
+    let attachments: string[] = [];
+    if (attMatch) {
+      attachments = attMatch[1]
+        .replace(/^\[/, "")
+        .replace(/\]$/, "")
+        .split(/[,;]/)
+        .map(s => s.trim())
+        .filter(Boolean);
+    }
+
+    blocks.push({
+      blockKey: `${msgId}::${h}`,
+      blockIndex: h,
+      rangeStart: segStart,
+      rangeEnd: segEnd,
+      title: headers[h].title,
+      to: toMatch ? toMatch[1].trim() : "",
+      subject: subjectMatch ? subjectMatch[1].trim() : "",
+      attachments,
+      body,
+      flagged,
+    });
+  }
+  return blocks;
+}
+
+function isPlaceholderEmail(value: string): boolean {
+  if (!value) return true;
+  const v = value.trim();
+  if (!v) return true;
+  // Bracketed placeholders like "[need client email - please provide or check XPM]"
+  if (/^\[.*\]$/.test(v)) return true;
+  // Loose check: if it doesn't contain @ it's not a real address yet.
+  return !/@/.test(v) || /need client email|please provide/i.test(v);
+}
+
+function bodyToHtml(body: string): string {
+  return body
+    .split(/\n{2,}/)
+    .map(p =>
+      p
+        .split("\n")
+        .map(line => line.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"))
+        .join("<br>")
+    )
+    .map(p => `<p>${p}</p>`)
+    .join("");
+}
+
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -124,6 +227,17 @@ export default function Chat() {
   const [uploadingFiles, setUploadingFiles] = useState<{ name: string; size: number }[]>([]);
   const [uploadProgress, setUploadProgress] = useState<{ completed: number; total: number } | null>(null);
   const [dragActive, setDragActive] = useState(false);
+  const [createdDrafts, setCreatedDrafts] = useState<Record<string, true>>({});
+  const [draftModal, setDraftModal] = useState<{
+    blockKey: string;
+    title: string;
+    to: string;
+    subject: string;
+    body: string;
+    selectedAttachmentIds: Record<string, boolean>;
+    availableFiles: ChatFileRef[];
+  } | null>(null);
+  const [creatingDraft, setCreatingDraft] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportingType, setExportingType] = useState<"transcript" | "summary" | "recommendation" | null>(null);
   const [clientName, setClientName] = useState("");
@@ -475,6 +589,78 @@ export default function Chat() {
 
   const hasConversation = messages.some(m => m.role === "user");
 
+  // For an assistant message, find the most recent prior user message's
+  // attached files — those are the candidate attachments for any draft
+  // emails the assistant wrote.
+  const filesAvailableForAssistant = (assistantMsgId: number): ChatFileRef[] => {
+    const idx = messages.findIndex(m => m.id === assistantMsgId);
+    if (idx < 0) return [];
+    for (let i = idx - 1; i >= 0; i--) {
+      if (messages[i].role === "user" && messages[i].files?.length) {
+        return messages[i].files || [];
+      }
+    }
+    return [];
+  };
+
+  const openDraftModal = (block: EmailBlock, msgId: number) => {
+    const available = filesAvailableForAssistant(msgId);
+    // Pre-check files whose name matches one the assistant referenced.
+    const refNames = new Set(block.attachments.map(s => s.toLowerCase()));
+    const selected: Record<string, boolean> = {};
+    for (const f of available) {
+      selected[f.id] = refNames.has(f.name.toLowerCase());
+    }
+    setDraftModal({
+      blockKey: block.blockKey,
+      title: block.title,
+      to: isPlaceholderEmail(block.to) ? "" : block.to,
+      subject: block.subject,
+      body: block.body,
+      selectedAttachmentIds: selected,
+      availableFiles: available,
+    });
+  };
+
+  const submitDraft = async () => {
+    if (!draftModal) return;
+    if (!draftModal.to.trim() || !/@/.test(draftModal.to)) {
+      toast.error("Enter a valid recipient email address");
+      return;
+    }
+    if (!draftModal.subject.trim()) {
+      toast.error("Subject is required");
+      return;
+    }
+    setCreatingDraft(true);
+    try {
+      const attachment_ids = Object.entries(draftModal.selectedAttachmentIds)
+        .filter(([, on]) => on)
+        .map(([id]) => id);
+      const res = await fetch("http://127.0.0.1:7842/api/chat/create-draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          to: draftModal.to.trim(),
+          subject: draftModal.subject.trim(),
+          body: bodyToHtml(draftModal.body),
+          attachment_ids,
+        }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.ok) {
+        throw new Error(body.error || `HTTP ${res.status}`);
+      }
+      setCreatedDrafts(prev => ({ ...prev, [draftModal.blockKey]: true }));
+      toast.success(`Draft created in Outlook for ${draftModal.title}`);
+      setDraftModal(null);
+    } catch (e: any) {
+      toast.error("Could not create draft", { description: e?.message ?? "" });
+    } finally {
+      setCreatingDraft(false);
+    }
+  };
+
   const renderContent = (content: string) => {
     const parts = content.split(/(```[\s\S]*?```)/g);
     return parts.map((part, i) => {
@@ -529,7 +715,7 @@ export default function Chat() {
               Drop files here
             </div>
             <div className="text-xs text-blue-600/70 mt-1">
-              PDFs, Excel, Word, CSV, images — up to 5 per message
+              PDFs, Excel, Word, CSV, images — up to {MAX_FILES_PER_MESSAGE} per message
             </div>
           </div>
         </div>
@@ -761,6 +947,44 @@ export default function Chat() {
                 </div>
               )}
               {renderContent(msg.content)}
+              {msg.role === "assistant" && (() => {
+                const blocks = parseEmailBlocks(msg.content, msg.id);
+                if (blocks.length === 0) return null;
+                return (
+                  <div className="mt-3 pt-3 border-t border-slate-200 flex flex-col gap-1.5">
+                    {blocks.map(b => {
+                      if (b.flagged) {
+                        return (
+                          <div
+                            key={b.blockKey}
+                            className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1"
+                          >
+                            ⚠️ {b.title} — flagged for review, no draft button.
+                          </div>
+                        );
+                      }
+                      const done = !!createdDrafts[b.blockKey];
+                      return (
+                        <button
+                          key={b.blockKey}
+                          type="button"
+                          disabled={done}
+                          onClick={() => openDraftModal(b, msg.id)}
+                          className={`inline-flex items-center gap-1.5 self-start px-2.5 py-1 rounded-md text-xs font-medium border transition-all ${
+                            done
+                              ? "border-slate-200 bg-slate-50 text-slate-400 cursor-default"
+                              : "border-blue-200 bg-blue-50 text-blue-700 hover:border-blue-400 hover:bg-blue-100"
+                          }`}
+                          title={done ? "Already created" : `Create Outlook draft for ${b.title}`}
+                        >
+                          {done ? <Check className="w-3 h-3" /> : <Mail className="w-3 h-3" />}
+                          {done ? "Draft Created" : `Create Draft — ${b.title}`}
+                        </button>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         ))}
@@ -908,6 +1132,112 @@ export default function Chat() {
           )}
         </div>
       </div>
+
+      {/* Create Draft modal */}
+      {draftModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40"
+          onClick={() => !creatingDraft && setDraftModal(null)}
+        >
+          <div
+            className="bg-white rounded-xl shadow-xl w-[520px] max-w-[92vw] max-h-[90vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="px-5 py-4 border-b border-border flex items-center justify-between">
+              <div className="flex items-center gap-2 text-sm font-semibold text-slate-800">
+                <Mail className="w-4 h-4 text-blue-600" />
+                Create Draft in Outlook — {draftModal.title}
+              </div>
+              <button
+                type="button"
+                onClick={() => !creatingDraft && setDraftModal(null)}
+                className="text-slate-400 hover:text-slate-600"
+                aria-label="Close"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-5 py-4 space-y-3 text-sm">
+              <label className="block">
+                <span className="text-xs font-medium text-slate-600">To</span>
+                <input
+                  type="email"
+                  value={draftModal.to}
+                  onChange={e => setDraftModal(m => m && { ...m, to: e.target.value })}
+                  placeholder="client@example.com"
+                  className="mt-1 w-full px-3 py-2 rounded-md border border-border focus:border-blue-400 focus:outline-none"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs font-medium text-slate-600">Subject</span>
+                <input
+                  type="text"
+                  value={draftModal.subject}
+                  onChange={e => setDraftModal(m => m && { ...m, subject: e.target.value })}
+                  className="mt-1 w-full px-3 py-2 rounded-md border border-border focus:border-blue-400 focus:outline-none"
+                />
+              </label>
+              {draftModal.availableFiles.length > 0 && (
+                <div>
+                  <div className="text-xs font-medium text-slate-600 mb-1">Attach</div>
+                  <div className="border border-border rounded-md max-h-40 overflow-y-auto divide-y divide-border">
+                    {draftModal.availableFiles.map(f => (
+                      <label
+                        key={f.id}
+                        className="flex items-center gap-2 px-3 py-2 hover:bg-slate-50 cursor-pointer"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!!draftModal.selectedAttachmentIds[f.id]}
+                          onChange={e =>
+                            setDraftModal(m =>
+                              m && {
+                                ...m,
+                                selectedAttachmentIds: {
+                                  ...m.selectedAttachmentIds,
+                                  [f.id]: e.target.checked,
+                                },
+                              },
+                            )
+                          }
+                        />
+                        <FileText className="w-3.5 h-3.5 text-slate-500" />
+                        <span className="text-xs text-slate-700 flex-1 truncate">{f.name}</span>
+                        <span className="text-xs text-slate-400">{formatBytes(f.size)}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+              <div>
+                <span className="text-xs font-medium text-slate-600">Body preview</span>
+                <div className="mt-1 px-3 py-2 rounded-md border border-border bg-slate-50 text-xs text-slate-700 whitespace-pre-wrap max-h-48 overflow-y-auto">
+                  {draftModal.body}
+                </div>
+              </div>
+            </div>
+            <div className="px-5 py-3 border-t border-border flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setDraftModal(null)}
+                disabled={creatingDraft}
+                className="px-3 py-1.5 rounded-md text-xs font-medium border border-border bg-white text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={submitDraft}
+                disabled={creatingDraft}
+                className="px-3 py-1.5 rounded-md text-xs font-medium text-white disabled:opacity-60"
+                style={{ background: "oklch(0.5 0.2 250)" }}
+              >
+                {creatingDraft ? "Creating…" : "Create Draft"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
