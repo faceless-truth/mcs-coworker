@@ -28,7 +28,10 @@ Default: 1st of every month at 08:00.
 """
 
 from datetime import datetime, date
-from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
+from plugin_base import (
+    AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory,
+    email_identity_prompt,
+)
 from config import get_setting, log_activity
 from client_utils import normalise_client_name
 
@@ -234,6 +237,7 @@ class DebtorFollowUpPlugin(AgentPlugin):
             resp = context.claude_fast.messages.create(
                 model=self.get_claude_model_fast(),
                 max_tokens=400,
+                system=email_identity_prompt(),
                 messages=[{"role": "user", "content": prompt}])
             return resp.content[0].text.strip()
         except Exception:

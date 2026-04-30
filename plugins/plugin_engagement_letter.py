@@ -29,7 +29,10 @@ Default: every 10 minutes (event-driven via email scan).
 """
 
 from datetime import datetime
-from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
+from plugin_base import (
+    AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory,
+    email_identity_prompt,
+)
 from config import get_setting, log_activity
 from client_utils import normalise_client_name
 
@@ -226,6 +229,7 @@ class EngagementLetterPlugin(AgentPlugin):
             resp = context.claude_reason.messages.create(
                 model=self.get_claude_model_reasoning(),
                 max_tokens=1000,
+                system=email_identity_prompt(),
                 messages=[{"role": "user", "content": prompt}])
             return resp.content[0].text.strip()
         except Exception:

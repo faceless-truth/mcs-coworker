@@ -883,6 +883,7 @@ const EMPTY_SETTINGS = {
   opusModel: "claude-opus-4-6",
   outlookEmail: "",
   emailSignature: "",
+  userName: "",
   xpmApiKey: "",
   xeroClientId: "",
   xeroClientSecret: "",
@@ -1042,6 +1043,7 @@ export default function Settings() {
             opusModel:           s.opus_model            ?? prev.opusModel,
             outlookEmail:        s.outlook_email         ?? prev.outlookEmail,
             emailSignature:      s.email_signature       ?? prev.emailSignature,
+            userName:            s.user_name             ?? prev.userName,
             xeroClientId:        s.xero_client_id        ?? prev.xeroClientId,
             xeroClientSecret:    s.xero_client_secret    ?? prev.xeroClientSecret,
             fuseSignApiKey:      s.fusesign_api_key      ?? prev.fuseSignApiKey,
@@ -1068,6 +1070,7 @@ export default function Settings() {
       anthropic_api_key:           settings.anthropicApiKey,
       outlook_email:               settings.outlookEmail,
       email_signature:             settings.emailSignature,
+      user_name:                   settings.userName,
       fusesign_api_key:            settings.fuseSignApiKey,
       teams_webhook_url:           settings.teamsWebhook,
       fast_model:                  settings.fastModel,
@@ -1258,6 +1261,17 @@ export default function Settings() {
       <Section title="Microsoft 365" description="The Outlook mailbox CoWorker monitors for incoming emails">
         <Field label="Outlook Mailbox">
           <input className={inputClass} value={settings.outlookEmail} onChange={e => setSettings(s => ({ ...s, outlookEmail: e.target.value }))} />
+        </Field>
+        <Field
+          label="Accountant Name"
+          hint="Auto-detected from Microsoft 365 on first sign-in. This is how your name appears in AI-drafted emails — drafts are written AS this person, in first person."
+        >
+          <input
+            className={inputClass}
+            value={settings.userName}
+            placeholder="e.g. Elio Scarton"
+            onChange={e => setSettings(s => ({ ...s, userName: e.target.value }))}
+          />
         </Field>
         <Field
           label="Signature Image"

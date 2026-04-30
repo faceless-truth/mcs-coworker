@@ -260,6 +260,7 @@ class GraphClient:
                     if accounts:
                         self._account = accounts[0]
                     logger.info("MSAL token cache saved after authentication")
+                    self._populate_identity_settings()
                     if callback:
                         callback(success=True, error=None)
                 else:
@@ -314,6 +315,30 @@ class GraphClient:
         r = requests.get(f"{GRAPH_BASE}/me", headers=self._headers(), timeout=30)
         r.raise_for_status()
         return r.json()
+
+    def _populate_identity_settings(self) -> None:
+        """Auto-fill `user_name` and `ms_account_email` from /me on first auth.
+
+        Plugins that draft emails ("AS the accountant") rely on `user_name`
+        being non-empty. We only set values when they are currently blank,
+        so a manual override in Settings is preserved.
+        """
+        try:
+            from config import get_setting, set_setting
+            info = self.get_user_info() or {}
+            display = (info.get("displayName") or "").strip()
+            mail = (info.get("mail") or info.get("userPrincipalName") or "").strip()
+            if display and not (get_setting("user_name", "") or "").strip():
+                set_setting("user_name", display)
+                logger.info("Auto-populated user_name from Graph: %s", display)
+            if mail:
+                if not (get_setting("ms_account_email", "") or "").strip():
+                    set_setting("ms_account_email", mail)
+                    logger.info("Auto-populated ms_account_email from Graph: %s", mail)
+                if not (get_setting("outlook_email", "") or "").strip():
+                    set_setting("outlook_email", mail)
+        except Exception as e:
+            logger.warning("Could not auto-populate identity from Graph: %s", e)
 
     def fetch_unread_emails(self, folder="Inbox", max_count=25):
         """Fetch unread emails from the specified folder."""

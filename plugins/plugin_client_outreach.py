@@ -27,7 +27,10 @@ import anthropic
 import requests
 
 from config import get_setting
-from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
+from plugin_base import (
+    AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory,
+    email_identity_prompt,
+)
 from prompt_utils import wrap_untrusted_content, UNTRUSTED_CONTENT_SYSTEM_PROMPT
 
 
@@ -73,9 +76,11 @@ Extract the relationship and emotional signals.
 def _outreach_system_prompt() -> str:
     practice = get_setting("practice_name", "MC & S Accountants")
     return (
-        f"You are a professional email drafting assistant for {practice}, "
-        "a Melbourne-based accounting firm. You draft client outreach emails on "
-        "behalf of the assigned accountant.\n\n"
+        email_identity_prompt()
+        + "\n"
+        f"You work at {practice}, a Melbourne-based accounting firm. Draft "
+        "this client outreach email AS the accountant identified above, in "
+        "the first person.\n\n"
         "Do NOT include any sign-off, closing, or signature in your draft. "
         "No Kind regards, no Best regards, no name, no company name. The "
         "email signature is appended automatically — just end with your last "

@@ -379,3 +379,51 @@ class AgentPlugin(ABC):
         from config import log_activity
         log_activity(source, subject, category, action,
                      draft_created, notification_sent)
+
+
+# ── Shared prompt helpers ─────────────────────────────────────────────────────
+
+def email_identity_prompt() -> str:
+    """Return the IDENTITY + FORMATTING preamble that every email-drafting
+    plugin must prepend to its system/user prompt.
+
+    The accountant's name is sourced from the `user_name` setting (auto-
+    populated from the Microsoft Graph profile on first auth). The mailbox
+    falls back to `outlook_email`, then `ms_account_email`.
+
+    The block tells Claude:
+      • You ARE the accountant; never refer to them in third person.
+      • Never use em/en dashes, smart quotes, or semicolons in client mail.
+    """
+    from config import get_setting
+    name = (get_setting("user_name", "") or "").strip()
+    mailbox = (
+        (get_setting("outlook_email", "") or "").strip()
+        or (get_setting("ms_account_email", "") or "").strip()
+    )
+    who = name or "the accountant"
+    inbox = mailbox or "the firm's mailbox"
+    return (
+        "CRITICAL IDENTITY RULE\n"
+        "----------------------\n"
+        f"You ARE {who}. You are drafting this email AS {who} from {inbox}.\n"
+        "Write in the first person. Never refer to yourself in the third person.\n"
+        f"Never say \"I'll let {who} know\" or \"I'll pass this to {who}\" — YOU are {who}.\n"
+        f"Never say \"{who} will be in touch\" — say \"I'll be in touch\".\n"
+        "Never say \"the team will\" or \"our office will\" unless you genuinely "
+        "mean other staff members.\n\n"
+        "Examples:\n"
+        f"  WRONG: \"I'll let {who} know about this.\"\n"
+        "  RIGHT: \"Noted, I'll take a look at this.\"\n"
+        f"  WRONG: \"{who} will follow up.\"\n"
+        "  RIGHT: \"I'll follow up.\"\n\n"
+        "FORMATTING RULES\n"
+        "----------------\n"
+        "- Never use em dashes (—) or en dashes (–). Use a regular "
+        "hyphen (-) or rephrase the sentence.\n"
+        "- Never use semicolons in client emails. Use a full stop and start a "
+        "new sentence instead.\n"
+        "- Never use smart quotes (“ ” ‘ ’). Use straight "
+        "quotes (\" and ').\n"
+        "- Keep sentences short and clear.\n"
+    )

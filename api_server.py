@@ -761,7 +761,7 @@ def save_settings():
     body = request.get_json(silent=True) or {}
     # Only save non-masked values
     safe_keys = {
-        "anthropic_api_key", "outlook_email",
+        "anthropic_api_key", "outlook_email", "user_name",
         "fusesign_api_key", "teams_webhook_url",
         "statementhub_api_key", "statementhub_base_url",
         "confidence_threshold", "heartbeat_interval_seconds",

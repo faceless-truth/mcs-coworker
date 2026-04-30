@@ -39,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 from plugin_base import (
     AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory,
+    email_identity_prompt,
 )
 from config import (
     get_setting, log_activity, get_knowledge_entries, get_db,
@@ -479,9 +480,12 @@ class SmartEmailResponderPlugin(AgentPlugin):
         staff_profile: str,
     ) -> str | None:
         system = (
-            f"You are an assistant at {practice_name}, an Australian accounting "
+            email_identity_prompt()
+            + "\n"
+            f"You work at {practice_name}, an Australian accounting "
             f"firm. Your job is to draft a professional, helpful reply to the "
-            f"email below.\n\n"
+            f"email below — written AS the accountant identified above, in "
+            f"the first person.\n\n"
             f"Use ONLY the knowledge base below to answer questions about "
             f"pricing, checklists, procedures, and firm policies. If the "
             f"knowledge base does not contain the answer, say so politely and "
