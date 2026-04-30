@@ -6,6 +6,7 @@ import atexit
 import html
 import logging
 import os
+import re
 import threading
 import webbrowser
 import requests
@@ -99,6 +100,24 @@ print(f"[SharePoint] GRAPH_SCOPES = {GRAPH_SCOPES}")
 print(f"[SharePoint] Site URL = {SHAREPOINT_SITE_URL}")
 print(f"[SharePoint] Library = {SHAREPOINT_LIBRARY}")
 print(f"[SharePoint] Client base = {SHAREPOINT_CLIENT_BASE}")
+
+
+_URL_LINKIFY_PATTERN = re.compile(
+    r'(?<!href=")(?<!href=\')(?<!src=")(?<!src=\')(https?://[^\s<>"\']+)'
+)
+
+
+def linkify_urls(text: str) -> str:
+    """Wrap plain-text http(s) URLs in HTML anchor tags.
+
+    Skips URLs already inside an href="" or src="" attribute so existing
+    anchors and inline images are not double-wrapped. Used by every outgoing
+    email path so KB-sourced links (e.g. the Tax Return Checklist) arrive as
+    clickable links in Outlook instead of raw text the client has to copy.
+    """
+    if not text:
+        return text
+    return _URL_LINKIFY_PATTERN.sub(r'<a href="\1">\1</a>', text)
 
 
 def _odata_escape(value: str) -> str:
@@ -293,6 +312,11 @@ class GraphClient:
         """
         if not body_html:
             body_html = ""
+        # Linkify before appending the signature: the body may contain raw
+        # URLs from Claude/KB (e.g. checklist links), and we want every email
+        # path to deliver them as clickable anchors. The signature is added
+        # after, so its own anchors and data: image URIs are untouched.
+        body_html = linkify_urls(body_html)
         try:
             sig = self.get_signature_html()
         except Exception:

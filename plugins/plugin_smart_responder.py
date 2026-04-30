@@ -445,6 +445,11 @@ class SmartEmailResponderPlugin(AgentPlugin):
             f"draft. No Kind regards, no Best regards, no name, no company "
             f"name. The email signature is appended automatically — just end "
             f"with your last sentence of actual content.\n\n"
+            f"When referencing URLs, present them as clickable links with "
+            f"context — e.g. \"You can access our Tax Return Checklist here: "
+            f"<URL>\" rather than pasting a raw URL on its own line. The "
+            f"system automatically converts plain-text URLs to clickable "
+            f"hyperlinks, so you do not need to add HTML anchor tags.\n\n"
             f"KNOWLEDGE BASE\n"
             f"==============\n{kb_block}"
         )
