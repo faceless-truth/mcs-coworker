@@ -155,6 +155,17 @@ def get_all_agents() -> Dict[str, SpecialistAgent]:
             model_preference="sonnet",
         ),
         SpecialistAgent(
+            id="ato_correspondence",
+            name="ATO Correspondence",
+            description="Batch-process daily ATO downloads — classifies documents, drafts client emails",
+            icon="📬",
+            category="documents",
+            system_prompt=_load_prompt("ato_correspondence.md"),
+            supports_files=True,
+            file_types=[".pdf", ".docx", ".xlsx", ".csv", ".txt", ".jpg", ".png"],
+            model_preference="sonnet",
+        ),
+        SpecialistAgent(
             id="net_wealth",
             name="Net Wealth / SMSF Audit",
             description="Extract financial data from statements, produce BGL import files and audit reports",

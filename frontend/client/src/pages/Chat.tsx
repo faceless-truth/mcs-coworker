@@ -86,6 +86,11 @@ const AGENT_EXAMPLES: Record<string, string[]> = {
     "FTL penalty remission — all lodgements now current",
     "Payment arrangement for $12,000 tax debt",
   ],
+  ato_correspondence: [
+    "Process today's ATO correspondence batch",
+    "I've uploaded the daily ATO folder — please classify and draft emails",
+    "Sort these ATO documents by client and draft responses",
+  ],
   net_wealth: [
     "Extract transactions from this managed account statement",
     "Reconcile these WRAP and Annual statements",
