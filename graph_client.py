@@ -120,6 +120,43 @@ def linkify_urls(text: str) -> str:
     return _URL_LINKIFY_PATTERN.sub(r'<a href="\1">\1</a>', text)
 
 
+# Standard MC&S email font — Outlook inherits this <div> style for any new
+# text the accountant types into the draft, so manual edits match the AI body
+# instead of falling back to the editor's Calibri-default-but-different.
+MCS_EMAIL_STYLE = (
+    'font-family: Calibri, Arial, Helvetica, sans-serif; '
+    'font-size: 11pt; '
+    'color: #000000; '
+    'line-height: 1.5;'
+)
+_MCS_EMAIL_STYLE_MARKER = 'data-mcs-style="1"'
+
+
+def _wrap_email_body(body_html: str) -> str:
+    """Wrap an outgoing email body in a styled container so Outlook inherits
+    the font for any text the accountant adds when editing the draft.
+
+    Idempotent: if the body has already been wrapped in this session (e.g. a
+    re-save path), the marker attribute prevents a second wrapping div.
+    """
+    if not body_html:
+        return body_html
+    if _MCS_EMAIL_STYLE_MARKER in body_html:
+        return body_html
+    # Plain-text bodies (no inline HTML) need their newlines converted to
+    # <br> first, otherwise the wrapping div would collapse them.
+    if (
+        '<p>' not in body_html
+        and '<br' not in body_html
+        and '<div' not in body_html
+    ):
+        body_html = body_html.replace('\n', '<br>\n')
+    return (
+        f'<div {_MCS_EMAIL_STYLE_MARKER} style="{MCS_EMAIL_STYLE}">'
+        f'{body_html}</div>'
+    )
+
+
 def _odata_escape(value: str) -> str:
     """Escape a string for safe use inside an OData $filter single-quoted literal.
 
@@ -333,6 +370,7 @@ class GraphClient:
                    reply_to_id: str = None):
         """Send an email directly."""
         body_html = self._append_signature(body_html)
+        body_html = _wrap_email_body(body_html)
         message = {
             "subject": subject,
             "body": {"contentType": "HTML", "content": body_html},
@@ -358,6 +396,7 @@ class GraphClient:
                      reply_to_id: str = None):
         """Save a draft reply without sending it. Returns the draft message ID."""
         body_html = self._append_signature(body_html)
+        body_html = _wrap_email_body(body_html)
         if reply_to_id:
             try:
                 draft_id = self._create_threaded_reply_draft(reply_to_id, body_html)
@@ -721,6 +760,7 @@ class GraphClient:
         """Send an email with file attachments."""
         import base64
         body_html = self._append_signature(body_html)
+        body_html = _wrap_email_body(body_html)
         message = {
             "subject": subject,
             "body": {"contentType": "HTML", "content": body_html},
@@ -753,6 +793,7 @@ class GraphClient:
         """Create a draft email with file attachments. Returns draft ID."""
         import base64
         body_html = self._append_signature(body_html)
+        body_html = _wrap_email_body(body_html)
 
         threaded = False
         draft_id = None
