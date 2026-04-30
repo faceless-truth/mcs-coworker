@@ -644,6 +644,16 @@ Do NOT include any sign-off, closing, or signature in your draft. No Kind regard
             response = context.claude_reason.messages.create(
                 model=self.get_claude_model_reasoning(),
                 max_tokens=900,
+                system=(
+                    "FORMATTING RULES\n"
+                    "----------------\n"
+                    "- Never use em dashes (—) or en dashes (–). Use a regular "
+                    "hyphen (-) or rephrase the sentence.\n"
+                    "- Never use semicolons. Use a full stop and start a new "
+                    "sentence instead.\n"
+                    "- Never use smart quotes (“ ” ‘ ’). Use straight "
+                    "quotes (\" and ').\n"
+                ),
                 messages=[{"role": "user", "content": prompt}],
             )
             return response.content[0].text.strip()

@@ -132,6 +132,35 @@ MCS_EMAIL_STYLE = (
 _MCS_EMAIL_STYLE_MARKER = 'data-mcs-style="1"'
 
 
+def _strip_typographic_punctuation(body_html: str) -> str:
+    """Replace em/en dashes and smart quotes with plain ASCII equivalents.
+
+    Em/en dashes look unprofessional in business correspondence (per firm
+    style); smart quotes occasionally cause encoding glitches in older email
+    clients. This is a safety net — plugins also instruct Claude not to emit
+    them — applied centrally so every Graph send/draft path is covered.
+    """
+    if not body_html:
+        return body_html
+    replacements = {
+        "—": "-",   # em dash —
+        "–": "-",   # en dash –
+        "&mdash;": "-",
+        "&ndash;": "-",
+        "“": '"',   # left double quote
+        "”": '"',   # right double quote
+        "‘": "'",   # left single quote
+        "’": "'",   # right single quote
+        "&ldquo;": '"',
+        "&rdquo;": '"',
+        "&lsquo;": "'",
+        "&rsquo;": "'",
+    }
+    for src, dst in replacements.items():
+        body_html = body_html.replace(src, dst)
+    return body_html
+
+
 def _wrap_email_body(body_html: str) -> str:
     """Wrap an outgoing email body in a styled container so Outlook inherits
     the font for any text the accountant adds when editing the draft.
@@ -141,6 +170,7 @@ def _wrap_email_body(body_html: str) -> str:
     """
     if not body_html:
         return body_html
+    body_html = _strip_typographic_punctuation(body_html)
     if _MCS_EMAIL_STYLE_MARKER in body_html:
         return body_html
     # Plain-text bodies (no inline HTML) need their newlines converted to
@@ -911,6 +941,7 @@ class GraphClient:
                                       reply_to_id: str = None):
         """Send an email with an inline image. Creates draft, attaches, then sends."""
         import base64
+        body_html = _wrap_email_body(body_html)
         filename = os.path.basename(image_path)
         ext = os.path.splitext(filename)[1].lower()
         content_type_map = {
