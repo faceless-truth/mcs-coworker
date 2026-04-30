@@ -347,27 +347,6 @@ export default function Chat() {
     return md;
   };
 
-  const fallbackFilename = (): string => {
-    const now = new Date();
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const ts =
-      `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}` +
-      `_${pad(now.getHours())}${pad(now.getMinutes())}`;
-    const safeName = (selectedAgent?.name || "chat")
-      .toLowerCase()
-      .replace(/[^a-z0-9]+/g, "_")
-      .replace(/^_+|_+$/g, "");
-    return `${safeName || "chat"}_${ts}.docx`;
-  };
-
-  const parseFilenameFromHeader = (header: string | null): string | null => {
-    if (!header) return null;
-    const utf8 = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header);
-    if (utf8) return decodeURIComponent(utf8[1].trim().replace(/^"|"$/g, ""));
-    const plain = /filename\s*=\s*"?([^";]+)"?/i.exec(header);
-    return plain ? plain[1].trim() : null;
-  };
-
   const handleExport = async (
     exportType: "transcript" | "summary" | "recommendation" = "transcript",
   ) => {
@@ -397,29 +376,11 @@ export default function Chat() {
           export_type: exportType,
         }),
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok || !body.ok) {
         throw new Error(body.error || `HTTP ${res.status}`);
       }
-      const blob = await res.blob();
-      const filename =
-        parseFilenameFromHeader(res.headers.get("Content-Disposition")) ||
-        fallbackFilename();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      toast.success(
-        exportType === "transcript"
-          ? "Transcript exported"
-          : exportType === "summary"
-          ? "Summary exported"
-          : "Recommendation exported",
-      );
+      toast.success(`Saved to Downloads: ${body.filename}`);
     } catch (e: any) {
       toast.error("Export failed", { description: e?.message ?? "" });
     } finally {

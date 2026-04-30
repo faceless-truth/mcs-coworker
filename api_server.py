@@ -2252,12 +2252,23 @@ def chat_export():
             return err(error, 500)
         return err(error)
 
-    return send_file(
-        buf,
-        mimetype="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        as_attachment=True,
-        download_name=filename,
-    )
+    # pywebview silently drops blob/Content-Disposition downloads, so write the
+    # docx straight into the user's Downloads folder and return JSON.
+    try:
+        downloads_dir = Path.home() / "Downloads"
+        downloads_dir.mkdir(parents=True, exist_ok=True)
+        filepath = downloads_dir / filename
+        buf.seek(0)
+        filepath.write_bytes(buf.read())
+    except Exception as e:
+        logger.exception("Failed to write chat export to Downloads")
+        return err(f"Failed to save export: {e}", 500)
+
+    return jsonify({
+        "ok": True,
+        "path": str(filepath),
+        "filename": filename,
+    })
 
 
 # ── SharePoint ────────────────────────────────────────────────────────────────
