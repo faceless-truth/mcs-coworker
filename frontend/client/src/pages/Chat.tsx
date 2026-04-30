@@ -197,8 +197,66 @@ export default function Chat() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Save the conversation when the window is about to unload (app close,
+  // refresh). sendBeacon is fire-and-forget and survives page teardown.
+  useEffect(() => {
+    const onBeforeUnload = () => {
+      const agent = agents.find(a => a.id === selectedAgentId);
+      persistConversation(
+        messages,
+        selectedAgentId,
+        agent?.name || "General Chat",
+        clientName,
+        entityName,
+        true,
+      );
+    };
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [messages, selectedAgentId, agents, clientName, entityName]);
+
+  const persistConversation = (
+    msgs: Message[],
+    agentId: string,
+    agentName: string,
+    client: string,
+    entity: string,
+    useBeacon = false,
+  ) => {
+    if (msgs.length <= 1) return;
+    const payload = {
+      messages: msgs.map(m => ({ role: m.role, content: m.content })),
+      agent_id: agentId,
+      agent_name: agentName,
+      client_name: client.trim(),
+      entity_name: entity.trim(),
+    };
+    const url = "http://127.0.0.1:7842/api/chat/save-conversation";
+    if (useBeacon && navigator.sendBeacon) {
+      navigator.sendBeacon(
+        url,
+        new Blob([JSON.stringify(payload)], { type: "application/json" }),
+      );
+      return;
+    }
+    fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+      keepalive: true,
+    }).catch(() => {});
+  };
+
   const handleAgentChange = (newId: string) => {
     if (newId === selectedAgentId) return;
+    const outgoing = agents.find(a => a.id === selectedAgentId);
+    persistConversation(
+      messages,
+      selectedAgentId,
+      outgoing?.name || "General Chat",
+      clientName,
+      entityName,
+    );
     const agent = agents.find(a => a.id === newId);
     setSelectedAgentId(newId);
     if (agent) toast(`Switched to ${agent.name} — conversation cleared.`);

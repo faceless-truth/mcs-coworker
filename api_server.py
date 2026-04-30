@@ -2271,6 +2271,69 @@ def chat_export():
     })
 
 
+@app.route("/api/chat/save-conversation", methods=["POST"])
+def save_conversation():
+    """Persist an entire chat conversation to the memory store.
+
+    Called from the frontend when the user switches agents or closes the app
+    so research/analysis turns are searchable later — even when no client
+    name was supplied (filed under `_general` in that case).
+    """
+    data = request.get_json(silent=True) or {}
+    messages = data.get("messages") or []
+    agent_id = (data.get("agent_id") or "general").strip() or "general"
+    agent_name = (data.get("agent_name") or "General Chat").strip() or "General Chat"
+    client_name = (data.get("client_name") or "").strip()
+    entity_name = (data.get("entity_name") or "").strip() or ""
+
+    if not isinstance(messages, list) or not messages:
+        return jsonify({"ok": True, "saved": 0})
+
+    store = _get_memory_store()
+    if store is None:
+        return jsonify({"ok": True, "saved": 0})
+
+    try:
+        from client_utils import normalise_client_name
+        normalised = normalise_client_name(client_name) if client_name else "_general"
+    except Exception:
+        normalised = client_name or "_general"
+
+    parts: list[str] = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        role = msg.get("role", "")
+        content = msg.get("content", "")
+        if not isinstance(content, str):
+            content = str(content)
+        snippet = content[:500]
+        if role == "user":
+            parts.append(f"Q: {snippet}")
+        elif role == "assistant":
+            parts.append(f"A: {snippet}")
+
+    full_summary = f"[{agent_name} conversation]\n" + "\n".join(parts)
+
+    try:
+        store.store_client_interaction(
+            client_name=normalised,
+            entity_name=entity_name,
+            interaction_type="ai_chat_conversation",
+            summary=full_summary[:2000],
+            metadata={
+                "agent_id": agent_id,
+                "agent_name": agent_name,
+                "message_count": len(messages),
+            },
+        )
+    except Exception as e:
+        logger.warning(f"save_conversation: store_client_interaction failed: {e}")
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    return jsonify({"ok": True, "saved": 1})
+
+
 # ── SharePoint ────────────────────────────────────────────────────────────────
 @app.route("/api/sharepoint/test", methods=["POST"])
 def test_sharepoint():
