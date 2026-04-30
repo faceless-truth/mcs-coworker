@@ -595,6 +595,31 @@ class GraphClient:
         r.raise_for_status()
         return r.json().get("value", [])
 
+    def get_attachment_metadata(self, message_id: str) -> list[dict]:
+        """Return lightweight attachment metadata (name, size, content type) for
+        a message — no contentBytes payload. Used by plugins that just need to
+        know whether files are attached and what they are called, so Claude
+        doesn't ask the sender to re-send files that are already there."""
+        url = (
+            f"{GRAPH_BASE}/me/messages/{message_id}/attachments"
+            f"?$select=name,size,contentType"
+        )
+        try:
+            r = requests.get(url, headers=self._headers(), timeout=30)
+            r.raise_for_status()
+            value = r.json().get("value", [])
+        except Exception as e:
+            logger.warning("get_attachment_metadata(%s) failed: %s", message_id, e)
+            return []
+        return [
+            {
+                "name": att.get("name", "unknown"),
+                "size": att.get("size", 0),
+                "content_type": att.get("contentType", ""),
+            }
+            for att in value
+        ]
+
     def download_attachment(self, message_id: str, attachment_id: str,
                            save_dir: str) -> str:
         """Download a specific attachment and save to save_dir.

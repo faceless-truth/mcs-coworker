@@ -175,6 +175,8 @@ class SmartEmailResponderPlugin(AgentPlugin):
                 skipped += 1
                 continue
 
+            attachment_info = self._build_attachment_info(graph, email, body_preview)
+
             try:
                 reply_body = self._ask_claude(
                     claude=claude,
@@ -182,6 +184,7 @@ class SmartEmailResponderPlugin(AgentPlugin):
                     subject=subject,
                     sender=sender,
                     body=body_preview,
+                    attachment_info=attachment_info,
                     kb_block=kb_block,
                     practice_name=practice_name,
                     user_name=user_name,
@@ -411,6 +414,55 @@ class SmartEmailResponderPlugin(AgentPlugin):
             return "(knowledge base is empty)"
         return "\n\n".join(lines)
 
+    @staticmethod
+    def _build_attachment_info(graph, email: dict, body_preview: str) -> str:
+        """Return a string describing the email's attachments for Claude.
+
+        Three cases:
+          1. Email has attachments → list filename(s) and sizes, tell Claude
+             they are confirmed present so it doesn't ask the sender to re-send.
+          2. Body mentions attachments but message has none → tell Claude it
+             may politely ask the sender to re-send. (This is the ONLY case
+             where mentioning missing attachments is allowed.)
+          3. Neither → empty string, Claude shouldn't mention attachments.
+        """
+        message_id = email.get("id")
+        has_attachments = bool(email.get("hasAttachments", False))
+
+        if has_attachments and message_id:
+            try:
+                attachments = graph.get_attachment_metadata(message_id)
+            except Exception:
+                attachments = []
+            if attachments:
+                att_list = ", ".join(
+                    f"{att.get('name', 'unknown')} ({(att.get('size', 0) or 0) // 1024} KB)"
+                    for att in attachments
+                )
+                return (
+                    f"\n\nATTACHMENT INFO: This email has {len(attachments)} "
+                    f"attachment(s): {att_list}. The attachments are confirmed "
+                    f"present in the email — do NOT tell the sender their "
+                    f"attachments are missing or ask them to re-send. When "
+                    f"acknowledging, reference them naturally (e.g. \"Thank "
+                    f"you for sending through the [filename]\")."
+                )
+
+        body_lc = (body_preview or "").lower()
+        mentions_attachment = any(
+            kw in body_lc
+            for kw in ("attached", "attachment", "enclosed", "find attached")
+        )
+        if not has_attachments and mentions_attachment:
+            return (
+                "\n\nATTACHMENT INFO: The sender mentions attachments in their "
+                "email, but no attachments were found on this message. It may "
+                "be appropriate to politely ask the sender to re-send with the "
+                "files attached."
+            )
+
+        return ""
+
     def _ask_claude(
         self,
         *,
@@ -419,6 +471,7 @@ class SmartEmailResponderPlugin(AgentPlugin):
         subject: str,
         sender: str,
         body: str,
+        attachment_info: str,
         kb_block: str,
         practice_name: str,
         user_name: str,
@@ -450,6 +503,16 @@ class SmartEmailResponderPlugin(AgentPlugin):
             f"<URL>\" rather than pasting a raw URL on its own line. The "
             f"system automatically converts plain-text URLs to clickable "
             f"hyperlinks, so you do not need to add HTML anchor tags.\n\n"
+            f"ATTACHMENT HANDLING\n"
+            f"-------------------\n"
+            f"- If the email metadata confirms attachments are present, "
+            f"acknowledge receipt of the files by name.\n"
+            f"- Never tell the sender their attachments are missing when the "
+            f"system confirms they are attached.\n"
+            f"- If the email mentions attachments but no attachment metadata "
+            f"is provided, you may politely ask the sender to confirm.\n"
+            f"- When acknowledging attachments, reference them naturally — "
+            f"e.g. \"Thank you for sending through the [filename] documents.\"\n\n"
             f"KNOWLEDGE BASE\n"
             f"==============\n{kb_block}"
         )
@@ -473,10 +536,14 @@ class SmartEmailResponderPlugin(AgentPlugin):
         system += "\n\n" + UNTRUSTED_CONTENT_SYSTEM_PROMPT
         wrapped_body = wrap_untrusted_content(body or "(empty body)", "email_body")
 
+        # ATTACHMENT INFO is system-derived (Graph metadata), not user content,
+        # so it sits OUTSIDE the untrusted_content wrapping. The model should
+        # treat it as a trusted statement of fact about the message.
         user_prompt = (
             f"From: {sender}\n"
             f"Subject: {subject}\n\n"
             f"Body:\n{wrapped_body}"
+            f"{attachment_info or ''}"
         )
 
         response = self.call_claude_with_retry(
