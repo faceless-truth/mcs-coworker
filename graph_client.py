@@ -401,10 +401,17 @@ class GraphClient:
         quoted_body = (draft.get("body") or {}).get("content", "")
         combined = body_html + quoted_body
 
+        # IMPORTANT: this PATCH must contain ONLY the `body` key. createReply
+        # has already set the subject to "RE: <original subject>" — including
+        # `subject` here (even as None or an empty string) blanks it out, and
+        # the draft shows up in Outlook as "(No subject)". Likewise do not add
+        # toRecipients here; createReply inherited those too. If you need to
+        # update something else, do it in a separate PATCH call.
+        patch_payload = {"body": {"contentType": "HTML", "content": combined}}
         update_url = f"{GRAPH_BASE}/me/messages/{draft_id}"
         r2 = requests.patch(
             update_url, headers=self._headers(), timeout=30,
-            json={"body": {"contentType": "HTML", "content": combined}},
+            json=patch_payload,
         )
         r2.raise_for_status()
         return draft_id
