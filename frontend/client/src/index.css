@@ -91,6 +91,17 @@
   .font-mono {
     font-family: 'Geist Mono', 'Courier New', monospace;
   }
+  /* Force text selection inside chat — pywebview/EdgeChromium can suppress
+     selection on some descendants (rendered markdown, code blocks, tables).
+     Accountants need to copy snippets out of AI responses. */
+  .chat-messages,
+  .chat-messages * {
+    user-select: text !important;
+    -webkit-user-select: text !important;
+  }
+  .chat-messages {
+    cursor: text;
+  }
 }
 
 @layer components {

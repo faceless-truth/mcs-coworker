@@ -744,7 +744,7 @@ export default function Chat() {
       )}
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-4">
+      <div className="chat-messages flex-1 overflow-y-auto p-6 space-y-4">
         {messages.map(msg => (
           <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
             <div
