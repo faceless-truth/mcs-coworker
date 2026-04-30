@@ -100,6 +100,8 @@ const CATEGORY_LABELS: Record<string, string> = {
   compliance: "Compliance",
 };
 
+const MAX_FILES_PER_MESSAGE = 50;
+
 function formatBytes(n: number): string {
   if (n < 1024) return `${n} B`;
   if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
@@ -115,6 +117,7 @@ export default function Chat() {
   const [attachedFiles, setAttachedFiles] = useState<ChatFileRef[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState<{ name: string; size: number }[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<{ completed: number; total: number } | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportingType, setExportingType] = useState<"transcript" | "summary" | "recommendation" | null>(null);
@@ -257,13 +260,15 @@ export default function Chat() {
 
   const uploadFiles = async (files: File[]) => {
     if (files.length === 0) return;
-    if (attachedFiles.length + files.length > 5) {
-      toast.error("Max 5 files per message");
+    if (attachedFiles.length + files.length > MAX_FILES_PER_MESSAGE) {
+      toast.error(`Max ${MAX_FILES_PER_MESSAGE} files per message`);
       return;
     }
     setUploading(true);
     setUploadingFiles(files.map(f => ({ name: f.name, size: f.size })));
+    setUploadProgress({ completed: 0, total: files.length });
     try {
+      let completed = 0;
       for (const f of files) {
         try {
           const ref = await uploadChatFile(f);
@@ -271,12 +276,15 @@ export default function Chat() {
         } catch (e: any) {
           toast.error(`Upload failed: ${f.name}`, { description: e?.message ?? "" });
         } finally {
+          completed += 1;
+          setUploadProgress({ completed, total: files.length });
           setUploadingFiles(prev => prev.filter(p => p.name !== f.name));
         }
       }
     } finally {
       setUploading(false);
       setUploadingFiles([]);
+      setUploadProgress(null);
     }
   };
 
@@ -797,7 +805,12 @@ export default function Chat() {
       {/* Attached-file chips (uploaded + in-progress) */}
       {(attachedFiles.length > 0 || uploadingFiles.length > 0) && (
         <div className="px-6 pb-2">
-          <div className="flex flex-wrap gap-1.5">
+          {uploadProgress && uploadProgress.total > 1 && (
+            <div className="text-xs text-slate-500 mb-1.5">
+              Uploading {uploadProgress.completed} of {uploadProgress.total} files…
+            </div>
+          )}
+          <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto">
             {attachedFiles.map(f => (
               <span
                 key={f.id}
@@ -847,9 +860,9 @@ export default function Chat() {
               />
               <button
                 onClick={() => fileInputRef.current?.click()}
-                disabled={uploading || attachedFiles.length >= 5}
+                disabled={uploading || attachedFiles.length >= MAX_FILES_PER_MESSAGE}
                 className="flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-slate-500 hover:text-blue-600 hover:bg-slate-100 transition-all disabled:opacity-40"
-                title={uploading ? "Uploading..." : "Attach files"}
+                title={uploading ? "Uploading..." : `Attach files (max ${MAX_FILES_PER_MESSAGE})`}
               >
                 <Paperclip className="w-4 h-4" />
               </button>

@@ -106,7 +106,17 @@ CHAT_UPLOAD_DIR = config.DATA_DIR / "chat_uploads"
 CHAT_UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 MAX_UPLOAD_SIZE = 25 * 1024 * 1024   # 25 MB per file
-MAX_UPLOADS_PER_MESSAGE = 5
+MAX_UPLOADS_PER_MESSAGE = 50
+# When more than this many files are attached we switch PDFs from native
+# document blocks (which are huge) to extracted-text blocks. Tuned for the
+# ATO Correspondence batch flow.
+BATCH_MODE_THRESHOLD = 10
+# Hard cap on the combined size of file content blocks. Above this we drop
+# the oldest files and warn the caller.
+MAX_TOTAL_FILE_CONTENT_CHARS = 200_000
+# Per-PDF text extraction caps used in batch mode.
+PDF_BATCH_MAX_PAGES = 5
+PDF_BATCH_MAX_CHARS = 10_000
 ALLOWED_UPLOAD_EXTENSIONS = {
     ".pdf", ".docx", ".xlsx", ".csv", ".txt",
     ".jpg", ".jpeg", ".png", ".gif",
@@ -1014,19 +1024,46 @@ def upload_chat_file():
     })
 
 
-def _build_file_content_blocks(file_refs: list) -> list:
+def _extract_pdf_text(file_path, max_pages: int = PDF_BATCH_MAX_PAGES) -> str:
+    """Extract plain text from a PDF using pdfminer.six, capped at max_pages."""
+    from pdfminer.high_level import extract_text as pdf_extract
+    return pdf_extract(str(file_path), maxpages=max_pages) or ""
+
+
+def _block_text_len(block: dict) -> int:
+    """Approximate the character cost of a content block for the total cap."""
+    if block.get("type") == "text":
+        return len(block.get("text", ""))
+    src = block.get("source") or {}
+    data = src.get("data")
+    if isinstance(data, str):
+        return len(data)
+    return 0
+
+
+def _build_file_content_blocks(file_refs: list) -> tuple[list, list[str]]:
     """Convert frontend file references into Anthropic content blocks.
 
-    PDFs → `document` blocks (Claude's native PDF understanding).
-    Images → `image` blocks (base64).
-    Spreadsheets / CSV / Word / text → inline `text` blocks wrapped in
-    <uploaded_file name="..."> tags.
+    Returns `(blocks, notes)` — `notes` is a list of warning strings to surface
+    to the caller (e.g. "skipped foo.pdf — could not read", "trimmed oldest 3
+    files to fit context window").
 
-    Capped at MAX_UPLOADS_PER_MESSAGE and 100 KB of extracted text per file to
-    bound token spend per call.
+    Single-shot mode (≤ BATCH_MODE_THRESHOLD files):
+      PDFs → `document` blocks (Claude's native PDF understanding).
+      Images → `image` blocks (base64).
+      Spreadsheets / CSV / Word / text → inline `text` blocks.
+
+    Batch mode (> BATCH_MODE_THRESHOLD files):
+      PDFs → extracted text blocks (first PDF_BATCH_MAX_PAGES pages,
+      capped at PDF_BATCH_MAX_CHARS chars). Native document blocks would
+      blow past Claude's context window when 50 ATO PDFs land at once.
     """
+    refs = (file_refs or [])[:MAX_UPLOADS_PER_MESSAGE]
+    batch_mode = len(refs) > BATCH_MODE_THRESHOLD
     blocks: list = []
-    for file_ref in (file_refs or [])[:MAX_UPLOADS_PER_MESSAGE]:
+    notes: list[str] = []
+
+    for file_ref in refs:
         file_id = file_ref.get("id")
         ext = (file_ref.get("type") or "").lower()
         if not file_id or not ext:
@@ -1035,22 +1072,33 @@ def _build_file_content_blocks(file_refs: list) -> list:
         file_path = CHAT_UPLOAD_DIR / f"{file_id}{ext}"
         if not file_path.exists():
             logger.warning(f"Chat file ref missing on disk: {file_path}")
+            notes.append(f"Could not process: {file_ref.get('name', file_id)} (missing on disk)")
             continue
 
         name = file_ref.get("name", file_path.name)
 
         try:
             if ext == ".pdf":
-                with open(file_path, "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode("ascii")
-                blocks.append({
-                    "type": "document",
-                    "source": {
-                        "type": "base64",
-                        "media_type": "application/pdf",
-                        "data": b64,
-                    },
-                })
+                if batch_mode:
+                    text = _extract_pdf_text(file_path, max_pages=PDF_BATCH_MAX_PAGES)
+                    if not text.strip():
+                        notes.append(f"Could not process: {name} (no extractable text)")
+                        continue
+                    blocks.append({
+                        "type": "text",
+                        "text": f'<uploaded_file name="{name}">\n{text[:PDF_BATCH_MAX_CHARS]}\n</uploaded_file>',
+                    })
+                else:
+                    with open(file_path, "rb") as f:
+                        b64 = base64.b64encode(f.read()).decode("ascii")
+                    blocks.append({
+                        "type": "document",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "application/pdf",
+                            "data": b64,
+                        },
+                    })
 
             elif ext in (".jpg", ".jpeg", ".png", ".gif"):
                 with open(file_path, "rb") as f:
@@ -1106,8 +1154,22 @@ def _build_file_content_blocks(file_refs: list) -> list:
 
         except Exception as e:
             logger.error(f"Failed to read {ext} file {name}: {e}", exc_info=True)
+            notes.append(f"Could not process: {name} ({e.__class__.__name__})")
 
-    return blocks
+    # Total content cap: drop oldest blocks until we're under the limit.
+    total = sum(_block_text_len(b) for b in blocks)
+    dropped = 0
+    while total > MAX_TOTAL_FILE_CONTENT_CHARS and len(blocks) > 1:
+        removed = blocks.pop(0)
+        total -= _block_text_len(removed)
+        dropped += 1
+    if dropped:
+        notes.append(
+            f"Dropped {dropped} oldest file(s) — combined content exceeded "
+            f"{MAX_TOTAL_FILE_CONTENT_CHARS:,} characters."
+        )
+
+    return blocks, notes
 
 
 @app.route("/api/agents", methods=["GET"])
@@ -1173,7 +1235,7 @@ def chat():
 
     # Build file content blocks from any attachments referenced in this call.
     attached_files = body.get("files", []) or []
-    file_content_blocks = _build_file_content_blocks(attached_files)
+    file_content_blocks, file_notes = _build_file_content_blocks(attached_files)
 
     # If there are file blocks, attach them to the LAST user message by
     # converting its string content into a list of blocks: [files..., text].
@@ -1182,6 +1244,13 @@ def chat():
         if last.get("role") == "user":
             orig = last.get("content", "")
             text = orig if isinstance(orig, str) else ""
+            if file_notes:
+                text = (
+                    "[System notes about uploaded files:\n- "
+                    + "\n- ".join(file_notes)
+                    + "]\n\n"
+                    + text
+                )
             last["content"] = file_content_blocks + [{"type": "text", "text": text}]
 
     try:
