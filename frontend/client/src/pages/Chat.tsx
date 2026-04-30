@@ -1,17 +1,15 @@
 // Design: Refined Dark Professional — AI Chat page (specialist agents)
 
 import { useState, useRef, useEffect, useMemo } from "react";
-import { Bot, Send, User, Paperclip, X, FileText, Download, Copy, Check, FolderUp } from "lucide-react";
+import { Bot, Send, User, Paperclip, X, FileText, Download, Copy, Check } from "lucide-react";
 import { toast } from "sonner";
 import {
   sendChatMessage,
   fetchAgents,
   fetchClientNames,
-  fetchSettings,
   uploadChatFile,
   type ChatFileRef,
 } from "@/lib/api";
-import SharePointFolderPicker from "@/components/SharePointFolderPicker";
 
 interface Message {
   id: number;
@@ -119,9 +117,7 @@ export default function Chat() {
   const [uploadingFiles, setUploadingFiles] = useState<{ name: string; size: number }[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
-  const [exportingType, setExportingType] = useState<"transcript" | "summary" | "recommendation" | "sharepoint" | null>(null);
-  const [sharepointConfigured, setSharepointConfigured] = useState(false);
-  const [sharepointPickerOpen, setSharepointPickerOpen] = useState(false);
+  const [exportingType, setExportingType] = useState<"transcript" | "summary" | "recommendation" | null>(null);
   const [clientName, setClientName] = useState("");
   const [entityName, setEntityName] = useState("");
   const [clientNamesList, setClientNamesList] = useState<string[]>([]);
@@ -164,11 +160,6 @@ export default function Chat() {
         // Autocomplete falls back to empty — typing a new name still works.
       }
     })();
-  }, []);
-
-  // SharePoint config is now hardcoded for MC&S, so always treat it as configured.
-  useEffect(() => {
-    setSharepointConfigured(true);
   }, []);
 
   // Seed a greeting whenever the selected agent changes.
@@ -449,96 +440,6 @@ export default function Chat() {
     }
   };
 
-  const openSharepointPicker = () => {
-    const firstUserIdx = messages.findIndex(m => m.role === "user");
-    const convo = firstUserIdx >= 0 ? messages.slice(firstUserIdx) : [];
-    if (convo.length === 0) {
-      toast.error("Nothing to export yet");
-      return;
-    }
-    if (!clientName.trim()) {
-      toast.error("Enter a client name to save to SharePoint");
-      return;
-    }
-    if (!sharepointConfigured) {
-      toast.error("Configure SharePoint in Settings first");
-      return;
-    }
-    setExportMenuOpen(false);
-    setSharepointPickerOpen(true);
-  };
-
-  const handleSharepointPickerSelect = async (
-    subfolder: string,
-    exportType: "transcript" | "summary" | "recommendation",
-  ) => {
-    const agentName = selectedAgent?.name || "Assistant";
-    const firstUserIdx = messages.findIndex(m => m.role === "user");
-    const convo = firstUserIdx >= 0 ? messages.slice(firstUserIdx) : [];
-    setSharepointPickerOpen(false);
-    setExportingType("sharepoint");
-    if (exportType === "summary") {
-      toast("Generating summary…", {
-        description: "Claude is condensing the conversation — this takes a few seconds.",
-      });
-    }
-    try {
-      const res = await fetch("http://127.0.0.1:7842/api/chat/export/sharepoint", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          agent_name: agentName,
-          agent_id: selectedAgentId,
-          messages: convo.map(m => ({ role: m.role, content: m.content })),
-          client_name: clientName.trim(),
-          entity_name: subfolder ? null : entityName.trim() || null,
-          export_type: exportType,
-          subfolder,
-        }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (!res.ok || !body.ok) {
-        throw new Error(body.error || `HTTP ${res.status}`);
-      }
-      const fullPath = `${clientName.trim()}/${subfolder ? subfolder + "/" : ""}${body.filename}`;
-      toast.success(`Saved to SharePoint: ${fullPath}`, {
-        action: body.url
-          ? { label: "Open", onClick: () => window.open(body.url, "_blank") }
-          : undefined,
-      });
-    } catch (e: any) {
-      // Fall back to a Downloads-folder save so the user doesn't lose the
-      // file if SharePoint is unreachable.
-      try {
-        const fallback = await fetch("http://127.0.0.1:7842/api/chat/export", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            agent_name: agentName,
-            agent_id: selectedAgentId,
-            messages: convo.map(m => ({ role: m.role, content: m.content })),
-            client_name: clientName.trim() || null,
-            entity_name: entityName.trim() || null,
-            export_type: exportType,
-          }),
-        });
-        const fbody = await fallback.json().catch(() => ({}));
-        if (fallback.ok && fbody.ok) {
-          toast.error(
-            `SharePoint upload failed — saved to Downloads instead: ${fbody.filename}`,
-            { description: e?.message ?? "" },
-          );
-          return;
-        }
-      } catch {
-        /* fall through */
-      }
-      toast.error("SharePoint save failed", { description: e?.message ?? "" });
-    } finally {
-      setExportingType(null);
-    }
-  };
-
   // Scan every assistant message for structured headings — the
   // recommendation may have been produced before a follow-up turn,
   // so checking only the last message would falsely grey the export.
@@ -657,7 +558,6 @@ export default function Chat() {
               >
                 <Download className="w-3.5 h-3.5" />
                 {exportingType === "summary" ? "Generating summary…"
-                  : exportingType === "sharepoint" ? "Saving to SharePoint…"
                   : exportingType ? "Exporting…"
                   : "Export"}
                 <span className="text-slate-400">▾</span>
@@ -691,7 +591,7 @@ export default function Chat() {
                     title={hasStructuredRecommendation
                       ? undefined
                       : "No structured recommendation to export — ask the specialist to produce one first."}
-                    className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 border-b border-border disabled:opacity-50 disabled:hover:bg-white disabled:cursor-not-allowed"
+                    className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 disabled:opacity-50 disabled:hover:bg-white disabled:cursor-not-allowed"
                   >
                     <div className="font-semibold text-slate-700">Download Recommendation (.docx)</div>
                     <div className="text-slate-500">
@@ -700,37 +600,6 @@ export default function Chat() {
                         : "Available once the specialist produces a structured doc"}
                     </div>
                   </button>
-                  {(() => {
-                    const sharepointDisabled = !clientName.trim() || !sharepointConfigured;
-                    const sharepointTooltip = !clientName.trim()
-                      ? "Enter a client name to save to SharePoint"
-                      : !sharepointConfigured
-                      ? "Configure SharePoint in Settings first"
-                      : undefined;
-                    return (
-                      <button
-                        type="button"
-                        onMouseDown={e => {
-                          if (sharepointDisabled) return;
-                          e.preventDefault();
-                          openSharepointPicker();
-                        }}
-                        disabled={sharepointDisabled}
-                        title={sharepointTooltip}
-                        className="w-full text-left px-3 py-2 text-xs hover:bg-blue-50 disabled:opacity-50 disabled:hover:bg-white disabled:cursor-not-allowed"
-                      >
-                        <div className="font-semibold text-slate-700 flex items-center gap-1.5">
-                          <FolderUp className="w-3.5 h-3.5" />
-                          Save to Client Folder (SharePoint)
-                        </div>
-                        <div className="text-slate-500">
-                          {sharepointDisabled
-                            ? sharepointTooltip
-                            : `Choose a subfolder under /${clientName.trim()}/`}
-                        </div>
-                      </button>
-                    );
-                  })()}
                 </div>
               )}
             </div>
@@ -1021,14 +890,6 @@ export default function Chat() {
           )}
         </div>
       </div>
-      <SharePointFolderPicker
-        isOpen={sharepointPickerOpen}
-        clientName={clientName.trim()}
-        defaultExportType={hasStructuredRecommendation ? "recommendation" : "transcript"}
-        hasStructuredRecommendation={hasStructuredRecommendation}
-        onCancel={() => setSharepointPickerOpen(false)}
-        onSelect={handleSharepointPickerSelect}
-      />
     </div>
   );
 }
