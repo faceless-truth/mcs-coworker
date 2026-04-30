@@ -2364,6 +2364,80 @@ def list_sharepoint_folders():
     return jsonify({"ok": True, "files": files})
 
 
+@app.route("/api/sharepoint/browse", methods=["GET"])
+def browse_sharepoint():
+    """Browse folders within a client's SharePoint directory.
+
+    Query params:
+      client: client display name (required)
+      path:   optional subfolder path under the client folder, e.g.
+              "Tax Returns/2026"
+    """
+    client_name = request.args.get("client", "").strip()
+    sub_path = request.args.get("path", "").strip().strip("/")
+    if not client_name:
+        return jsonify({"ok": False, "error": "Client name required"}), 400
+
+    graph = _get_graph()
+    if graph is None:
+        return jsonify({"ok": False, "error": "Graph client not initialised"}), 500
+
+    try:
+        from client_utils import normalise_client_name
+        normalised = normalise_client_name(client_name)
+    except Exception:
+        normalised = client_name
+
+    full_path = normalised
+    if sub_path:
+        full_path += f"/{sub_path}"
+
+    items = graph.list_sharepoint_path(full_path)
+    folders = [item for item in items if item.get("is_folder")]
+    files = [item for item in items if not item.get("is_folder")]
+    return jsonify({
+        "ok": True,
+        "current_path": sub_path,
+        "client_name": normalised,
+        "folders": folders,
+        "files": files,
+    })
+
+
+@app.route("/api/sharepoint/create-folder", methods=["POST"])
+def create_sharepoint_folder():
+    """Create a new folder under a client's SharePoint folder tree."""
+    data = request.get_json(silent=True) or {}
+    client_name = (data.get("client_name") or "").strip()
+    sub_path = (data.get("path") or "").strip().strip("/")
+    folder_name = (data.get("folder_name") or "").strip()
+
+    if not client_name:
+        return jsonify({"ok": False, "error": "Client name required"}), 400
+    if not folder_name:
+        return jsonify({"ok": False, "error": "Folder name required"}), 400
+
+    graph = _get_graph()
+    if graph is None:
+        return jsonify({"ok": False, "error": "Graph client not initialised"}), 500
+
+    try:
+        from client_utils import normalise_client_name
+        normalised = normalise_client_name(client_name)
+    except Exception:
+        normalised = client_name
+
+    parent = normalised
+    if sub_path:
+        parent += f"/{sub_path}"
+
+    created = graph.create_sharepoint_folder(parent, folder_name)
+    if not created:
+        return jsonify({"ok": False, "error": "Failed to create folder (it may already exist)"}), 500
+    new_path = f"{sub_path}/{folder_name}" if sub_path else folder_name
+    return jsonify({"ok": True, "path": new_path})
+
+
 @app.route("/api/chat/export/sharepoint", methods=["POST"])
 def export_to_sharepoint():
     """Export a chat conversation directly to a client's SharePoint folder."""
@@ -2373,6 +2447,8 @@ def export_to_sharepoint():
     client_name = (body.get("client_name") or "").strip()
     entity_name = (body.get("entity_name") or "").strip() or None
     export_type = (body.get("export_type") or "transcript").lower()
+    subfolder_raw = (body.get("subfolder") or "").strip().strip("/")
+    subfolder = subfolder_raw or "CoWorker Exports"
 
     if not client_name:
         return jsonify({"ok": False, "error": "Client name is required to save to SharePoint"}), 400
@@ -2398,15 +2474,24 @@ def export_to_sharepoint():
         status = 400 if "recommendation to export" in error else 500
         return jsonify({"ok": False, "error": error}), status
 
+    # When the picker supplies a subfolder, treat it as the full path under
+    # the client folder — `entity_name` is ignored so the picker is the
+    # single source of truth for the destination.
+    upload_entity = None if subfolder_raw else entity_name
     url = graph.upload_to_sharepoint(
         file_content=buf.read(),
         filename=filename,
         client_name=client_name,
-        entity_name=entity_name,
-        subfolder="CoWorker Exports",
+        entity_name=upload_entity,
+        subfolder=subfolder,
     )
     if url:
-        return jsonify({"ok": True, "url": url, "filename": filename})
+        return jsonify({
+            "ok": True,
+            "url": url,
+            "filename": filename,
+            "subfolder": subfolder,
+        })
     return jsonify({"ok": False, "error": "Failed to upload to SharePoint. Check connection settings."}), 500
 
 

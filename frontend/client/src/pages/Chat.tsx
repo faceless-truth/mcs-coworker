@@ -11,6 +11,7 @@ import {
   uploadChatFile,
   type ChatFileRef,
 } from "@/lib/api";
+import SharePointFolderPicker from "@/components/SharePointFolderPicker";
 
 interface Message {
   id: number;
@@ -120,6 +121,7 @@ export default function Chat() {
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportingType, setExportingType] = useState<"transcript" | "summary" | "recommendation" | "sharepoint" | null>(null);
   const [sharepointConfigured, setSharepointConfigured] = useState(false);
+  const [sharepointPickerOpen, setSharepointPickerOpen] = useState(false);
   const [clientName, setClientName] = useState("");
   const [entityName, setEntityName] = useState("");
   const [clientNamesList, setClientNamesList] = useState<string[]>([]);
@@ -447,8 +449,7 @@ export default function Chat() {
     }
   };
 
-  const handleSharepointExport = async () => {
-    const agentName = selectedAgent?.name || "Assistant";
+  const openSharepointPicker = () => {
     const firstUserIdx = messages.findIndex(m => m.role === "user");
     const convo = firstUserIdx >= 0 ? messages.slice(firstUserIdx) : [];
     if (convo.length === 0) {
@@ -463,10 +464,24 @@ export default function Chat() {
       toast.error("Configure SharePoint in Settings first");
       return;
     }
-    // Pick the most useful export type for the file record:
-    //   recommendation if the specialist produced one, otherwise transcript.
-    const exportType = hasStructuredRecommendation ? "recommendation" : "transcript";
+    setExportMenuOpen(false);
+    setSharepointPickerOpen(true);
+  };
+
+  const handleSharepointPickerSelect = async (
+    subfolder: string,
+    exportType: "transcript" | "summary" | "recommendation",
+  ) => {
+    const agentName = selectedAgent?.name || "Assistant";
+    const firstUserIdx = messages.findIndex(m => m.role === "user");
+    const convo = firstUserIdx >= 0 ? messages.slice(firstUserIdx) : [];
+    setSharepointPickerOpen(false);
     setExportingType("sharepoint");
+    if (exportType === "summary") {
+      toast("Generating summary…", {
+        description: "Claude is condensing the conversation — this takes a few seconds.",
+      });
+    }
     try {
       const res = await fetch("http://127.0.0.1:7842/api/chat/export/sharepoint", {
         method: "POST",
@@ -476,25 +491,51 @@ export default function Chat() {
           agent_id: selectedAgentId,
           messages: convo.map(m => ({ role: m.role, content: m.content })),
           client_name: clientName.trim(),
-          entity_name: entityName.trim() || null,
+          entity_name: subfolder ? null : entityName.trim() || null,
           export_type: exportType,
+          subfolder,
         }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok || !body.ok) {
         throw new Error(body.error || `HTTP ${res.status}`);
       }
-      toast.success("Saved to SharePoint", {
-        description: body.filename,
+      const fullPath = `${clientName.trim()}/${subfolder ? subfolder + "/" : ""}${body.filename}`;
+      toast.success(`Saved to SharePoint: ${fullPath}`, {
         action: body.url
           ? { label: "Open", onClick: () => window.open(body.url, "_blank") }
           : undefined,
       });
     } catch (e: any) {
+      // Fall back to a Downloads-folder save so the user doesn't lose the
+      // file if SharePoint is unreachable.
+      try {
+        const fallback = await fetch("http://127.0.0.1:7842/api/chat/export", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            agent_name: agentName,
+            agent_id: selectedAgentId,
+            messages: convo.map(m => ({ role: m.role, content: m.content })),
+            client_name: clientName.trim() || null,
+            entity_name: entityName.trim() || null,
+            export_type: exportType,
+          }),
+        });
+        const fbody = await fallback.json().catch(() => ({}));
+        if (fallback.ok && fbody.ok) {
+          toast.error(
+            `SharePoint upload failed — saved to Downloads instead: ${fbody.filename}`,
+            { description: e?.message ?? "" },
+          );
+          return;
+        }
+      } catch {
+        /* fall through */
+      }
       toast.error("SharePoint save failed", { description: e?.message ?? "" });
     } finally {
       setExportingType(null);
-      setExportMenuOpen(false);
     }
   };
 
@@ -672,7 +713,7 @@ export default function Chat() {
                         onMouseDown={e => {
                           if (sharepointDisabled) return;
                           e.preventDefault();
-                          handleSharepointExport();
+                          openSharepointPicker();
                         }}
                         disabled={sharepointDisabled}
                         title={sharepointTooltip}
@@ -685,7 +726,7 @@ export default function Chat() {
                         <div className="text-slate-500">
                           {sharepointDisabled
                             ? sharepointTooltip
-                            : `Files into /${clientName.trim()}/CoWorker Exports/`}
+                            : `Choose a subfolder under /${clientName.trim()}/`}
                         </div>
                       </button>
                     );
@@ -980,6 +1021,14 @@ export default function Chat() {
           )}
         </div>
       </div>
+      <SharePointFolderPicker
+        isOpen={sharepointPickerOpen}
+        clientName={clientName.trim()}
+        defaultExportType={hasStructuredRecommendation ? "recommendation" : "transcript"}
+        hasStructuredRecommendation={hasStructuredRecommendation}
+        onCancel={() => setSharepointPickerOpen(false)}
+        onSelect={handleSharepointPickerSelect}
+      />
     </div>
   );
 }

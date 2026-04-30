@@ -1206,6 +1206,65 @@ class GraphClient:
             ]
         return []
 
+    def list_sharepoint_path(self, path: str) -> list:
+        """List items at an arbitrary path under the client_base folder.
+
+        `path` is a forward-slash subpath, e.g. "Korkie, Gordon/Tax Returns".
+        An empty path lists the top-level client folders. Powers the
+        in-app SharePoint folder picker.
+        """
+        site_id = self.get_sharepoint_site_id()
+        if not site_id:
+            return []
+        drive_id = self.get_sharepoint_drive_id(site_id)
+        if not drive_id:
+            return []
+        config = self._get_sharepoint_config()
+        folder_path = config["client_base"]
+        if path:
+            folder_path += f"/{path.strip('/')}"
+        url = f"{GRAPH_BASE}/drives/{drive_id}/root:/{folder_path}:/children"
+        result = self._make_request("GET", url)
+        if not result or "value" not in result:
+            return []
+        return [
+            {
+                "name": item["name"],
+                "size": item.get("size", 0),
+                "modified": item.get("lastModifiedDateTime", ""),
+                "url": item.get("webUrl", ""),
+                "is_folder": "folder" in item,
+            }
+            for item in result["value"]
+        ]
+
+    def create_sharepoint_folder(self, parent_path: str, folder_name: str) -> bool:
+        """Create a new folder at `client_base/{parent_path}/{folder_name}`.
+
+        `parent_path` is the slash-joined path under client_base (may be
+        empty to create at the top-level). Returns True on success.
+        """
+        if not folder_name or not folder_name.strip():
+            return False
+        site_id = self.get_sharepoint_site_id()
+        if not site_id:
+            return False
+        drive_id = self.get_sharepoint_drive_id(site_id)
+        if not drive_id:
+            return False
+        config = self._get_sharepoint_config()
+        full_parent = config["client_base"]
+        parent_path = (parent_path or "").strip("/")
+        if parent_path:
+            full_parent += f"/{parent_path}"
+        url = f"{GRAPH_BASE}/drives/{drive_id}/root:/{full_parent}:/children"
+        result = self._make_request("POST", url, json={
+            "name": folder_name.strip(),
+            "folder": {},
+            "@microsoft.graph.conflictBehavior": "fail",
+        })
+        return result is not None and "id" in result
+
     def test_sharepoint_connection(self) -> dict:
         """Test the SharePoint connection using the SAME token path as email.
 
