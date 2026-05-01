@@ -617,6 +617,46 @@ def memory_stats():
         })
 
 
+@app.route("/api/memory/<record_id>", methods=["GET"])
+def get_memory_detail(record_id):
+    """Return the full content + metadata for a single memory entry.
+
+    Used by the Memory page when an entry is expanded so the accountant can
+    read the complete interaction (e.g. an entire AI chat conversation),
+    not just the truncated 300-char preview shown in the list.
+    """
+    store = _get_memory_store()
+    if store is None:
+        return jsonify({"ok": False, "error": "Memory not available"}), 503
+
+    for collection_name in ("interactions", "lessons", "documents"):
+        try:
+            col = store._get_collection(collection_name)
+            result = col.get(
+                ids=[record_id],
+                include=["documents", "metadatas"],
+            )
+        except Exception as e:
+            logger.warning(
+                "memory detail: %s lookup failed: %s", collection_name, e
+            )
+            continue
+        if result and result.get("ids"):
+            docs = result.get("documents") or []
+            metas = result.get("metadatas") or []
+            return jsonify({
+                "ok": True,
+                "entry": {
+                    "id": result["ids"][0],
+                    "content": docs[0] if docs else "",
+                    "metadata": metas[0] if metas else {},
+                    "collection": collection_name,
+                },
+            })
+
+    return jsonify({"ok": False, "error": "Entry not found"}), 404
+
+
 @app.route("/api/memory/<record_id>", methods=["DELETE"])
 def delete_memory(record_id):
     try:
@@ -2428,6 +2468,7 @@ def save_conversation():
         normalised = client_name or "_general"
 
     parts: list[str] = []
+    sanitised: list[dict] = []
     for msg in messages:
         if not isinstance(msg, dict):
             continue
@@ -2435,24 +2476,39 @@ def save_conversation():
         content = msg.get("content", "")
         if not isinstance(content, str):
             content = str(content)
-        snippet = content[:500]
+        # Keep more of each turn so the expanded detail view can show the
+        # complete back-and-forth, not a truncated stub.
+        snippet = content[:4000]
         if role == "user":
             parts.append(f"Q: {snippet}")
+            sanitised.append({"role": "user", "content": snippet})
         elif role == "assistant":
             parts.append(f"A: {snippet}")
+            sanitised.append({"role": "assistant", "content": snippet})
 
     full_summary = f"[{agent_name} conversation]\n" + "\n".join(parts)
+
+    try:
+        full_messages_json = json.dumps(sanitised[:50])
+    except Exception:
+        full_messages_json = "[]"
 
     try:
         store.store_client_interaction(
             client_name=normalised,
             entity_name=entity_name,
             interaction_type="ai_chat_conversation",
-            summary=full_summary[:2000],
+            # 10k cap (was 2k) — Chroma stores the document, and a long
+            # research-style chat easily exceeds the old limit.
+            summary=full_summary[:10000],
             metadata={
                 "agent_id": agent_id,
                 "agent_name": agent_name,
                 "message_count": len(messages),
+                # Structured copy of the conversation so the frontend can
+                # render proper user/assistant turns instead of regexing the
+                # "Q: / A:" summary back apart.
+                "full_messages": full_messages_json,
             },
         )
     except Exception as e:

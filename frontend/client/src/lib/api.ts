@@ -89,6 +89,28 @@ export async function fetchMemoryStats() {
   return apiFetch("/api/memory/stats");
 }
 
+export interface MemoryDetail {
+  id: string;
+  content: string;
+  metadata: Record<string, any>;
+  collection: string;
+}
+
+export async function fetchMemoryDetail(recordId: string): Promise<MemoryDetail | null> {
+  // Bypass apiFetch's `json.data ?? json` unwrap so we can read `entry`
+  // directly off the response body.
+  const token = getApiToken();
+  const res = await fetch(`${BASE}/api/memory/${encodeURIComponent(recordId)}`, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+  });
+  if (!res.ok) return null;
+  const json = await res.json();
+  return json.entry ?? null;
+}
+
 export async function deleteMemory(recordId: string) {
   return apiFetch(`/api/memory/${recordId}`, { method: "DELETE" });
 }
