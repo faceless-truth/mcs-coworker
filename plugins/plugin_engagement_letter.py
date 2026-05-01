@@ -174,6 +174,10 @@ class EngagementLetterPlugin(AgentPlugin):
                     context.graph.flag_email(msg_id)
                 except Exception:
                     pass
+                try:
+                    context.graph.add_category(msg_id, "Drafted")
+                except Exception:
+                    pass
 
             # ── Store in memory ───────────────────────────────────────────────
             if context.memory:

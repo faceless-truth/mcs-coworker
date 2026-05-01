@@ -396,6 +396,10 @@ class NOAProcessorPlugin(AgentPlugin):
                         graph.flag_email(msg_id)
                     except Exception:
                         pass
+                    try:
+                        graph.add_category(msg_id, "Drafted")
+                    except Exception:
+                        pass
                 else:
                     graph.send_email_with_attachments(
                         client_email, reply_subject, reply_body,

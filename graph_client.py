@@ -544,29 +544,43 @@ class GraphClient:
         )
         return result is not None
 
-    def add_category(self, message_id: str, category: str):
-        """Add an Outlook category/label to a message."""
-        url = f"{GRAPH_BASE}/me/messages/{message_id}"
-        r = requests.patch(
-            url, headers=self._headers(), timeout=30, json={"categories": [category]}
-        )
-        r.raise_for_status()
+    def add_category(self, message_id: str, category: str = "Drafted") -> bool:
+        """Add an Outlook category label to a message.
 
-    def remove_category(self, message_id: str, category: str):
-        """Remove a specific Outlook category tag from a message."""
-        # Fetch current categories first, then patch with the tag removed
-        url = f"{GRAPH_BASE}/me/messages/{message_id}"
-        r = requests.get(
-            url, headers=self._headers(), timeout=30,
-            params={"$select": "categories"}
+        Categories show as coloured text labels in the inbox list — used after
+        a draft reply is created so the accountant sees the word "Drafted"
+        next to the flag icon. Outlook auto-creates the category on first use;
+        the colour can be customised by right-clicking the label in Outlook.
+
+        Existing categories are preserved (merged, not overwritten) so this
+        plays nicely with plugins that set domain-specific labels like
+        "NOA - Review Needed".
+        """
+        url = f"{GRAPH_BASE}/me/messages/{message_id}?$select=categories"
+        current = self._make_request("GET", url)
+        categories = current.get("categories", []) if current else []
+        if category not in categories:
+            categories.append(category)
+        patch_url = f"{GRAPH_BASE}/me/messages/{message_id}"
+        result = self._make_request(
+            "PATCH", patch_url, json={"categories": categories}
         )
-        r.raise_for_status()
-        current = r.json().get("categories", [])
-        updated = [c for c in current if c != category]
-        r2 = requests.patch(
-            url, headers=self._headers(), timeout=30, json={"categories": updated}
-        )
-        r2.raise_for_status()
+        return result is not None
+
+    def remove_category(self, message_id: str, category: str = "Drafted") -> bool:
+        """Remove a specific Outlook category from a message, leaving any
+        other categories untouched."""
+        url = f"{GRAPH_BASE}/me/messages/{message_id}?$select=categories"
+        current = self._make_request("GET", url)
+        categories = current.get("categories", []) if current else []
+        if category in categories:
+            categories.remove(category)
+            patch_url = f"{GRAPH_BASE}/me/messages/{message_id}"
+            result = self._make_request(
+                "PATCH", patch_url, json={"categories": categories}
+            )
+            return result is not None
+        return True
 
     # ── Signature ─────────────────────────────────────────────────────────────
 

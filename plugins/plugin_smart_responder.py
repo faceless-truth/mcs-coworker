@@ -238,6 +238,15 @@ class SmartEmailResponderPlugin(AgentPlugin):
                     )
                 except Exception as e:
                     logger.warning("Could not flag email %s: %s", message_id, e)
+                # "Drafted" category gives the inbox a visible text label
+                # alongside the flag icon. Best-effort — the draft and flag
+                # are already in place, so a category failure is non-fatal.
+                try:
+                    graph.add_category(message_id, "Drafted")
+                except Exception as e:
+                    logger.warning(
+                        "Could not add Drafted category to %s: %s", message_id, e
+                    )
                 self._mark_as_processed(message_id, draft_id=draft_id, action="drafted")
                 drafted += 1
                 # Visible notification path for the accountant — shows up
