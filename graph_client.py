@@ -523,15 +523,26 @@ class GraphClient:
         """Get a deeplink to a draft in Outlook Web."""
         return f"https://outlook.office.com/mail/drafts"
 
-    def flag_email(self, message_id: str):
-        """Flag an email for follow-up."""
+    def flag_email(self, message_id: str, flag_status: str = "flagged") -> bool:
+        """Flag an email in Outlook.
+
+        Used after creating a draft reply so the original email shows a flag
+        icon in the inbox — a visual cue for the accountant that there is a
+        draft ready to review. Routed through `_make_request` so a transient
+        Graph error returns False instead of raising and breaking the caller.
+
+        Args:
+            message_id: The Graph API message ID
+            flag_status: 'flagged', 'notFlagged', or 'complete'
+
+        Returns:
+            True if successful, False otherwise.
+        """
         url = f"{GRAPH_BASE}/me/messages/{message_id}"
-        r = requests.patch(
-            url,
-            headers=self._headers(), timeout=30,
-            json={"flag": {"flagStatus": "flagged"}},
+        result = self._make_request(
+            "PATCH", url, json={"flag": {"flagStatus": flag_status}}
         )
-        r.raise_for_status()
+        return result is not None
 
     def add_category(self, message_id: str, category: str):
         """Add an Outlook category/label to a message."""

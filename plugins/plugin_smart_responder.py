@@ -228,6 +228,16 @@ class SmartEmailResponderPlugin(AgentPlugin):
                     graph.mark_as_read(message_id)
                 except Exception as e:
                     context.log(f"🧠 Couldn't mark read '{subject}' after drafting: {e}")
+                # Flag the original so a flag icon appears in the inbox — a
+                # visual cue that a draft reply is waiting. Non-fatal on
+                # failure: the draft has already been created successfully.
+                try:
+                    graph.flag_email(message_id)
+                    logger.info(
+                        "Flagged email %s — draft ready for review", message_id
+                    )
+                except Exception as e:
+                    logger.warning("Could not flag email %s: %s", message_id, e)
                 self._mark_as_processed(message_id, draft_id=draft_id, action="drafted")
                 drafted += 1
                 # Visible notification path for the accountant — shows up

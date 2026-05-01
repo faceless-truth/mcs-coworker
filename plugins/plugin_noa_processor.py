@@ -389,6 +389,13 @@ class NOAProcessorPlugin(AgentPlugin):
                         draft_created=1,
                     )
                     result.drafts_created += 1
+                    # Flag the original NOA email so the accountant can see at
+                    # a glance which inbox items have a draft waiting. Non-
+                    # fatal: the draft has already been created.
+                    try:
+                        graph.flag_email(msg_id)
+                    except Exception:
+                        pass
                 else:
                     graph.send_email_with_attachments(
                         client_email, reply_subject, reply_body,

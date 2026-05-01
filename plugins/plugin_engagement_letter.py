@@ -168,6 +168,12 @@ class EngagementLetterPlugin(AgentPlugin):
                     f"Engagement Letter — {practice}",
                     letter,
                 )
+                # Flag the inbound trigger email so the accountant sees the
+                # draft is ready for review. Non-fatal on failure.
+                try:
+                    context.graph.flag_email(msg_id)
+                except Exception:
+                    pass
 
             # ── Store in memory ───────────────────────────────────────────────
             if context.memory:
