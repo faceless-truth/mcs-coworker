@@ -186,6 +186,19 @@ def init_db():
             draft_id     TEXT,
             action       TEXT
         );
+
+        CREATE TABLE IF NOT EXISTS staff_signatures (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT NOT NULL,
+            title      TEXT,
+            email      TEXT NOT NULL UNIQUE,
+            enabled    INTEGER NOT NULL DEFAULT 1,
+            created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
+            updated_at REAL NOT NULL DEFAULT (strftime('%s','now'))
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_staff_signatures_email
+            ON staff_signatures(LOWER(email));
     """)
 
     # Add display_name column if upgrading from older schema
@@ -250,6 +263,31 @@ def init_db():
         "draft_font_family":       "Aptos, Calibri, sans-serif",
         "draft_font_size":         "11pt",
         "draft_font_color":        "#000000",
+        # Dynamic per-accountant signature — see docs/planning/dynamic_signatures_design.md
+        "signature_mode":          "dynamic",
+        "signature_company":       "MC&S Pty Ltd",
+        "signature_phone":         "(03) 9794 0000",
+        "signature_website_display": "mcands.com.au",
+        "signature_website_url":   "https://www.mcands.com.au",
+        "signature_address_line1": "23 Timor Circuit, Keysborough, Vic 3173",
+        "signature_address_line2": "PO BOX 4440, Dandenong South, VIC, 3164",
+        "signature_instagram_url": "https://www.instagram.com/mcsaccounting",
+        "signature_facebook_url":  "https://www.facebook.com/mcandsaccounting",
+        "signature_linkedin_url":  "",
+        "signature_google_review_url": "https://www.google.com/maps/place//data=!4m3!3m2!1s0x6ad6140f023d542b:0x4be4c0f80d96d34b!12e1?source=g.page.m.ia._&laa=nmx-review-solicitation-ia2",
+        "signature_privacy_text":  (
+            "This email and any attachments are confidential and may be subject "
+            "to copyright, legal or some other professional privilege. They are "
+            "intended solely for the attention and use of the named addressee(s). "
+            "They may only be copied, distributed or disclosed with the consent "
+            "of the copyright owner. If you have received this email by mistake "
+            "or by breach of the confidentiality clause, please notify the sender "
+            "immediately by return email and delete or destroy all copies of the "
+            "email. Any confidentiality, privilege or copyright is not waived or "
+            "lost because this email has been sent to you by mistake. Liability "
+            "limited by a scheme approved under Professional Standards Legislation."
+        ),
+        "signature_seeded":        "0",
     }
     for key, value in defaults.items():
         c.execute(
@@ -281,6 +319,37 @@ def init_db():
         c.executemany(
             "INSERT INTO knowledge_base (category, title, content) VALUES (?, ?, ?)",
             starter_kb,
+        )
+
+    # Pre-seed staff_signatures on first start of dynamic mode. Gated on the
+    # one-shot setting so reinstalls / db restores don't clobber edits the
+    # accountant has made since.
+    seeded_flag = c.execute(
+        "SELECT value FROM settings WHERE key='signature_seeded'"
+    ).fetchone()
+    already_seeded = bool(seeded_flag and seeded_flag["value"] == "1")
+    existing_sigs = c.execute(
+        "SELECT COUNT(*) FROM staff_signatures"
+    ).fetchone()[0]
+    if not already_seeded and existing_sigs == 0:
+        seed_rows = [
+            ("Elio Scarton",   "CPA, Tax Agent",   "elio@mcands.com.au"),
+            ("Vince Mercuri",  None,                "vince@mcands.com.au"),
+            ("Angelo Covelli", None,                "angelo@mcands.com.au"),
+            ("Ross Mercuri",   "CA",                "ross@mcands.com.au"),
+            ("Eliza Lewis",    "Reception",         "reception@mcands.com.au"),
+            ("Brooke Austin",  None,                "brooke@mcands.com.au"),
+            ("Harry Gan",      "CPA, SMSF Auditor", "harry@mcands.com.au"),
+            ("Lyn Karman",     None,                "lyn@mcands.com.au"),
+            ("Louise Boyd",    None,                "louise@mcands.com.au"),
+        ]
+        c.executemany(
+            "INSERT OR IGNORE INTO staff_signatures (name, title, email) "
+            "VALUES (?, ?, ?)",
+            seed_rows,
+        )
+        c.execute(
+            "INSERT OR REPLACE INTO settings (key, value) VALUES ('signature_seeded', '1')"
         )
 
     conn.commit()
@@ -542,6 +611,106 @@ def save_staff(staff: dict):
 def delete_staff(staff_id: int):
     conn = get_db()
     conn.execute("DELETE FROM staff_notifications WHERE id=?", (staff_id,))
+    conn.commit()
+    conn.close()
+
+
+# ── Staff Signatures (dynamic per-accountant signature lookup) ───────────────
+# These rows feed signature_builder.build_signature_html — the accountant's
+# M365 signed-in email is matched (case-insensitively) to the `email` column
+# to pick up their name + title for every plugin draft.
+
+STAFF_SIGNATURE_COLUMNS = {"name", "title", "email", "enabled"}
+
+
+def _validate_signature_email(email: str) -> str:
+    """Normalise + sanity-check an email. Returns the lowercased value or
+    raises ValueError. Validation is intentionally cheap — the M365 directory
+    is the source of truth, this just blocks obvious typos."""
+    e = (email or "").strip().lower()
+    if not e or "@" not in e or " " in e:
+        raise ValueError(f"Invalid email: {email!r}")
+    return e
+
+
+def get_staff_signatures(include_disabled: bool = True) -> list[dict]:
+    """Return all staff signature rows, ordered by name."""
+    conn = get_db()
+    sql = "SELECT * FROM staff_signatures"
+    if not include_disabled:
+        sql += " WHERE enabled=1"
+    sql += " ORDER BY name COLLATE NOCASE"
+    rows = conn.execute(sql).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_staff_signature_by_email(email: str) -> dict | None:
+    """Lookup a single enabled staff row by email (case-insensitive). Returns
+    None if no row matches or the row is disabled — callers fall back to the
+    legacy signature in either case."""
+    if not email:
+        return None
+    conn = get_db()
+    row = conn.execute(
+        "SELECT * FROM staff_signatures "
+        "WHERE LOWER(email)=LOWER(?) AND enabled=1 LIMIT 1",
+        (email.strip(),),
+    ).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
+def save_staff_signature(data: dict) -> int:
+    """Insert or update a staff signature row. Returns the row id.
+
+    Required keys: name, email. Optional: title, enabled, id (for update).
+    Email uniqueness is enforced by the table constraint; on collision we
+    raise sqlite3.IntegrityError so the API layer can surface a 400.
+    """
+    name = (data.get("name") or "").strip()
+    if not name:
+        raise ValueError("name is required")
+    email = _validate_signature_email(data.get("email", ""))
+    title = (data.get("title") or "").strip() or None
+    enabled = 1 if data.get("enabled", 1) else 0
+
+    conn = get_db()
+    try:
+        if data.get("id"):
+            conn.execute(
+                "UPDATE staff_signatures "
+                "SET name=?, title=?, email=?, enabled=?, "
+                "    updated_at=strftime('%s','now') "
+                "WHERE id=?",
+                (name, title, email, enabled, int(data["id"])),
+            )
+            row_id = int(data["id"])
+        else:
+            cur = conn.execute(
+                "INSERT INTO staff_signatures (name, title, email, enabled) "
+                "VALUES (?, ?, ?, ?)",
+                (name, title, email, enabled),
+            )
+            row_id = cur.lastrowid
+        conn.commit()
+        return row_id
+    finally:
+        conn.close()
+
+
+def delete_staff_signature(row_id: int, soft: bool = True) -> None:
+    """Soft-delete (enabled=0) by default to preserve history; hard-delete if
+    soft=False. Either way the row stops matching for new drafts."""
+    conn = get_db()
+    if soft:
+        conn.execute(
+            "UPDATE staff_signatures SET enabled=0, "
+            "updated_at=strftime('%s','now') WHERE id=?",
+            (row_id,),
+        )
+    else:
+        conn.execute("DELETE FROM staff_signatures WHERE id=?", (row_id,))
     conn.commit()
     conn.close()
 
