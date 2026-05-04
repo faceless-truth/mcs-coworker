@@ -42,6 +42,8 @@ from config import (
     update_claude_models,
     get_rules, save_rule, delete_rule,
     get_staff, save_staff, delete_staff,
+    get_staff_signatures, save_staff_signature, delete_staff_signature,
+    get_staff_signature_by_email,
     get_links, save_link, delete_link,
     get_active_lessons, add_lesson, delete_lesson, toggle_lesson,
     get_style_preferences, save_style_preferences,
@@ -823,6 +825,16 @@ def save_settings():
         "email_signature",
         # Draft formatting — font family/size/color used by format_draft_body
         "draft_font_family", "draft_font_size", "draft_font_color",
+        # Dynamic per-accountant signature — firm constants editable via the
+        # Email Signature section of Settings. Per-staff rows use their own
+        # /api/staff-signatures CRUD endpoints below.
+        "signature_mode",
+        "signature_company", "signature_phone",
+        "signature_website_display", "signature_website_url",
+        "signature_address_line1", "signature_address_line2",
+        "signature_instagram_url", "signature_facebook_url",
+        "signature_linkedin_url", "signature_google_review_url",
+        "signature_privacy_text",
         # Xero OAuth credentials
         "xero_client_id", "xero_client_secret",
     }
@@ -1762,6 +1774,95 @@ def create_staff():
 def remove_staff(staff_id):
     delete_staff(staff_id)
     return ok()
+
+# ── Staff Signatures (dynamic per-accountant signatures) ─────────────────────
+# Backed by signature_builder; rows match against the M365 signed-in email so
+# every plugin draft picks up the right name + title automatically.
+
+@app.route("/api/staff-signatures", methods=["GET"])
+def list_staff_signatures():
+    return ok(get_staff_signatures(include_disabled=True))
+
+
+@app.route("/api/staff-signatures", methods=["POST"])
+def create_staff_signature():
+    data = request.get_json(silent=True) or {}
+    try:
+        row_id = save_staff_signature(data)
+    except ValueError as e:
+        return err(str(e), 400)
+    except Exception as e:
+        # UNIQUE constraint on email collides as IntegrityError — surface as 400
+        # so the UI can show "email already in use" rather than a 500.
+        return err(f"Could not save: {e}", 400)
+    return ok({"id": row_id, "rows": get_staff_signatures(include_disabled=True)})
+
+
+@app.route("/api/staff-signatures/<int:row_id>", methods=["PUT"])
+def update_staff_signature(row_id):
+    data = request.get_json(silent=True) or {}
+    data["id"] = row_id
+    try:
+        save_staff_signature(data)
+    except ValueError as e:
+        return err(str(e), 400)
+    except Exception as e:
+        return err(f"Could not update: {e}", 400)
+    return ok(get_staff_signatures(include_disabled=True))
+
+
+@app.route("/api/staff-signatures/<int:row_id>", methods=["DELETE"])
+def remove_staff_signature(row_id):
+    # Soft-delete (enabled=0) preserves history. Hard delete is reserved for a
+    # future "?hard=1" query param if Elio ever needs it.
+    delete_staff_signature(row_id, soft=True)
+    return ok(get_staff_signatures(include_disabled=True))
+
+
+@app.route("/api/staff-signatures/preview", methods=["GET"])
+def preview_staff_signature():
+    """Render the signature HTML for a given email, for the Settings live
+    preview iframe. Falls back to the M365 session user if no email passed."""
+    email = (request.args.get("email") or "").strip().lower()
+    if not email:
+        # Read the session user from settings — no /me round-trip on preview.
+        email = (get_setting("ms_account_email", "") or "").strip().lower()
+    try:
+        from signature_builder import build_signature_html, reset_image_cache
+        # Reset image cache so a freshly dropped logo.png shows up without a
+        # process restart (preview is a low-traffic endpoint).
+        reset_image_cache()
+        html = build_signature_html(
+            email,
+            legacy_fallback=lambda: "<p style='font-family:sans-serif;color:#888;'>"
+                                    "(legacy image signature — not previewed here)</p>",
+        )
+    except Exception as e:
+        return err(f"Preview failed: {e}", 500)
+    return ok({"email": email, "html": html})
+
+
+@app.route("/api/staff-signatures/refresh-m365", methods=["POST"])
+def refresh_m365_session_user():
+    """Re-call Graph /me and update the cached ms_account_email setting.
+
+    The Settings UI calls this when the accountant signs into a different M365
+    account mid-session and wants their dynamic signature to switch over
+    without restarting CoWorker."""
+    try:
+        from graph_client import GraphClient
+        # Reuse the loader's authenticated client so we don't trigger a new
+        # interactive sign-in. Falls back to a fresh GraphClient if loader
+        # isn't ready yet (e.g. during startup probes).
+        graph = getattr(_loader, "_graph", None) if _loader else None
+        if graph is None:
+            graph = GraphClient()
+        email = graph.refresh_session_user_email()
+    except Exception as e:
+        return err(f"Refresh failed: {e}", 500)
+    if not email:
+        return err("Could not read /me — is M365 signed in?", 400)
+    return ok({"email": email})
 
 # ── Links & Forms ─────────────────────────────────────────────────────────────
 @app.route("/api/links")
