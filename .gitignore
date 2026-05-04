@@ -35,3 +35,11 @@ Thumbs.db
 frontend/node_modules/
 frontend/dist/
 frontend/.manus-logs/
+
+# Build outputs
+frontend_dist/
+installer_build/
+installer_output/
+
+# Local Claude Code settings
+.claude/settings.local.json
