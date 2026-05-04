@@ -852,6 +852,347 @@ interface XeroStatus {
 // remounting the subtree and stealing focus from whichever input was active.
 const inputClass = "w-full px-3 py-2 text-sm border border-border rounded-md bg-white focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-400 font-mono";
 
+// Auth-aware fetch wrapper for the per-install API token. Centralised here
+// because the EmailSignatureSection makes several calls to /api/staff-signatures
+// and we want one consistent place that injects the Bearer header.
+async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const token = (window as any).__API_TOKEN__ || "";
+  const headers: Record<string, string> = {
+    ...(init.headers as Record<string, string> | undefined),
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  if (init.body && !headers["Content-Type"]) headers["Content-Type"] = "application/json";
+  return fetch(`http://127.0.0.1:7842${path}`, { ...init, headers });
+}
+
+type StaffSignatureRow = {
+  id: number;
+  name: string;
+  title: string | null;
+  email: string;
+  enabled: number;
+};
+
+function EmailSignatureSection({
+  settings,
+  setSettings,
+}: {
+  settings: typeof EMPTY_SETTINGS;
+  setSettings: React.Dispatch<React.SetStateAction<typeof EMPTY_SETTINGS>>;
+}) {
+  const [rows, setRows] = useState<StaffSignatureRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [previewEmail, setPreviewEmail] = useState<string>("");
+  const [previewHtml, setPreviewHtml] = useState<string>("");
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // ── Load staff signatures + initial preview email ────────────────────
+  const loadRows = async () => {
+    setLoading(true);
+    try {
+      const r = await apiFetch("/api/staff-signatures");
+      const json = await r.json();
+      if (json.ok) {
+        const data: StaffSignatureRow[] = json.data;
+        setRows(data);
+        if (!previewEmail && data.length > 0) {
+          // Default preview to the M365 signed-in user if it matches a row,
+          // else the first row.
+          const sessionEmail = (settings.outlookEmail || "").toLowerCase();
+          const match = data.find(r => r.email.toLowerCase() === sessionEmail);
+          setPreviewEmail((match || data[0]).email);
+        }
+      } else {
+        toast.error("Could not load staff signatures", { description: json.error });
+      }
+    } catch (e: any) {
+      toast.error("Could not load staff signatures", { description: e?.message });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => { loadRows(); /* eslint-disable-next-line */ }, []);
+
+  // ── Refetch preview HTML whenever the selected email or any firm
+  // constant changes. Server reads firm constants from settings, so
+  // unsaved edits here won't show in preview until the user clicks Save.
+  // We document that with a small hint under the preview.
+  useEffect(() => {
+    if (!previewEmail) { setPreviewHtml(""); return; }
+    let cancelled = false;
+    (async () => {
+      setPreviewLoading(true);
+      try {
+        const r = await apiFetch(`/api/staff-signatures/preview?email=${encodeURIComponent(previewEmail)}`);
+        const json = await r.json();
+        if (!cancelled) setPreviewHtml(json.ok ? (json.data?.html || "") : `<pre>${json.error}</pre>`);
+      } catch (e: any) {
+        if (!cancelled) setPreviewHtml(`<pre>Preview failed: ${e?.message}</pre>`);
+      } finally {
+        if (!cancelled) setPreviewLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [previewEmail]);
+
+  // ── Row mutations ────────────────────────────────────────────────────
+  const updateRowField = (id: number, field: keyof StaffSignatureRow, value: any) => {
+    setRows(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r));
+  };
+
+  const saveRow = async (row: StaffSignatureRow) => {
+    try {
+      const r = await apiFetch(`/api/staff-signatures/${row.id}`, {
+        method: "PUT",
+        body: JSON.stringify(row),
+      });
+      const json = await r.json();
+      if (!json.ok) throw new Error(json.error || "Save failed");
+      setRows(json.data);
+      toast.success("Signature row updated");
+      // If the edited row is the previewed one, refresh.
+      if (row.email.toLowerCase() === previewEmail.toLowerCase()) {
+        setPreviewEmail(row.email);  // triggers preview refetch
+      }
+    } catch (e: any) {
+      toast.error("Save failed", { description: e?.message });
+      loadRows();
+    }
+  };
+
+  const deleteRow = async (row: StaffSignatureRow) => {
+    if (!confirm(`Disable signature for ${row.name}? They'll fall back to the legacy signature.`)) return;
+    try {
+      const r = await apiFetch(`/api/staff-signatures/${row.id}`, { method: "DELETE" });
+      const json = await r.json();
+      if (!json.ok) throw new Error(json.error || "Delete failed");
+      setRows(json.data);
+      toast.success("Signature disabled");
+    } catch (e: any) {
+      toast.error("Delete failed", { description: e?.message });
+    }
+  };
+
+  const addRow = async () => {
+    const name = prompt("Full name?");
+    if (!name) return;
+    const email = prompt("Email (must match the M365 sign-in)?");
+    if (!email) return;
+    const title = prompt("Title (optional, e.g. CPA, Tax Agent)?") || "";
+    try {
+      const r = await apiFetch("/api/staff-signatures", {
+        method: "POST",
+        body: JSON.stringify({ name, email, title, enabled: 1 }),
+      });
+      const json = await r.json();
+      if (!json.ok) throw new Error(json.error || "Add failed");
+      setRows(json.data.rows || json.data);
+      toast.success("Staff member added");
+    } catch (e: any) {
+      toast.error("Add failed", { description: e?.message });
+    }
+  };
+
+  const refreshFromM365 = async () => {
+    setRefreshing(true);
+    try {
+      const r = await apiFetch("/api/staff-signatures/refresh-m365", { method: "POST" });
+      const json = await r.json();
+      if (!json.ok) throw new Error(json.error || "Refresh failed");
+      toast.success(`M365 session refreshed: ${json.data.email}`);
+      setPreviewEmail(json.data.email);
+    } catch (e: any) {
+      toast.error("Refresh failed", { description: e?.message });
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
+  // ── Render ───────────────────────────────────────────────────────────
+  return (
+    <Section
+      title="Email Signature"
+      description="Per-accountant dynamic signature appended to every plugin-created draft. Matched to the M365 signed-in user by email."
+    >
+      {/* Mode picker */}
+      <Field label="Signature mode">
+        <div className="flex flex-wrap gap-2">
+          {[
+            { v: "dynamic", label: "Dynamic (recommended)", hint: "Auto-pick name/title from M365 sign-in" },
+            { v: "legacy_image", label: "Legacy image", hint: "Use uploaded signature image only" },
+            { v: "disabled", label: "Disabled", hint: "Append no signature" },
+          ].map(opt => {
+            const active = (settings.signatureMode || "dynamic") === opt.v;
+            return (
+              <button
+                key={opt.v}
+                type="button"
+                onClick={() => setSettings(s => ({ ...s, signatureMode: opt.v }))}
+                className={`px-3 py-2 rounded-md text-xs font-medium border transition-all ${
+                  active ? "border-blue-500 bg-blue-50 text-blue-800" : "border-border bg-white hover:border-blue-300"
+                }`}
+                title={opt.hint}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
+      </Field>
+
+      {/* Staff table */}
+      <Field label="Staff signatures" hint="Edit name, title, or email; click Save on a row to commit. Disable a row to make that person fall back to the legacy image.">
+        {loading ? (
+          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+            <Loader2 className="w-4 h-4 animate-spin" /> Loading…
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-md border border-border">
+            <table className="w-full text-xs">
+              <thead className="bg-slate-50 text-muted-foreground">
+                <tr>
+                  <th className="text-left px-2 py-2 font-medium">Name</th>
+                  <th className="text-left px-2 py-2 font-medium">Title</th>
+                  <th className="text-left px-2 py-2 font-medium">Email (M365 match)</th>
+                  <th className="text-left px-2 py-2 font-medium w-20">Enabled</th>
+                  <th className="text-right px-2 py-2 font-medium w-32">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map(row => (
+                  <tr key={row.id} className={`border-t border-border ${row.enabled ? "" : "opacity-50"}`}>
+                    <td className="px-2 py-1">
+                      <input
+                        className="w-full px-2 py-1 text-xs border border-transparent rounded hover:border-border focus:border-blue-400 focus:outline-none bg-transparent"
+                        value={row.name}
+                        onChange={e => updateRowField(row.id, "name", e.target.value)}
+                      />
+                    </td>
+                    <td className="px-2 py-1">
+                      <input
+                        className="w-full px-2 py-1 text-xs border border-transparent rounded hover:border-border focus:border-blue-400 focus:outline-none bg-transparent"
+                        placeholder="(none)"
+                        value={row.title || ""}
+                        onChange={e => updateRowField(row.id, "title", e.target.value)}
+                      />
+                    </td>
+                    <td className="px-2 py-1">
+                      <input
+                        className="w-full px-2 py-1 text-xs border border-transparent rounded hover:border-border focus:border-blue-400 focus:outline-none bg-transparent font-mono"
+                        value={row.email}
+                        onChange={e => updateRowField(row.id, "email", e.target.value)}
+                      />
+                    </td>
+                    <td className="px-2 py-1 text-center">
+                      <input
+                        type="checkbox"
+                        checked={!!row.enabled}
+                        onChange={e => updateRowField(row.id, "enabled", e.target.checked ? 1 : 0)}
+                      />
+                    </td>
+                    <td className="px-2 py-1 text-right space-x-1">
+                      <button
+                        onClick={() => saveRow(row)}
+                        className="px-2 py-1 text-xs rounded border border-blue-200 text-blue-700 hover:bg-blue-50"
+                      >Save</button>
+                      <button
+                        onClick={() => deleteRow(row)}
+                        className="px-2 py-1 text-xs rounded border border-rose-200 text-rose-600 hover:bg-rose-50"
+                        title="Soft-delete (set enabled=0)"
+                      >Disable</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+        <div className="pt-2">
+          <button
+            onClick={addRow}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded border border-border hover:border-blue-300 hover:text-blue-600"
+          >
+            <Plus className="w-3.5 h-3.5" /> Add staff member
+          </button>
+        </div>
+      </Field>
+
+      {/* Firm constants */}
+      <div className="border-t border-border pt-4">
+        <div className="text-xs font-semibold text-foreground mb-2">Firm constants</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <Field label="Company"><input className={inputClass} value={settings.signatureCompany} onChange={e => setSettings(s => ({ ...s, signatureCompany: e.target.value }))} /></Field>
+          <Field label="Phone"><input className={inputClass} value={settings.signaturePhone} onChange={e => setSettings(s => ({ ...s, signaturePhone: e.target.value }))} /></Field>
+          <Field label="Website (display)"><input className={inputClass} value={settings.signatureWebsiteDisplay} onChange={e => setSettings(s => ({ ...s, signatureWebsiteDisplay: e.target.value }))} /></Field>
+          <Field label="Website (URL)"><input className={inputClass} value={settings.signatureWebsiteUrl} onChange={e => setSettings(s => ({ ...s, signatureWebsiteUrl: e.target.value }))} /></Field>
+          <Field label="Address line 1"><input className={inputClass} value={settings.signatureAddress1} onChange={e => setSettings(s => ({ ...s, signatureAddress1: e.target.value }))} /></Field>
+          <Field label="Address line 2"><input className={inputClass} value={settings.signatureAddress2} onChange={e => setSettings(s => ({ ...s, signatureAddress2: e.target.value }))} /></Field>
+          <Field label="Instagram URL"><input className={inputClass} value={settings.signatureInstagramUrl} onChange={e => setSettings(s => ({ ...s, signatureInstagramUrl: e.target.value }))} /></Field>
+          <Field label="Facebook URL"><input className={inputClass} value={settings.signatureFacebookUrl} onChange={e => setSettings(s => ({ ...s, signatureFacebookUrl: e.target.value }))} /></Field>
+          <Field label="LinkedIn URL (out of v1 — not yet rendered)"><input className={inputClass} value={settings.signatureLinkedinUrl} onChange={e => setSettings(s => ({ ...s, signatureLinkedinUrl: e.target.value }))} /></Field>
+          <Field label="Google review URL"><input className={inputClass} value={settings.signatureGoogleReviewUrl} onChange={e => setSettings(s => ({ ...s, signatureGoogleReviewUrl: e.target.value }))} /></Field>
+        </div>
+        <Field label="Privacy / disclaimer text" hint="Rendered in italic 8pt grey under the signature.">
+          <textarea
+            className={inputClass + " min-h-[100px] resize-y font-sans"}
+            value={settings.signaturePrivacyText}
+            onChange={e => setSettings(s => ({ ...s, signaturePrivacyText: e.target.value }))}
+          />
+        </Field>
+      </div>
+
+      {/* Live preview */}
+      <div className="border-t border-border pt-4">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-xs font-semibold text-foreground">Live preview</div>
+          <div className="flex items-center gap-2">
+            <select
+              className="px-2 py-1 text-xs border border-border rounded bg-white"
+              value={previewEmail}
+              onChange={e => setPreviewEmail(e.target.value)}
+            >
+              {rows.map(r => (
+                <option key={r.id} value={r.email}>
+                  {r.name} {r.enabled ? "" : "(disabled)"}
+                </option>
+              ))}
+            </select>
+            <button
+              onClick={refreshFromM365}
+              disabled={refreshing}
+              className="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded border border-border hover:border-blue-300 hover:text-blue-600 disabled:opacity-60"
+              title="Re-call Graph /me to update the cached M365 sign-in"
+            >
+              {refreshing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TestTube className="w-3.5 h-3.5" />}
+              Refresh from M365
+            </button>
+          </div>
+        </div>
+        <div className="rounded border border-border bg-white p-2">
+          {previewLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground p-4">
+              <Loader2 className="w-4 h-4 animate-spin" /> Rendering preview…
+            </div>
+          ) : (
+            <iframe
+              title="Signature preview"
+              sandbox="allow-popups"
+              srcDoc={`<!doctype html><html><body style="margin:8px;">${previewHtml}</body></html>`}
+              className="w-full"
+              style={{ minHeight: "320px", border: 0 }}
+            />
+          )}
+        </div>
+        <div className="text-xs text-muted-foreground mt-1.5">
+          Preview reflects saved firm constants. Click Save Changes at the top of the page to push edits to firm fields, then re-select the preview email.
+        </div>
+      </div>
+    </Section>
+  );
+}
+
 function Section({ title, description, children }: { title: string; description?: string; children: React.ReactNode }) {
   return (
     <div className="bg-white rounded-lg border border-border shadow-sm overflow-hidden">
@@ -887,6 +1228,21 @@ const EMPTY_SETTINGS = {
   draftFontFamily: "Aptos, Calibri, sans-serif",
   draftFontSize: "11pt",
   draftFontColor: "#000000",
+  // Dynamic signature — firm constants editable from EmailSignatureSection.
+  // Per-staff rows live in the staff_signatures table and are managed via
+  // the section's own /api/staff-signatures CRUD calls (not in this object).
+  signatureMode: "dynamic",
+  signatureCompany: "MC&S Pty Ltd",
+  signaturePhone: "(03) 9794 0000",
+  signatureWebsiteDisplay: "mcands.com.au",
+  signatureWebsiteUrl: "https://www.mcands.com.au",
+  signatureAddress1: "23 Timor Circuit, Keysborough, Vic 3173",
+  signatureAddress2: "PO BOX 4440, Dandenong South, VIC, 3164",
+  signatureInstagramUrl: "https://www.instagram.com/mcsaccounting",
+  signatureFacebookUrl: "https://www.facebook.com/mcandsaccounting",
+  signatureLinkedinUrl: "",
+  signatureGoogleReviewUrl: "",
+  signaturePrivacyText: "",
   xpmApiKey: "",
   xeroClientId: "",
   xeroClientSecret: "",
@@ -1114,6 +1470,18 @@ export default function Settings() {
             draftFontFamily:     s.draft_font_family     ?? prev.draftFontFamily,
             draftFontSize:       s.draft_font_size       ?? prev.draftFontSize,
             draftFontColor:      s.draft_font_color      ?? prev.draftFontColor,
+            signatureMode:           s.signature_mode              ?? prev.signatureMode,
+            signatureCompany:        s.signature_company           ?? prev.signatureCompany,
+            signaturePhone:          s.signature_phone             ?? prev.signaturePhone,
+            signatureWebsiteDisplay: s.signature_website_display   ?? prev.signatureWebsiteDisplay,
+            signatureWebsiteUrl:     s.signature_website_url       ?? prev.signatureWebsiteUrl,
+            signatureAddress1:       s.signature_address_line1     ?? prev.signatureAddress1,
+            signatureAddress2:       s.signature_address_line2     ?? prev.signatureAddress2,
+            signatureInstagramUrl:   s.signature_instagram_url     ?? prev.signatureInstagramUrl,
+            signatureFacebookUrl:    s.signature_facebook_url      ?? prev.signatureFacebookUrl,
+            signatureLinkedinUrl:    s.signature_linkedin_url      ?? prev.signatureLinkedinUrl,
+            signatureGoogleReviewUrl: s.signature_google_review_url ?? prev.signatureGoogleReviewUrl,
+            signaturePrivacyText:    s.signature_privacy_text      ?? prev.signaturePrivacyText,
             xeroClientId:        s.xero_client_id        ?? prev.xeroClientId,
             xeroClientSecret:    s.xero_client_secret    ?? prev.xeroClientSecret,
             fuseSignApiKey:      s.fusesign_api_key      ?? prev.fuseSignApiKey,
@@ -1144,6 +1512,18 @@ export default function Settings() {
       draft_font_family:           settings.draftFontFamily,
       draft_font_size:             settings.draftFontSize,
       draft_font_color:            settings.draftFontColor,
+      signature_mode:              settings.signatureMode,
+      signature_company:           settings.signatureCompany,
+      signature_phone:             settings.signaturePhone,
+      signature_website_display:   settings.signatureWebsiteDisplay,
+      signature_website_url:       settings.signatureWebsiteUrl,
+      signature_address_line1:     settings.signatureAddress1,
+      signature_address_line2:     settings.signatureAddress2,
+      signature_instagram_url:     settings.signatureInstagramUrl,
+      signature_facebook_url:      settings.signatureFacebookUrl,
+      signature_linkedin_url:      settings.signatureLinkedinUrl,
+      signature_google_review_url: settings.signatureGoogleReviewUrl,
+      signature_privacy_text:      settings.signaturePrivacyText,
       fusesign_api_key:            settings.fuseSignApiKey,
       teams_webhook_url:           settings.teamsWebhook,
       fast_model:                  settings.fastModel,
@@ -1364,6 +1744,11 @@ export default function Settings() {
           />
         </Field>
       </Section>
+
+      {/* Email Signature — dynamic per-accountant signature appended to every
+          plugin-created draft. Mode picker, staff table, firm constants, and
+          live preview all live in one section. */}
+      <EmailSignatureSection settings={settings} setSettings={setSettings} />
 
       {/* Draft Formatting — applied to every plugin-created Outlook draft */}
       <DraftFormattingSection settings={settings} setSettings={setSettings} />
