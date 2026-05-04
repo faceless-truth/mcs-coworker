@@ -437,6 +437,11 @@ class GraphClient:
         Centralised here so every draft/send goes through one place. Plugins
         do not need to call this directly — it is applied automatically by
         `send_email`, `create_draft`, and the `*_with_attachments` variants.
+
+        Routing:
+          - signature_mode = 'dynamic'     -> signature_builder per-accountant
+          - signature_mode = 'legacy_image' -> existing image fallback
+          - signature_mode = 'disabled'    -> no signature appended
         """
         if not body_html:
             body_html = ""
@@ -446,7 +451,7 @@ class GraphClient:
         # after, so its own anchors and data: image URIs are untouched.
         body_html = linkify_urls(body_html)
         try:
-            sig = self.get_signature_html()
+            sig = self._resolve_signature_html()
         except Exception:
             sig = ""
         if not sig:
@@ -456,6 +461,71 @@ class GraphClient:
         if sig and sig in body_html:
             return body_html
         return body_html + sig
+
+    def _resolve_signature_html(self) -> str:
+        """Pick the right signature path based on signature_mode setting.
+
+        Dynamic mode delegates to signature_builder, which itself falls back
+        to the legacy image when no staff row matches. Legacy mode skips the
+        builder entirely. Disabled returns empty — drafts get no trailing
+        signature, leaving the user free to type their own."""
+        try:
+            from config import get_setting
+            mode = (get_setting("signature_mode", "dynamic") or "dynamic").lower()
+        except Exception:
+            mode = "dynamic"
+
+        if mode == "disabled":
+            return ""
+        if mode == "legacy_image":
+            return self.get_signature_html() or ""
+
+        # Dynamic — defer to the per-accountant builder. It calls our legacy
+        # path back via the callable when no staff row matches, so we don't
+        # have to double-fall-back here.
+        try:
+            from signature_builder import build_signature_html
+            email = self.get_session_user_email()
+            return build_signature_html(
+                email, legacy_fallback=self.get_signature_html,
+            )
+        except Exception as e:
+            logger.warning("Dynamic signature build failed: %s — using legacy", e)
+            return self.get_signature_html() or ""
+
+    def get_session_user_email(self) -> str:
+        """Return the cached M365 signed-in email used for signature lookup.
+
+        Reads ms_account_email which is populated by _populate_identity_settings
+        on first authenticated call. Intentionally does NOT re-call /me on every
+        invocation — that's once per session, refreshed via the
+        'Refresh from M365' button in Settings (refresh_session_user_email)."""
+        try:
+            from config import get_setting
+            return (get_setting("ms_account_email", "") or "").strip().lower()
+        except Exception:
+            return ""
+
+    def refresh_session_user_email(self) -> str:
+        """Re-fetch /me and update the cached ms_account_email setting.
+
+        Wired to the 'Refresh from M365' button — useful if someone signs into
+        a different M365 account mid-session and wants their signature to
+        switch without restarting CoWorker. Returns the new email or empty
+        string on failure."""
+        try:
+            from config import set_setting
+            info = self.get_user_info() or {}
+            mail = (
+                info.get("mail") or info.get("userPrincipalName") or ""
+            ).strip()
+            if mail:
+                set_setting("ms_account_email", mail)
+                logger.info("Refreshed ms_account_email from Graph: %s", mail)
+                return mail.lower()
+        except Exception as e:
+            logger.warning("refresh_session_user_email failed: %s", e)
+        return ""
 
     def send_email(self, to_address: str, subject: str, body_html: str,
                    reply_to_id: str = None):
