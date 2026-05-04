@@ -120,16 +120,16 @@ def linkify_urls(text: str) -> str:
     return _URL_LINKIFY_PATTERN.sub(r'<a href="\1">\1</a>', text)
 
 
-# Standard MC&S email font — Outlook inherits this <div> style for any new
-# text the accountant types into the draft, so manual edits match the AI body
-# instead of falling back to the editor's Calibri-default-but-different.
-MCS_EMAIL_STYLE = (
-    'font-family: Calibri, Arial, Helvetica, sans-serif; '
-    'font-size: 11pt; '
-    'color: #000000; '
-    'line-height: 1.5;'
-)
+# Defaults used when the draft_font_* settings are missing or invalid.
+DEFAULT_DRAFT_FONT_FAMILY = "Aptos, Calibri, sans-serif"
+DEFAULT_DRAFT_FONT_SIZE = "11pt"
+DEFAULT_DRAFT_FONT_COLOR = "#000000"
+
+# Idempotency marker — if this attribute is already on the wrapping div we skip
+# wrapping a second time (e.g. when a re-save path runs the body back through).
 _MCS_EMAIL_STYLE_MARKER = 'data-mcs-style="1"'
+
+_FONT_SIZE_RE = re.compile(r'^\d+(\.\d+)?(pt|px)$')
 
 
 def _strip_typographic_punctuation(body_html: str) -> str:
@@ -161,30 +161,66 @@ def _strip_typographic_punctuation(body_html: str) -> str:
     return body_html
 
 
-def _wrap_email_body(body_html: str) -> str:
-    """Wrap an outgoing email body in a styled container so Outlook inherits
-    the font for any text the accountant adds when editing the draft.
+def _read_draft_font_settings() -> tuple[str, str, str]:
+    """Return (family, size, color) for the draft wrapper.
 
-    Idempotent: if the body has already been wrapped in this session (e.g. a
-    re-save path), the marker attribute prevents a second wrapping div.
+    Reads on every call so a Settings change takes effect on the next draft
+    without an app restart. Falls back to defaults on missing / invalid values
+    (e.g. a font-size that doesn't end in pt/px).
+    """
+    try:
+        from config import get_setting
+        family = (get_setting("draft_font_family", "") or "").strip() or DEFAULT_DRAFT_FONT_FAMILY
+        size = (get_setting("draft_font_size", "") or "").strip() or DEFAULT_DRAFT_FONT_SIZE
+        color = (get_setting("draft_font_color", "") or "").strip() or DEFAULT_DRAFT_FONT_COLOR
+    except Exception:
+        family, size, color = DEFAULT_DRAFT_FONT_FAMILY, DEFAULT_DRAFT_FONT_SIZE, DEFAULT_DRAFT_FONT_COLOR
+    if not _FONT_SIZE_RE.match(size):
+        size = DEFAULT_DRAFT_FONT_SIZE
+    return family, size, color
+
+
+def format_draft_body(body_html: str) -> str:
+    """Wrap an outgoing draft body in a styled container so Outlook inherits
+    the configured font for any text the accountant adds when editing.
+
+    Inline CSS only — `<style>` blocks get stripped by many mail clients.
+    Reads font-family/size/color from settings on each call (no restart needed).
+
+    Edge cases:
+      - Empty body → returned unchanged.
+      - Plain text (no `<` anywhere) → newlines converted to `<br>` before wrap.
+      - Already-wrapped (marker attribute present) → returned unchanged.
+      - Full HTML document (starts with `<html`/`<body`) → returned unwrapped;
+        wrapping a complete document inside a div produces invalid output that
+        Outlook desktop renders inconsistently. Such templates ship their own
+        font styling.
     """
     if not body_html:
         return body_html
     body_html = _strip_typographic_punctuation(body_html)
     if _MCS_EMAIL_STYLE_MARKER in body_html:
         return body_html
-    # Plain-text bodies (no inline HTML) need their newlines converted to
-    # <br> first, otherwise the wrapping div would collapse them.
-    if (
-        '<p>' not in body_html
-        and '<br' not in body_html
-        and '<div' not in body_html
-    ):
+    leading = body_html.lstrip()[:6].lower()
+    if leading.startswith('<html') or leading.startswith('<body'):
+        return body_html
+    if '<' not in body_html:
         body_html = body_html.replace('\n', '<br>\n')
+    family, size, color = _read_draft_font_settings()
+    style = (
+        f'font-family: {family}; '
+        f'font-size: {size}; '
+        f'color: {color}; '
+        f'line-height: 1.5;'
+    )
     return (
-        f'<div {_MCS_EMAIL_STYLE_MARKER} style="{MCS_EMAIL_STYLE}">'
+        f'<div {_MCS_EMAIL_STYLE_MARKER} style="{style}">'
         f'{body_html}</div>'
     )
+
+
+# Backwards-compatible alias for any in-tree caller still using the old name.
+_wrap_email_body = format_draft_body
 
 
 def _odata_escape(value: str) -> str:
@@ -425,7 +461,7 @@ class GraphClient:
                    reply_to_id: str = None):
         """Send an email directly."""
         body_html = self._append_signature(body_html)
-        body_html = _wrap_email_body(body_html)
+        body_html = format_draft_body(body_html)
         message = {
             "subject": subject,
             "body": {"contentType": "HTML", "content": body_html},
@@ -451,7 +487,7 @@ class GraphClient:
                      reply_to_id: str = None):
         """Save a draft reply without sending it. Returns the draft message ID."""
         body_html = self._append_signature(body_html)
-        body_html = _wrap_email_body(body_html)
+        body_html = format_draft_body(body_html)
         if reply_to_id:
             try:
                 draft_id = self._create_threaded_reply_draft(reply_to_id, body_html)
@@ -840,7 +876,7 @@ class GraphClient:
         """Send an email with file attachments."""
         import base64
         body_html = self._append_signature(body_html)
-        body_html = _wrap_email_body(body_html)
+        body_html = format_draft_body(body_html)
         message = {
             "subject": subject,
             "body": {"contentType": "HTML", "content": body_html},
@@ -873,7 +909,7 @@ class GraphClient:
         """Create a draft email with file attachments. Returns draft ID."""
         import base64
         body_html = self._append_signature(body_html)
-        body_html = _wrap_email_body(body_html)
+        body_html = format_draft_body(body_html)
 
         threaded = False
         draft_id = None
@@ -966,7 +1002,7 @@ class GraphClient:
                                       reply_to_id: str = None):
         """Send an email with an inline image. Creates draft, attaches, then sends."""
         import base64
-        body_html = _wrap_email_body(body_html)
+        body_html = format_draft_body(body_html)
         filename = os.path.basename(image_path)
         ext = os.path.splitext(filename)[1].lower()
         content_type_map = {

@@ -884,6 +884,9 @@ const EMPTY_SETTINGS = {
   outlookEmail: "",
   emailSignature: "",
   userName: "",
+  draftFontFamily: "Aptos, Calibri, sans-serif",
+  draftFontSize: "11pt",
+  draftFontColor: "#000000",
   xpmApiKey: "",
   xeroClientId: "",
   xeroClientSecret: "",
@@ -1021,6 +1024,70 @@ function SignatureImageUploader() {
   );
 }
 
+const FONT_SIZE_RE = /^\d+(\.\d+)?(pt|px)$/;
+const DEFAULT_DRAFT_FONT_SIZE = "11pt";
+
+function DraftFormattingSection({
+  settings,
+  setSettings,
+}: {
+  settings: typeof EMPTY_SETTINGS;
+  setSettings: React.Dispatch<React.SetStateAction<typeof EMPTY_SETTINGS>>;
+}) {
+  const [sizeError, setSizeError] = useState<string | null>(null);
+
+  const validateSizeOnBlur = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed || !FONT_SIZE_RE.test(trimmed)) {
+      setSizeError("Must look like 11pt or 14px — reverted to 11pt.");
+      setSettings(s => ({ ...s, draftFontSize: DEFAULT_DRAFT_FONT_SIZE }));
+    } else {
+      setSizeError(null);
+    }
+  };
+
+  return (
+    <Section
+      title="Draft Formatting"
+      description="Font used in every Outlook draft created by a CoWorker plugin. Outlook inherits the font for any text you add when editing the draft."
+    >
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <Field label="Font Family" hint="Comma-separated stack. Aptos with Calibri fallback is the firm default.">
+          <input
+            className={inputClass}
+            value={settings.draftFontFamily}
+            placeholder="Aptos, Calibri, sans-serif"
+            onChange={e => setSettings(s => ({ ...s, draftFontFamily: e.target.value }))}
+          />
+        </Field>
+        <Field label="Font Size" hint="Number followed by pt or px (e.g. 11pt, 14px).">
+          <input
+            className={inputClass}
+            value={settings.draftFontSize}
+            placeholder="11pt"
+            onChange={e => {
+              setSizeError(null);
+              setSettings(s => ({ ...s, draftFontSize: e.target.value }));
+            }}
+            onBlur={e => validateSizeOnBlur(e.target.value)}
+          />
+          {sizeError && (
+            <div className="text-xs text-rose-600 mt-1">{sizeError}</div>
+          )}
+        </Field>
+        <Field label="Font Color" hint="CSS color (hex, rgb(), or named).">
+          <input
+            className={inputClass}
+            value={settings.draftFontColor}
+            placeholder="#000000"
+            onChange={e => setSettings(s => ({ ...s, draftFontColor: e.target.value }))}
+          />
+        </Field>
+      </div>
+    </Section>
+  );
+}
+
 export default function Settings() {
   const [settings, setSettings] = useState(EMPTY_SETTINGS);
   const [showKey, setShowKey] = useState(false);
@@ -1044,6 +1111,9 @@ export default function Settings() {
             outlookEmail:        s.outlook_email         ?? prev.outlookEmail,
             emailSignature:      s.email_signature       ?? prev.emailSignature,
             userName:            s.user_name             ?? prev.userName,
+            draftFontFamily:     s.draft_font_family     ?? prev.draftFontFamily,
+            draftFontSize:       s.draft_font_size       ?? prev.draftFontSize,
+            draftFontColor:      s.draft_font_color      ?? prev.draftFontColor,
             xeroClientId:        s.xero_client_id        ?? prev.xeroClientId,
             xeroClientSecret:    s.xero_client_secret    ?? prev.xeroClientSecret,
             fuseSignApiKey:      s.fusesign_api_key      ?? prev.fuseSignApiKey,
@@ -1071,6 +1141,9 @@ export default function Settings() {
       outlook_email:               settings.outlookEmail,
       email_signature:             settings.emailSignature,
       user_name:                   settings.userName,
+      draft_font_family:           settings.draftFontFamily,
+      draft_font_size:             settings.draftFontSize,
+      draft_font_color:            settings.draftFontColor,
       fusesign_api_key:            settings.fuseSignApiKey,
       teams_webhook_url:           settings.teamsWebhook,
       fast_model:                  settings.fastModel,
@@ -1291,6 +1364,9 @@ export default function Settings() {
           />
         </Field>
       </Section>
+
+      {/* Draft Formatting — applied to every plugin-created Outlook draft */}
+      <DraftFormattingSection settings={settings} setSettings={setSettings} />
 
       {/* SharePoint — Client File Storage (config is hardcoded for MC&S) */}
       <Section

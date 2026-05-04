@@ -821,6 +821,8 @@ def save_settings():
         "skip_public_holidays", "public_holiday_state",
         "reception_mode", "staff_profile",
         "email_signature",
+        # Draft formatting — font family/size/color used by format_draft_body
+        "draft_font_family", "draft_font_size", "draft_font_color",
         # Xero OAuth credentials
         "xero_client_id", "xero_client_secret",
     }

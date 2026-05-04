@@ -246,6 +246,10 @@ def init_db():
         # Stream 6 — Approval queue
         "approval_auto_threshold": "0.75",
         "approval_expiry_hours":   "48",
+        # Draft formatting — applied to every plugin-created Outlook draft body
+        "draft_font_family":       "Aptos, Calibri, sans-serif",
+        "draft_font_size":         "11pt",
+        "draft_font_color":        "#000000",
     }
     for key, value in defaults.items():
         c.execute(
