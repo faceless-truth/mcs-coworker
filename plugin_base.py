@@ -65,14 +65,19 @@ class Schedule:
     """
 
     def __init__(self, interval_seconds: int = 0, label: str = "Manual only",
-                 day_of_month: int = 0, months_interval: int = 0):
+                 day_of_month: int = 0, months_interval: int = 0,
+                 hour_of_day: int | None = None):
         self.interval_seconds = interval_seconds
         self.label = label
-        # For calendar-based schedules (monthly / quarterly)
-        # day_of_month: 1-28, the day of the month to run on
-        # months_interval: 1 = monthly, 3 = quarterly
+        # For monthly / quarterly calendar-based schedules:
+        #   day_of_month: 1-28, the day of the month to run on
+        #   months_interval: 1 = monthly, 3 = quarterly
         self.day_of_month = day_of_month
         self.months_interval = months_interval
+        # For daily-at-hour calendar-based schedules:
+        #   hour_of_day: 0-23, the wall-clock hour the run should fire on.
+        # Only set by Schedule.daily_at(); None for every other schedule shape.
+        self.hour_of_day = hour_of_day
 
     @classmethod
     def every_seconds(cls, n: int) -> "Schedule":
@@ -88,7 +93,13 @@ class Schedule:
 
     @classmethod
     def daily_at(cls, hour: int) -> "Schedule":
-        return cls(interval_seconds=86400, label=f"Daily at {hour:02d}:00")
+        # interval_seconds is left at its rough 86400 value for any UI/code
+        # that still uses it as a label hint. The scheduler now treats this
+        # schedule as calendar-based (via is_calendar_based()) and computes
+        # the next fire time from hour_of_day, not by adding 86400 to launch
+        # time — see LoadedPlugin._next_calendar_run.
+        return cls(interval_seconds=86400, label=f"Daily at {hour:02d}:00",
+                   hour_of_day=hour)
 
     @classmethod
     def monthly_on_day(cls, day: int = 1) -> "Schedule":
@@ -107,8 +118,18 @@ class Schedule:
         return cls(interval_seconds=0, label="Manual only")
 
     def is_calendar_based(self) -> bool:
-        """True if this schedule fires on a specific day of the month, not an interval."""
-        return self.day_of_month > 0 and self.months_interval > 0
+        """True for schedules anchored to a wall-clock time rather than a
+        fixed interval from app launch. The scheduler must compute the next
+        wall-clock occurrence for these (see LoadedPlugin._next_calendar_run);
+        otherwise it would tick "now + interval_seconds" and miss the target.
+        """
+        # monthly_on_day / quarterly_on_day
+        if self.day_of_month > 0 and self.months_interval > 0:
+            return True
+        # daily_at(hour)
+        if self.hour_of_day is not None:
+            return True
+        return False
 
     def is_scheduled(self) -> bool:
         return self.interval_seconds > 0 or self.is_calendar_based()

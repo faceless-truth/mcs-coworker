@@ -16,7 +16,7 @@ import threading
 import time
 import traceback
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 from typing import Callable
 
@@ -174,23 +174,54 @@ class LoadedPlugin:
             last_summary=self.last_summary,
         )
 
-    def _next_calendar_run(self) -> float:
-        """Return the unix timestamp of the next calendar-based run."""
+    def _next_calendar_run(self, now_fn=None) -> float:
+        """Return the unix timestamp of the next calendar-based run.
+
+        Dispatches on the schedule shape:
+          - daily_at(hour)              -> _next_daily_at_run
+          - monthly_on_day(day) /
+            quarterly_on_day(day)       -> month-step search below
+
+        ``now_fn`` is injected for testing; production callers pass nothing.
+        """
         sched = self.instance.default_schedule
-        now = datetime.now()
+        if sched.hour_of_day is not None:
+            return self._next_daily_at_run(sched.hour_of_day, now_fn=now_fn)
+        return self._next_monthly_run(now_fn=now_fn)
+
+    def _next_daily_at_run(self, hour: int, now_fn=None) -> float:
+        """Return the unix timestamp of the next HH:00 strictly in the future.
+
+        If ``now`` is already at or past today's HH:00, schedule HH:00 tomorrow
+        (the boundary case ``now == HH:00:00`` pushes to tomorrow so a tick
+        landing exactly on the boundary cannot re-fire today). No business-day
+        filtering here — the plugin's own run() guards on weekday.
+        """
+        now = (now_fn or datetime.now)()
+        candidate = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+        if candidate <= now:
+            candidate += timedelta(days=1)
+        return candidate.timestamp()
+
+    def _next_monthly_run(self, now_fn=None) -> float:
+        """Next-fire calculator for monthly_on_day / quarterly_on_day.
+
+        Tries this month first, then advances by ``months_interval`` until the
+        candidate is in the future. Day is clamped to the last valid day of
+        the month so e.g. day=31 on a 30-day month falls on the 30th.
+        """
+        sched = self.instance.default_schedule
+        now = (now_fn or datetime.now)()
         day = sched.day_of_month
         months_step = sched.months_interval
 
-        # Try this month first, then advance by months_step until we find a future date
         year, month = now.year, now.month
         for _ in range(24):  # safety: max 2 years look-ahead
-            # Clamp day to last valid day of month
             max_day = calendar.monthrange(year, month)[1]
             run_day = min(day, max_day)
             candidate = datetime(year, month, run_day, 8, 0, 0)  # run at 08:00
             if candidate > now:
                 return candidate.timestamp()
-            # Advance by months_interval
             month += months_step
             while month > 12:
                 month -= 12
