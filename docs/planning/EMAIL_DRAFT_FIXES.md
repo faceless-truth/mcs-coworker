@@ -135,3 +135,45 @@ Branch: `main`
 - [ ] Send test email that triggers a KB response with a URL → URL is clickable in the draft
 - [ ] Check other plugin drafts (debtor follow-up, BAS reminder) → URLs are also clickable
 - [ ] Rebuild installer if needed: `build_installer.bat`
+
+---
+
+## Follow-up (May 2026): Markdown asterisks and em-dashes in drafts
+
+**Problem:** Drafts produced by Smart Responder contained literal `**word**`
+markdown asterisks (visible in Outlook compose) and em-dashes that read as
+obviously AI-generated.
+
+**Fix — two layers:**
+
+1. New `draft_sanitizer.py` module runs on every outgoing body **before**
+   signature/wrapper assembly. It converts `**bold**` / `*italic*` to
+   `<strong>` / `<em>`, dash-prefixed bullet lines to `<ul><li>`, and
+   blank-line-separated blocks to `<p>`. Em-dashes and prose en-dashes
+   normalise to `, `; en-dashes between digits (e.g. `FY2024–2025`) are
+   preserved as hyphens. Smart quotes normalise to ASCII.
+2. The Smart Responder system prompt gained an `OUTPUT FORMATTING` section
+   forbidding markdown asterisks and em/en-dashes upstream.
+
+The sanitiser is the load-bearing fix — the prompt change saves a sanitiser
+pass and yields cleaner traces. **Every tool that writes to Outlook** routes
+its body through `draft_sanitizer.sanitize_draft_body`. In v2.3 this is
+enforced inside `GraphClient.send_email`, `create_draft`,
+`send_email_with_attachments`, `create_draft_with_attachments`, and
+`send_email_with_inline_image`, so plugins do not call it directly. New
+draft-writing code paths must either go through one of those methods or
+call `sanitize_draft_body` themselves.
+
+The previous `_strip_typographic_punctuation` helper in `graph_client.py`
+was deleted in the same commit; dash handling now lives only in
+`draft_sanitizer`.
+
+**Behaviour change vs the prior sanitiser:** dash replacement in prose
+changed from hyphen (`-`) to comma (`, `). Numeric ranges still produce a
+hyphen.
+
+**Commit messages:**
+- `feat(email): add draft body sanitiser for markdown + em-dash cleanup`
+- `feat(email): centralise draft sanitisation in draft_sanitizer module`
+- `feat(smart_responder): forbid markdown asterisks and em-dashes in draft body`
+- `docs(email-fixes): note draft sanitiser + dash policy change`
