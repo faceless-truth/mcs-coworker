@@ -18,6 +18,8 @@ from urllib.parse import urlparse, parse_qs
 
 import msal
 
+from draft_sanitizer import sanitize_draft_body
+
 logger = logging.getLogger(__name__)
 
 
@@ -132,35 +134,6 @@ _MCS_EMAIL_STYLE_MARKER = 'data-mcs-style="1"'
 _FONT_SIZE_RE = re.compile(r'^\d+(\.\d+)?(pt|px)$')
 
 
-def _strip_typographic_punctuation(body_html: str) -> str:
-    """Replace em/en dashes and smart quotes with plain ASCII equivalents.
-
-    Em/en dashes look unprofessional in business correspondence (per firm
-    style); smart quotes occasionally cause encoding glitches in older email
-    clients. This is a safety net — plugins also instruct Claude not to emit
-    them — applied centrally so every Graph send/draft path is covered.
-    """
-    if not body_html:
-        return body_html
-    replacements = {
-        "—": "-",   # em dash —
-        "–": "-",   # en dash –
-        "&mdash;": "-",
-        "&ndash;": "-",
-        "“": '"',   # left double quote
-        "”": '"',   # right double quote
-        "‘": "'",   # left single quote
-        "’": "'",   # right single quote
-        "&ldquo;": '"',
-        "&rdquo;": '"',
-        "&lsquo;": "'",
-        "&rsquo;": "'",
-    }
-    for src, dst in replacements.items():
-        body_html = body_html.replace(src, dst)
-    return body_html
-
-
 def _read_draft_font_settings() -> tuple[str, str, str]:
     """Return (family, size, color) for the draft wrapper.
 
@@ -187,6 +160,11 @@ def format_draft_body(body_html: str) -> str:
     Inline CSS only — `<style>` blocks get stripped by many mail clients.
     Reads font-family/size/color from settings on each call (no restart needed).
 
+    Pure wrapper now — markdown→HTML and dash/quote normalisation moved to
+    draft_sanitizer.sanitize_draft_body, which is invoked upstream of this
+    function in every send/draft path so the body has already been cleaned
+    by the time it reaches here.
+
     Edge cases:
       - Empty body → returned unchanged.
       - Plain text (no `<` anywhere) → newlines converted to `<br>` before wrap.
@@ -198,7 +176,6 @@ def format_draft_body(body_html: str) -> str:
     """
     if not body_html:
         return body_html
-    body_html = _strip_typographic_punctuation(body_html)
     if _MCS_EMAIL_STYLE_MARKER in body_html:
         return body_html
     leading = body_html.lstrip()[:6].lower()
@@ -530,6 +507,7 @@ class GraphClient:
     def send_email(self, to_address: str, subject: str, body_html: str,
                    reply_to_id: str = None):
         """Send an email directly."""
+        body_html = sanitize_draft_body(body_html)
         body_html = self._append_signature(body_html)
         body_html = format_draft_body(body_html)
         message = {
@@ -556,6 +534,7 @@ class GraphClient:
     def create_draft(self, to_address: str, subject: str, body_html: str,
                      reply_to_id: str = None):
         """Save a draft reply without sending it. Returns the draft message ID."""
+        body_html = sanitize_draft_body(body_html)
         body_html = self._append_signature(body_html)
         body_html = format_draft_body(body_html)
         if reply_to_id:
@@ -945,6 +924,7 @@ class GraphClient:
                                     reply_to_id: str = None):
         """Send an email with file attachments."""
         import base64
+        body_html = sanitize_draft_body(body_html)
         body_html = self._append_signature(body_html)
         body_html = format_draft_body(body_html)
         message = {
@@ -978,6 +958,7 @@ class GraphClient:
                                       reply_to_id: str = None) -> str:
         """Create a draft email with file attachments. Returns draft ID."""
         import base64
+        body_html = sanitize_draft_body(body_html)
         body_html = self._append_signature(body_html)
         body_html = format_draft_body(body_html)
 
@@ -1072,6 +1053,7 @@ class GraphClient:
                                       reply_to_id: str = None):
         """Send an email with an inline image. Creates draft, attaches, then sends."""
         import base64
+        body_html = sanitize_draft_body(body_html)
         body_html = format_draft_body(body_html)
         filename = os.path.basename(image_path)
         ext = os.path.splitext(filename)[1].lower()

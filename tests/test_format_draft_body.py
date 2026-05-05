@@ -23,6 +23,7 @@ from graph_client import (  # noqa: E402
     DEFAULT_DRAFT_FONT_SIZE,
     format_draft_body,
 )
+from draft_sanitizer import sanitize_draft_body  # noqa: E402
 
 
 class TestFormatDraftBody(unittest.TestCase):
@@ -85,11 +86,31 @@ class TestFormatDraftBody(unittest.TestCase):
         out = format_draft_body("<p>Hi</p>")
         self.assertIn('font-size: 14px', out)
 
-    def test_typographic_punctuation_still_stripped(self):
-        # Existing safety net behaviour must survive the rename.
+    def test_format_draft_body_no_longer_strips_dashes_itself(self):
+        # Dash handling moved to draft_sanitizer; format_draft_body is now a
+        # pure wrapper. Bodies passed in with dashes still in place are
+        # wrapped as-is. Production callers always run sanitize_draft_body
+        # first (see test_pipeline_replaces_em_dash_with_comma below).
         out = format_draft_body("<p>One — two — three</p>")
+        self.assertIn("—", out)
+        self.assertIn("data-mcs-style=\"1\"", out)
+
+    def test_pipeline_replaces_em_dash_with_comma(self):
+        # End-to-end pipeline as used by GraphClient.create_draft / send_email:
+        # sanitiser first (markdown + dash policy), then format_draft_body wraps.
+        # Behaviour change vs v2.3 pre-sanitiser: em-dash now becomes ", "
+        # (was "-"). En-dash between digits is preserved as a hyphen.
+        sanitised = sanitize_draft_body("One — two — three")
+        out = format_draft_body(sanitised)
         self.assertNotIn("—", out)
-        self.assertIn("One - two - three", out)
+        self.assertIn("One, two, three", out)
+        self.assertIn("data-mcs-style=\"1\"", out)
+
+    def test_pipeline_preserves_numeric_range_as_hyphen(self):
+        sanitised = sanitize_draft_body("FY2024–2025 carried-forward losses.")
+        out = format_draft_body(sanitised)
+        self.assertIn("FY2024-2025", out)
+        self.assertNotIn("–", out)
 
 
 if __name__ == "__main__":
