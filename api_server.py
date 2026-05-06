@@ -33,6 +33,7 @@ from flask_cors import CORS
 import config
 from config import (
     init_db,
+    get_db,
     get_setting, set_setting,
     get_all_settings,
     get_recent_activity,
@@ -88,6 +89,10 @@ CHAT_RATE_WINDOW = 60      # per N seconds
 CHAT_MAX_MESSAGE_LEN = 50000  # characters per user message
 CHAT_MAX_HISTORY = 50      # conversation turns retained
 
+# Agents that opt out of persistence — Plugin Builder is intentionally
+# ephemeral per Phase A spec, so its conversations never touch the DB.
+PERSISTED_AGENT_BLACKLIST = {"plugin_builder"}
+
 
 def _check_chat_rate() -> bool:
     now = time.time()
@@ -97,6 +102,79 @@ def _check_chat_rate() -> bool:
         return False
     _chat_timestamps.append(now)
     return True
+
+
+# ── Chat session persistence (Fix A2) ──────────────────────────────────────────
+def _resolve_chat_user_id() -> str:
+    """Derive the user_id used in chat_sessions from the signed-in M365 account.
+
+    Single-user single-tenant app, so this is always one value per install in
+    practice — but the schema is keyed on it so a future multi-account setup
+    just works. Falls back to '_local' before Graph auth completes."""
+    email = (get_setting("ms_account_email", "") or "").strip().lower()
+    return email or "_local"
+
+
+def _persist_chat_turn(
+    *,
+    user_id: str,
+    agent_id: str,
+    user_text: str,
+    assistant_text: str,
+) -> str | None:
+    """Append a (user, assistant) pair to the active session for this user
+    and agent, creating the session on first turn.
+
+    Skipped for agents in PERSISTED_AGENT_BLACKLIST. Best-effort: a DB
+    failure here is logged but does not propagate, since the assistant
+    response has already been generated and the user is waiting on it.
+    Caller invokes this *only after* the Anthropic call has returned, so
+    a model failure leaves chat_sessions untouched.
+    """
+    if agent_id in PERSISTED_AGENT_BLACKLIST:
+        return None
+    conn = get_db()
+    try:
+        row = conn.execute(
+            "SELECT id FROM chat_sessions WHERE user_id=? AND specialist_key=? "
+            "AND status='active'",
+            (user_id, agent_id),
+        ).fetchone()
+        if row:
+            session_id = row["id"]
+        else:
+            session_id = str(uuid.uuid4())
+            conn.execute(
+                "INSERT INTO chat_sessions (id, user_id, specialist_key) "
+                "VALUES (?, ?, ?)",
+                (session_id, user_id, agent_id),
+            )
+        # Explicit microsecond timestamps keep ORDER BY created_at
+        # deterministic; SQLite's default CURRENT_TIMESTAMP is 1-second
+        # resolution, which collides on back-to-back inserts. ORDER BY adds
+        # rowid as the final tiebreaker for any same-microsecond pair.
+        now_iso = datetime.now().isoformat(timespec="microseconds")
+        conn.execute(
+            "INSERT INTO chat_messages (id, session_id, role, content, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), session_id, "user", user_text, now_iso),
+        )
+        conn.execute(
+            "INSERT INTO chat_messages (id, session_id, role, content, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), session_id, "assistant", assistant_text, now_iso),
+        )
+        conn.commit()
+        return session_id
+    except Exception as e:
+        logger.warning("Chat persistence failed: %s", e, exc_info=True)
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        return None
+    finally:
+        conn.close()
 
 
 # ── /api/chat file uploads ─────────────────────────────────────────────────────
@@ -1447,11 +1525,23 @@ def chat():
             except Exception as e:
                 logger.warning(f"AI chat memory write skipped: {e}")
 
+        # Persist the new (user, assistant) turn under the active session for
+        # this (user, agent). Done *after* the Anthropic call returns so a
+        # model failure leaves chat_sessions/chat_messages untouched. Skipped
+        # for plugin_builder via PERSISTED_AGENT_BLACKLIST.
+        session_id = _persist_chat_turn(
+            user_id=_resolve_chat_user_id(),
+            agent_id=agent.id,
+            user_text=last_text,
+            assistant_text=response_text,
+        )
+
         return ok({
             "content": response_text,
             "model": model,
             "agent_id": agent.id,
             "agent_name": agent.name,
+            "session_id": session_id,
             "usage": {
                 "input_tokens": response.usage.input_tokens,
                 "output_tokens": response.usage.output_tokens,
@@ -1460,6 +1550,42 @@ def chat():
         })
     except Exception as e:
         return err(f"Chat error: {str(e)}")
+
+
+@app.route("/api/chat/<agent_id>/active", methods=["GET"])
+def get_active_chat_session(agent_id: str):
+    """Return the active session and its messages for (current_user, agent_id).
+
+    Empty payload {session_id: None, messages: []} when no active session
+    exists — the frontend uses that to render the welcome message.
+
+    Plugin Builder is intentionally not persisted (see
+    PERSISTED_AGENT_BLACKLIST) so it always gets the empty payload, which
+    keeps the existing ephemeral behaviour intact.
+    """
+    if agent_id in PERSISTED_AGENT_BLACKLIST:
+        return ok({"session_id": None, "messages": []})
+    user_id = _resolve_chat_user_id()
+    conn = get_db()
+    try:
+        session = conn.execute(
+            "SELECT id FROM chat_sessions WHERE user_id=? AND specialist_key=? "
+            "AND status='active'",
+            (user_id, agent_id),
+        ).fetchone()
+        if not session:
+            return ok({"session_id": None, "messages": []})
+        rows = conn.execute(
+            "SELECT id, role, content, created_at, metadata FROM chat_messages "
+            "WHERE session_id=? ORDER BY created_at ASC, rowid ASC",
+            (session["id"],),
+        ).fetchall()
+        return ok({
+            "session_id": session["id"],
+            "messages": [dict(r) for r in rows],
+        })
+    finally:
+        conn.close()
 
 
 @app.route("/api/clients/names", methods=["GET"])
