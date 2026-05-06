@@ -166,8 +166,11 @@ def _persist_chat_turn(
         )
         conn.commit()
         return session_id
-    except Exception as e:
-        logger.warning("Chat persistence failed: %s", e, exc_info=True)
+    except Exception:
+        logger.exception(
+            "chat persistence failed",
+            extra={"agent_id": agent_id, "user_id": user_id},
+        )
         try:
             conn.rollback()
         except Exception:

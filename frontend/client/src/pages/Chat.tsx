@@ -8,11 +8,15 @@ import {
   fetchAgents,
   fetchClientNames,
   uploadChatFile,
+  fetchActiveChatSession,
   type ChatFileRef,
 } from "@/lib/api";
 
 interface Message {
-  id: number;
+  // Local-only messages get numeric ids (Date.now() + offsets); messages
+  // hydrated from the backend keep their server-side UUID strings so the
+  // React keys stay stable across persistence round-trips.
+  id: number | string;
   role: "user" | "assistant";
   content: string;
   files?: ChatFileRef[];
@@ -222,6 +226,11 @@ export default function Chat() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  // True while the GET /api/chat/<agent_id>/active call is in flight on
+  // mount or after a tab switch. Suppresses both the welcome message and
+  // the example pills so they don't flash and then get replaced by the
+  // hydrated history a moment later.
+  const [hydrating, setHydrating] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<ChatFileRef[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState<{ name: string; size: number }[]>([]);
@@ -284,28 +293,88 @@ export default function Chat() {
     })();
   }, []);
 
-  // Seed a greeting whenever the selected agent changes.
+  // On mount and on every agent switch: fetch the active session for this
+  // (user, agent) and hydrate React state with any persisted messages so
+  // the conversation survives tab switches and app restarts. Plugin
+  // Builder is intentionally excluded — its sessions are ephemeral, so we
+  // skip the network call and render the greeting synchronously to avoid
+  // a hydration flicker.
   useEffect(() => {
     const agent = agents.find(a => a.id === selectedAgentId);
     if (!agent) return;
-    const isSpec =
-      agent.id !== "plugin_builder" && agent.id !== "general";
-    let greeting: string;
-    if (agent.id === "plugin_builder") {
-      greeting = "Hi! I'm the MCS CoWorker assistant. I can help you build new automation plugins, answer questions about your practice, or analyse client data. What would you like to build?";
-    } else if (isSpec && clientName.trim()) {
-      greeting = `${agent.icon} ${agent.name} here. Working on ${clientName.trim()}. How can I help?`;
-    } else if (isSpec) {
-      greeting = `${agent.icon} ${agent.name} here. ${agent.description}${agent.supports_files ? " You can attach relevant source documents (PDFs, Excel, CSV, Word) using the paperclip button." : ""} Is this query for a specific client?`;
-    } else {
-      greeting = `${agent.icon} ${agent.name} here. ${agent.description}${agent.supports_files ? " You can attach relevant source documents (PDFs, Excel, CSV, Word) using the paperclip button." : ""} How can I help?`;
-    }
-    setMessages([{ id: 0, role: "assistant", content: greeting }]);
+
+    const buildGreeting = (): string => {
+      const isSpec =
+        agent.id !== "plugin_builder" && agent.id !== "general";
+      if (agent.id === "plugin_builder") {
+        return "Hi! I'm the MCS CoWorker assistant. I can help you build new automation plugins, answer questions about your practice, or analyse client data. What would you like to build?";
+      }
+      if (isSpec && clientName.trim()) {
+        return `${agent.icon} ${agent.name} here. Working on ${clientName.trim()}. How can I help?`;
+      }
+      if (isSpec) {
+        return `${agent.icon} ${agent.name} here. ${agent.description}${agent.supports_files ? " You can attach relevant source documents (PDFs, Excel, CSV, Word) using the paperclip button." : ""} Is this query for a specific client?`;
+      }
+      return `${agent.icon} ${agent.name} here. ${agent.description}${agent.supports_files ? " You can attach relevant source documents (PDFs, Excel, CSV, Word) using the paperclip button." : ""} How can I help?`;
+    };
+
+    // Reset transient UI state on every agent switch — input, attachments,
+    // and the previous client context don't carry over.
     setAttachedFiles([]);
     setInput("");
-    // Clear client context when switching agents.
     setClientName("");
     setEntityName("");
+
+    // Plugin Builder: keep the original ephemeral behaviour byte-for-byte.
+    if (agent.id === "plugin_builder") {
+      setHydrating(false);
+      setMessages([{ id: 0, role: "assistant", content: buildGreeting() }]);
+      return;
+    }
+
+    // Render an empty messages array while the fetch is in flight so the
+    // welcome message doesn't flash before being replaced by the hydrated
+    // history. The messages area shows a "Loading conversation…" sentinel
+    // while hydrating is true.
+    setHydrating(true);
+    setMessages([]);
+
+    const ctrl = new AbortController();
+    (async () => {
+      try {
+        const data = await fetchActiveChatSession(agent.id, ctrl.signal);
+        if (ctrl.signal.aborted) return;
+        const persisted = data?.messages || [];
+        if (persisted.length > 0) {
+          setMessages(
+            persisted
+              .filter(m => m.role === "user" || m.role === "assistant")
+              .map(m => ({
+                id: m.id,
+                role: m.role as "user" | "assistant",
+                content: m.content,
+              })),
+          );
+        } else {
+          setMessages([{ id: 0, role: "assistant", content: buildGreeting() }]);
+        }
+      } catch (e) {
+        // AbortError lands here too — the cleanup below cancels the fetch
+        // when the user switches agents mid-flight, in which case we
+        // intentionally drop the response on the floor.
+        if (ctrl.signal.aborted) return;
+        console.error("Chat hydration failed; falling back to greeting.", e);
+        setMessages([{ id: 0, role: "assistant", content: buildGreeting() }]);
+      } finally {
+        if (!ctrl.signal.aborted) setHydrating(false);
+      }
+    })();
+
+    return () => ctrl.abort();
+    // clientName is intentionally omitted from the dep list — the original
+    // effect didn't track it either, and including it would re-fetch the
+    // session every time the user types in the client field.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedAgentId, agents]);
 
   useEffect(() => {
@@ -592,7 +661,7 @@ export default function Chat() {
   // For an assistant message, find the most recent prior user message's
   // attached files — those are the candidate attachments for any draft
   // emails the assistant wrote.
-  const filesAvailableForAssistant = (assistantMsgId: number): ChatFileRef[] => {
+  const filesAvailableForAssistant = (assistantMsgId: number | string): ChatFileRef[] => {
     const idx = messages.findIndex(m => m.id === assistantMsgId);
     if (idx < 0) return [];
     for (let i = idx - 1; i >= 0; i--) {
@@ -603,7 +672,7 @@ export default function Chat() {
     return [];
   };
 
-  const openDraftModal = (block: EmailBlock, msgId: number) => {
+  const openDraftModal = (block: EmailBlock, msgId: number | string) => {
     const available = filesAvailableForAssistant(msgId);
     // Pre-check files whose name matches one the assistant referenced.
     const refNames = new Set(block.attachments.map(s => s.toLowerCase()));
@@ -912,6 +981,15 @@ export default function Chat() {
 
       {/* Messages */}
       <div className="chat-messages flex-1 overflow-y-auto p-6 space-y-4">
+        {hydrating && messages.length === 0 && (
+          <div className="flex items-center justify-center py-12 text-sm text-muted-foreground">
+            <span
+              className="w-3 h-3 mr-2 rounded-full border-2 border-slate-300 border-t-blue-500 animate-spin"
+              aria-hidden
+            />
+            Loading conversation…
+          </div>
+        )}
         {messages.map(msg => (
           <div key={msg.id} className={`flex gap-3 ${msg.role === "user" ? "flex-row-reverse" : ""}`}>
             <div
@@ -1014,7 +1092,7 @@ export default function Chat() {
       </div>
 
       {/* Examples */}
-      {messages.length <= 1 && exampleList.length > 0 && (
+      {!hydrating && messages.length <= 1 && exampleList.length > 0 && (
         <div className="px-6 pb-3">
           <div className="text-xs text-muted-foreground mb-2">Try an example:</div>
           <div className="flex flex-wrap gap-2">
@@ -1116,9 +1194,10 @@ export default function Chat() {
           />
           <button
             onClick={() => send()}
-            disabled={(!input.trim() && attachedFiles.length === 0) || loading}
+            disabled={(!input.trim() && attachedFiles.length === 0) || loading || hydrating}
             className="flex-shrink-0 w-9 h-9 rounded-lg flex items-center justify-center text-white transition-all disabled:opacity-40"
             style={{ background: "oklch(0.5 0.2 250)" }}
+            title={hydrating ? "Loading conversation…" : undefined}
           >
             <Send className="w-4 h-4" />
           </button>

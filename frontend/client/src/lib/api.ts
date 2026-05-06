@@ -287,6 +287,27 @@ export async function clearChatHistory() {
   return apiFetch("/api/chat/history", { method: "DELETE" });
 }
 
+export interface ActiveChatSession {
+  session_id: string | null;
+  messages: Array<{
+    id: string;
+    role: string;
+    content: string;
+    created_at?: string;
+    metadata?: string | null;
+  }>;
+}
+
+export async function fetchActiveChatSession(
+  agentId: string,
+  signal?: AbortSignal,
+): Promise<ActiveChatSession> {
+  return apiFetch<ActiveChatSession>(
+    `/api/chat/${encodeURIComponent(agentId)}/active`,
+    { signal },
+  );
+}
+
 // ── Knowledge Base ────────────────────────────────────────────────────────────
 export interface KnowledgeEntry {
   id: number;
