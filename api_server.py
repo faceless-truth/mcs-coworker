@@ -1329,6 +1329,44 @@ def list_agents():
     })
 
 
+def generate_archive_title(messages: list[dict], specialist_display_name: str) -> str:
+    """Ask Haiku for a 5-7 word descriptive title for the archive filename.
+
+    Returns a sanitised, filesystem-safe title. Returns "" on any failure;
+    the /finish endpoint owns the timestamp fallback so this helper stays
+    a single-shot boundary call.
+    """
+    transcript = "\n".join(
+        f"{m['role']}: {m['content'][:500]}" for m in messages[:8]
+    )
+    prompt = (
+        f"Summarise the following {specialist_display_name} conversation in "
+        "5 to 7 words, suitable as a filename. Use Title Case. No quotes, "
+        "no punctuation, no specialist name. Output only the title.\n\n"
+        f"{transcript}"
+    )
+    try:
+        import anthropic as anthropic_lib
+        api_key = get_setting("anthropic_api_key", "")
+        client = anthropic_lib.Anthropic(api_key=api_key)
+        result = client.messages.create(
+            model=get_claude_model_fast(),
+            max_tokens=40,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        title = result.content[0].text.strip()
+        return _sanitise_filename_part(title)
+    except Exception as e:
+        logger.warning("Archive title generation failed: %s", e)
+        return ""
+
+
+def _sanitise_filename_part(s: str) -> str:
+    s = re.sub(r'[/\\:*?"<>|]', "-", s)
+    s = re.sub(r"\s+", " ", s).strip()
+    return s[:80]
+
+
 @app.route("/api/chat", methods=["POST"])
 def chat():
     if not _check_chat_rate():
