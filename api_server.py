@@ -61,6 +61,8 @@ from token_meter import get_usage_summary
 from event_bus import EventBus
 from kpi_monitor import KPIMonitor
 from specialists.registry import get_all_agents, get_agent
+from chat_export import build_chat_docx
+from graph_client import SharePointFolderMissing
 
 # ── App setup ──────────────────────────────────────────────────────────────────
 app = Flask(__name__)
@@ -113,6 +115,28 @@ def _resolve_chat_user_id() -> str:
     just works. Falls back to '_local' before Graph auth completes."""
     email = (get_setting("ms_account_email", "") or "").strip().lower()
     return email or "_local"
+
+
+def _resolve_chat_user_display_name() -> str:
+    """Pick the human-readable name shown in the archive .docx header.
+
+    Distinct from ``_resolve_chat_user_id`` — that one keys DB joins, this
+    one is purely for rendering. Three-tier fallback:
+      1. ``user_name``   — populated by graph_client._populate_identity_settings
+                           from /me.displayName on first auth.
+      2. ``ms_account_display_name`` — forward-compatible alias if a future
+                           setting is introduced under this name.
+      3. ``ms_account_email`` — uncased; better than nothing.
+      4. Hardcoded ``"MCS CoWorker User"``.
+    """
+    for key in ("user_name", "ms_account_display_name"):
+        value = (get_setting(key, "") or "").strip()
+        if value:
+            return value
+    email = (get_setting("ms_account_email", "") or "").strip()
+    if email:
+        return email
+    return "MCS CoWorker User"
 
 
 def _persist_chat_turn(
@@ -1329,6 +1353,39 @@ def list_agents():
     })
 
 
+# Display / short names used in the archive .docx header and filename.
+# Keys are the v2.3 agent_id values (matching graph_client.SPECIALIST_FOLDER_MAP).
+# plugin_builder is intentionally absent — /finish guards against it via
+# PERSISTED_AGENT_BLACKLIST before either map is read.
+SPECIALIST_DISPLAY_NAMES = {
+    "general": "General Chat",
+    "gst": "GST Specialist",
+    "smsf": "SMSF Specialist",
+    "div7a": "Division 7A Specialist",
+    "trusts": "Trust Tax Specialist",
+    "tax_structure": "Tax Structure Specialist",
+    "individual_tax": "Individual Tax Deductions",
+    "payroll": "Payroll Specialist",
+    "net_wealth": "Net Wealth / SMSF Audit",
+    "ato_portal": "ATO Portal Assistant",
+    "ato_correspondence": "ATO Correspondence",
+}
+
+SPECIALIST_SHORT_NAMES = {
+    "general": "General",
+    "gst": "GST",
+    "smsf": "SMSF",
+    "div7a": "Div 7A",
+    "trusts": "Trust Tax",
+    "tax_structure": "Tax Structure",
+    "individual_tax": "Individual Deductions",
+    "payroll": "Payroll",
+    "net_wealth": "Net Wealth SMSF Audit",
+    "ato_portal": "ATO Portal",
+    "ato_correspondence": "ATO Correspondence",
+}
+
+
 def generate_archive_title(messages: list[dict], specialist_display_name: str) -> str:
     """Ask Haiku for a 5-7 word descriptive title for the archive filename.
 
@@ -1627,6 +1684,121 @@ def get_active_chat_session(agent_id: str):
         })
     finally:
         conn.close()
+
+
+@app.route("/api/chat/<agent_id>/finish", methods=["POST"])
+def finish_chat_session(agent_id: str):
+    """Archive the active session for (current_user, agent_id) to SharePoint
+    and mark it archived in the DB.
+
+    Returns ``{archived: True, web_url, filename}`` on success. Response
+    shape diverges from the codebase-standard ``ok()`` envelope by design —
+    fix_b4_finish_endpoint.md pins the exact JSON contract that B5's
+    frontend toast relies on.
+
+    Fails closed on every error path: no chat_sessions row is updated until
+    the SharePoint upload has returned a webUrl, so the user can retry on
+    transient failures (network, expired token) without losing the session.
+    """
+    # Step 1 — Plugin Builder guard. Cheapest check, do first.
+    if agent_id in PERSISTED_AGENT_BLACKLIST:
+        return jsonify({"error": "Plugin Builder sessions are not archived."}), 400
+
+    # Step 2 — unknown agent guard. Catches typos before any DB / Anthropic /
+    # Graph work. Uses repr so the offending id is visible verbatim.
+    if agent_id not in SPECIALIST_DISPLAY_NAMES:
+        return jsonify({"error": f"Unknown agent_id: {agent_id!r}"}), 400
+
+    user_id = _resolve_chat_user_id()
+    conn = get_db()
+    try:
+        # Step 3 — load the active session.
+        session_row = conn.execute(
+            "SELECT id FROM chat_sessions WHERE user_id=? AND specialist_key=? "
+            "AND status='active'",
+            (user_id, agent_id),
+        ).fetchone()
+        if not session_row:
+            return jsonify({"error": "No active session to archive"}), 404
+
+        # Step 4 — load messages. rowid ASC tiebreak matches the GET handler.
+        message_rows = conn.execute(
+            "SELECT id, role, content, created_at, metadata FROM chat_messages "
+            "WHERE session_id=? ORDER BY created_at ASC, rowid ASC",
+            (session_row["id"],),
+        ).fetchall()
+        if not message_rows:
+            return jsonify({"error": "Cannot archive an empty session"}), 400
+
+        messages = [dict(m) for m in message_rows]
+    finally:
+        conn.close()
+
+    # Step 5 — title (with timestamp fallback baked in here per the contract
+    # generate_archive_title returns "" on any failure).
+    specialist_display = SPECIALIST_DISPLAY_NAMES[agent_id]
+    specialist_short = SPECIALIST_SHORT_NAMES[agent_id]
+    today_str = datetime.now().strftime("%Y-%m-%d")
+
+    title = generate_archive_title(messages, specialist_display)
+    if not title:
+        title = f"{datetime.now().strftime('%H-%M')} conversation"
+
+    filename = f"{today_str} {specialist_short} - {title}.docx"
+
+    # Step 6 — build the docx in memory. Cheap and deterministic; any failure
+    # here is a programmer error and propagates as 500.
+    docx_buf = build_chat_docx(
+        specialist_display_name=specialist_display,
+        title=title,
+        messages=messages,
+        user_display_name=_resolve_chat_user_display_name(),
+        archived_at=datetime.now(),
+    )
+
+    # Step 7 — upload. fail-closed: no DB write happens until upload returns a
+    # webUrl, so the session stays active and the user can retry.
+    gc = _get_graph()
+    if gc is None:
+        return jsonify({
+            "error": "SharePoint upload failed: not signed in to Microsoft 365.",
+        }), 500
+    try:
+        result = gc.upload_chat_archive(
+            agent_id=agent_id,
+            filename=filename,
+            file_bytes=docx_buf.getvalue(),
+        )
+    except SharePointFolderMissing as e:
+        return jsonify({"error": str(e)}), 500
+    except ValueError as e:
+        # Defensive — step 2 already filtered unknown agent_ids.
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        logger.exception("SharePoint upload failed during chat archive")
+        return jsonify({"error": f"SharePoint upload failed: {e}"}), 500
+
+    # Step 8 — mark archived. Documented limitation: if this UPDATE fails
+    # post-upload, the user retries and gets a duplicate file in SharePoint.
+    # Not introducing a 3-state status machine to fix it (per fix file).
+    conn = get_db()
+    try:
+        conn.execute(
+            "UPDATE chat_sessions SET status='archived', archived_at=?, "
+            "archived_to_url=? WHERE id=?",
+            (datetime.now().isoformat(timespec="microseconds"),
+             result["web_url"], session_row["id"]),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    # Step 9 — response. Exact JSON shape mandated by the fix file.
+    return jsonify({
+        "archived": True,
+        "web_url": result["web_url"],
+        "filename": filename,
+    }), 200
 
 
 @app.route("/api/clients/names", methods=["GET"])
