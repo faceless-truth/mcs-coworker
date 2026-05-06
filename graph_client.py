@@ -104,6 +104,55 @@ print(f"[SharePoint] Library = {SHAREPOINT_LIBRARY}")
 print(f"[SharePoint] Client base = {SHAREPOINT_CLIENT_BASE}")
 
 
+class SharePointFolderMissing(Exception):
+    """Raised when the target SharePoint folder for a chat archive does not exist.
+
+    The chat archive flow does an explicit folder GET before the PUT so a typo
+    in SPECIALIST_FOLDER_MAP cannot silently create a phantom folder via
+    Graph's auto-create-on-PUT behaviour for small files. Phase B governance
+    requirement.
+    """
+
+
+# Hardcoded archive root for chat session exports. Intentionally not pulled
+# from settings — see fix_b2_sharepoint_upload.md (no caching, no overrides).
+CHAT_ARCHIVE_ROOT = "Server/Clients/MCS Coworkers"
+
+# Maps the v2.3 agent_id (specialist registry key) to the SharePoint folder
+# name under CHAT_ARCHIVE_ROOT. Names must match real SharePoint folders
+# exactly — case and spaces matter. plugin_builder is intentionally absent;
+# /api/chat/<agent_id>/finish blocks it at the endpoint layer in B4.
+SPECIALIST_FOLDER_MAP: dict[str, str] = {
+    "general": "General",
+    "gst": "GST Specialist",
+    "smsf": "SMSF Specialist",
+    "div7a": "Division 7A Specialist",
+    "trusts": "Trust Tax Specialist",
+    "tax_structure": "Tax Structure Specialist",
+    "individual_tax": "Individual Tax Deductions",
+    "payroll": "Payroll Specialist",
+    "net_wealth": "Net Wealth SMSF Audit",
+    "ato_portal": "General",
+    "ato_correspondence": "General",
+}
+
+
+def _build_chat_archive_paths(agent_id: str, filename: str) -> tuple[str, str]:
+    """Return (folder_path, file_path) under CHAT_ARCHIVE_ROOT for this agent.
+
+    folder_path is the parent directory checked for existence; file_path is
+    the upload target. Raises ValueError when the agent_id is not present in
+    SPECIALIST_FOLDER_MAP — that includes plugin_builder, which is excluded
+    by design.
+    """
+    folder_name = SPECIALIST_FOLDER_MAP.get(agent_id)
+    if not folder_name:
+        raise ValueError(f"No SharePoint folder mapped for specialist {agent_id!r}")
+    folder_path = f"{CHAT_ARCHIVE_ROOT}/{folder_name}"
+    file_path = f"{folder_path}/{filename}"
+    return folder_path, file_path
+
+
 _URL_LINKIFY_PATTERN = re.compile(
     r'(?<!href=")(?<!href=\')(?<!src=")(?<!src=\')(https?://[^\s<>"\']+)'
 )
@@ -1344,6 +1393,72 @@ class GraphClient:
             logger.info("Uploaded to SharePoint: %s", file_path)
             return result["webUrl"]
         return None
+
+    def upload_chat_archive(
+        self,
+        *,
+        agent_id: str,
+        filename: str,
+        file_bytes: bytes,
+    ) -> dict:
+        """Upload a chat archive .docx to the SharePoint folder for this agent.
+
+        Returns ``{'web_url': ..., 'item_id': ...}`` on success.
+
+        Raises:
+            ValueError: agent_id is not in SPECIALIST_FOLDER_MAP (includes
+                plugin_builder, which is blocked by design).
+            SharePointFolderMissing: target folder is not visible under
+                CHAT_ARCHIVE_ROOT — no auto-create, by Phase B design.
+            RuntimeError: site/drive resolution failed, or the upload itself
+                returned no usable response.
+
+        The folder-existence GET intentionally precedes the PUT. Graph's
+        small-file PUT can auto-create parent folders, so relying on a
+        404-on-PUT to detect a typo would silently mint a phantom folder.
+        ``_make_request`` collapses 404 / 4xx / network errors to ``None``,
+        which we treat uniformly as "not visibly present" — fail loud.
+        """
+        folder_path, file_path = _build_chat_archive_paths(agent_id, filename)
+
+        site_id = self.get_sharepoint_site_id()
+        if not site_id:
+            raise RuntimeError(
+                f"Could not resolve SharePoint site at {SHAREPOINT_SITE_URL}"
+            )
+        drive_id = self.get_sharepoint_drive_id(site_id)
+        if not drive_id:
+            raise RuntimeError(
+                f"Could not resolve SharePoint drive for library "
+                f"'{SHAREPOINT_LIBRARY}'"
+            )
+
+        folder_url = f"{GRAPH_BASE}/drives/{drive_id}/root:/{folder_path}"
+        folder_check = self._make_request("GET", folder_url)
+        if folder_check is None or "id" not in folder_check:
+            folder_name = SPECIALIST_FOLDER_MAP[agent_id]
+            raise SharePointFolderMissing(
+                f"SharePoint folder '{folder_name}' not found at "
+                f"'{CHAT_ARCHIVE_ROOT}'. Please confirm the folder exists "
+                f"in the firm's MCS Coworkers site."
+            )
+
+        upload_url = f"{GRAPH_BASE}/drives/{drive_id}/root:/{file_path}:/content"
+        headers = {
+            "Content-Type": (
+                "application/vnd.openxmlformats-officedocument"
+                ".wordprocessingml.document"
+            ),
+        }
+        result = self._make_request(
+            "PUT", upload_url, data=file_bytes, headers=headers,
+        )
+        if not result or "webUrl" not in result:
+            raise RuntimeError(
+                f"SharePoint upload failed for {file_path!r}; see logs for details."
+            )
+        logger.info("Uploaded chat archive to SharePoint: %s", file_path)
+        return {"web_url": result["webUrl"], "item_id": result.get("id", "")}
 
     def list_sharepoint_folder(self, client_name: str,
                                entity_name: str = None) -> list:
