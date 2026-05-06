@@ -308,6 +308,22 @@ export async function fetchActiveChatSession(
   );
 }
 
+export interface FinishChatResult {
+  archived: true;
+  web_url: string;
+  filename: string;
+}
+
+export async function finishChatSession(
+  agentId: string,
+  signal?: AbortSignal,
+): Promise<FinishChatResult> {
+  return apiFetch<FinishChatResult>(
+    `/api/chat/${encodeURIComponent(agentId)}/finish`,
+    { method: "POST", signal },
+  );
+}
+
 // ── Knowledge Base ────────────────────────────────────────────────────────────
 export interface KnowledgeEntry {
   id: number;

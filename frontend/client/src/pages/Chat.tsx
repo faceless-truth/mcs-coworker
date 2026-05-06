@@ -9,6 +9,7 @@ import {
   fetchClientNames,
   uploadChatFile,
   fetchActiveChatSession,
+  finishChatSession,
   type ChatFileRef,
 } from "@/lib/api";
 
@@ -231,6 +232,11 @@ export default function Chat() {
   // the example pills so they don't flash and then get replaced by the
   // hydrated history a moment later.
   const [hydrating, setHydrating] = useState(false);
+  // Bumped after a successful Finish chat archive so the hydration effect
+  // re-runs against the now-empty active session and re-seeds the welcome
+  // greeting. Cleaner than duplicating buildGreeting() at the call site.
+  const [archivedTick, setArchivedTick] = useState(0);
+  const [isArchiving, setIsArchiving] = useState(false);
   const [attachedFiles, setAttachedFiles] = useState<ChatFileRef[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadingFiles, setUploadingFiles] = useState<{ name: string; size: number }[]>([]);
@@ -374,8 +380,10 @@ export default function Chat() {
     // clientName is intentionally omitted from the dep list — the original
     // effect didn't track it either, and including it would re-fetch the
     // session every time the user types in the client field.
+    // archivedTick is included so a successful Finish chat re-runs hydration
+    // and falls through to the greeting branch (the active session is gone).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedAgentId, agents]);
+  }, [selectedAgentId, agents, archivedTick]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -444,6 +452,36 @@ export default function Chat() {
     const agent = agents.find(a => a.id === newId);
     setSelectedAgentId(newId);
     if (agent) toast(`Switched to ${agent.name} — conversation cleared.`);
+  };
+
+  const handleFinishClick = async () => {
+    const confirmed = window.confirm(
+      "Finish this conversation? It will be saved to SharePoint and cleared from your screen. This cannot be undone.",
+    );
+    if (!confirmed) return;
+    setIsArchiving(true);
+    try {
+      const result = await finishChatSession(selectedAgentId);
+      // Bump the hydration tick — the existing useEffect re-fetches the
+      // (now-empty) active session and re-seeds the greeting via its
+      // existing branch. No need to duplicate buildGreeting() here.
+      setArchivedTick(t => t + 1);
+      toast.success("Archived to SharePoint", {
+        action: {
+          label: "Open",
+          onClick: () => window.open(result.web_url, "_blank"),
+        },
+      });
+    } catch (err) {
+      // Failure leaves the conversation intact so the user can retry or
+      // copy out details. Long duration so a transient SharePoint hiccup
+      // is readable, not auto-dismissed before the user notices.
+      const message =
+        err instanceof Error ? err.message : "Failed to archive conversation";
+      toast.error(message, { duration: 10000 });
+    } finally {
+      setIsArchiving(false);
+    }
   };
 
   const uploadFiles = async (files: File[]) => {
@@ -1202,12 +1240,39 @@ export default function Chat() {
             <Send className="w-4 h-4" />
           </button>
         </div>
-        <div className="text-xs text-muted-foreground mt-2 text-center">
-          Shift+Enter for new line
-          {selectedAgent?.supports_files && acceptAttr && (
-            <>
-              {" · "}Accepts {acceptAttr}{" · "}drop files here or use the paperclip
-            </>
+        <div className="mt-2 flex items-center text-xs text-muted-foreground">
+          <div className="flex-1 text-center">
+            Shift+Enter for new line
+            {selectedAgent?.supports_files && acceptAttr && (
+              <>
+                {" · "}Accepts {acceptAttr}{" · "}drop files here or use the paperclip
+              </>
+            )}
+          </div>
+          {/* Finish chat: render-gated to match backend PERSISTED_AGENT_BLACKLIST
+              (kept hardcoded — duplicating one string is cleaner than fetching
+              the blacklist over HTTP just for a render condition). Disabled
+              while a chat request is in flight to dodge the
+              archive-during-mid-turn race called out in B4. */}
+          {selectedAgentId !== "plugin_builder" && (
+            <button
+              type="button"
+              onClick={handleFinishClick}
+              disabled={
+                !messages.some(m => m.id !== 0) ||
+                loading ||
+                hydrating ||
+                isArchiving
+              }
+              className="ml-2 px-3 py-1 rounded-md text-xs font-medium border border-border bg-white text-slate-700 hover:border-red-300 hover:text-red-600 disabled:opacity-40 disabled:hover:border-border disabled:hover:text-slate-700 transition-all"
+              title={
+                isArchiving
+                  ? "Archiving conversation…"
+                  : "Save this conversation to SharePoint and start fresh"
+              }
+            >
+              {isArchiving ? "Archiving…" : "Finish chat"}
+            </button>
           )}
         </div>
       </div>
