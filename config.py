@@ -52,6 +52,9 @@ def apply_wal_pragmas(conn: sqlite3.Connection) -> None:
     try:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA busy_timeout=5000")
+        # SQLite ships with FK enforcement off by default. Without this any
+        # ON DELETE / ON UPDATE clause on a REFERENCES column is a no-op.
+        conn.execute("PRAGMA foreign_keys=ON")
     except sqlite3.Error:
         # Some platforms / in-memory DBs may reject these — not fatal.
         pass
@@ -199,6 +202,32 @@ def init_db():
 
         CREATE INDEX IF NOT EXISTS idx_staff_signatures_email
             ON staff_signatures(LOWER(email));
+
+        CREATE TABLE IF NOT EXISTS chat_sessions (
+            id              TEXT PRIMARY KEY,
+            user_id         TEXT NOT NULL,
+            specialist_key  TEXT NOT NULL,
+            status          TEXT NOT NULL DEFAULT 'active',
+            created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            archived_at     TIMESTAMP,
+            archived_to_url TEXT,
+            UNIQUE (user_id, specialist_key, status)
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_chat_sessions_user_specialist
+            ON chat_sessions (user_id, specialist_key, status);
+
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id          TEXT PRIMARY KEY,
+            session_id  TEXT NOT NULL REFERENCES chat_sessions(id) ON DELETE CASCADE,
+            role        TEXT NOT NULL,
+            content     TEXT NOT NULL,
+            created_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            metadata    TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS ix_chat_messages_session_created
+            ON chat_messages (session_id, created_at);
     """)
 
     # Add display_name column if upgrading from older schema
