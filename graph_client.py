@@ -540,10 +540,11 @@ class GraphClient:
         if reply_to_id:
             try:
                 draft_id = self._create_threaded_reply_draft(reply_to_id, body_html)
-                # Do NOT mark the original as unread — that creates an infinite
-                # loop where the next plugin run sees it as unread again and
-                # drafts a duplicate reply. Callers are responsible for
-                # marking the original as read after a successful draft.
+                # Idempotency for smart_responder is enforced by the
+                # smart_responder_processed table (see plugin_smart_responder.py),
+                # not by the Outlook isRead flag. The unread flag is restored
+                # after successful draft creation so the accountant has a UI
+                # signal that something is awaiting review.
                 return draft_id
             except Exception as e:
                 logger.warning(
@@ -594,15 +595,6 @@ class GraphClient:
         )
         r2.raise_for_status()
         return draft_id
-
-    def _reopen_original(self, message_id: str) -> None:
-        """Flip the original email back to unread so the accountant sees
-        the draft reply highlighted in their inbox. Graph's `createReply`
-        marks the parent as read — we undo that here. Non-fatal on failure."""
-        try:
-            self.mark_as_unread(message_id)
-        except Exception as e:
-            logger.warning("mark_as_unread(%s) failed: %s", message_id, e)
 
     def get_draft_link(self, draft_id: str):
         """Get a deeplink to a draft in Outlook Web."""

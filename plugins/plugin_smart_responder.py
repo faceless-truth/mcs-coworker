@@ -170,8 +170,10 @@ class SmartEmailResponderPlugin(AgentPlugin):
                 or email.get("bodyPreview", "")
             )
 
-            # Belt-and-braces: even if mark_as_read fails or the email comes
-            # back as unread, never re-process the same Graph message id.
+            # The processed-table is the idempotency guarantee — the email
+            # is intentionally left unread after drafting (so the accountant
+            # sees a bold envelope), so the isRead flag can't be relied on
+            # to skip already-handled messages.
             if message_id and self._is_already_processed(message_id):
                 skipped += 1
                 continue
@@ -220,14 +222,18 @@ class SmartEmailResponderPlugin(AgentPlugin):
                     body_html=self._ensure_html(reply_body),
                     reply_to_id=message_id,
                 )
-                # IMMEDIATELY mark the original as read so the next 60-second
-                # tick doesn't see it as unread and draft another reply. The
-                # processed-tracking row below is the second layer of defence
-                # in case mark_as_read fails (transient Graph error).
+                # Restore the unread flag so the accountant sees a bold
+                # envelope as the cue that a draft is awaiting review.
+                # Graph's createReply marks the original as read as a side
+                # effect; this PATCH inverts that. Idempotency is owned by
+                # smart_responder_processed (see _is_already_processed),
+                # not by the isRead flag, so the unread state is safe.
                 try:
-                    graph.mark_as_read(message_id)
+                    graph.mark_as_unread(message_id)
                 except Exception as e:
-                    context.log(f"🧠 Couldn't mark read '{subject}' after drafting: {e}")
+                    logger.warning(
+                        "Failed to mark message as unread after draft: %s", e
+                    )
                 # Flag the original so a flag icon appears in the inbox — a
                 # visual cue that a draft reply is waiting. Non-fatal on
                 # failure: the draft has already been created successfully.
@@ -341,8 +347,9 @@ class SmartEmailResponderPlugin(AgentPlugin):
     @staticmethod
     def _is_already_processed(message_id: str) -> bool:
         """Return True if we have a row in ``smart_responder_processed`` for
-        this Graph message id. Prevents duplicate drafts even if mark_as_read
-        previously failed."""
+        this Graph message id. This is the sole idempotency guarantee — the
+        Outlook isRead flag is intentionally left unread after drafting so
+        the accountant has a UI signal that a draft awaits review."""
         if not message_id:
             return False
         try:
