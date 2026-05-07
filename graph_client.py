@@ -104,6 +104,38 @@ print(f"[SharePoint] Library = {SHAREPOINT_LIBRARY}")
 print(f"[SharePoint] Client base = {SHAREPOINT_CLIENT_BASE}")
 
 
+# ── SharePoint governance exceptions ──────────────────────────────────────────
+# Raised by `_ensure_client_folder_exists` to halt silent folder creation.
+# The fix is human-mediated: the accountant either creates the missing folder
+# or merges the duplicates in SharePoint, then the next scheduled retry picks
+# the upload back up. Auto-creation and auto-resolution are forbidden by
+# design — see docs/recon/MARK_UNREAD_AND_SHAREPOINT_DUP.md Stream B.
+
+class SharePointFolderMissing(Exception):
+    """Raised when no folder under the configured client root matches the
+    requested name (case-insensitive, whitespace-collapsed). Indicates the
+    client folder needs to be created (or renamed to match) before CoWorker
+    can file documents for them."""
+    pass
+
+
+class SharePointFolderAmbiguous(Exception):
+    """Raised when multiple folders under the configured client root collapse
+    to the same normalised key — i.e. legacy duplicates that differ only by
+    casing, whitespace, or punctuation. Requires human-mediated merge in
+    SharePoint; auto-picking a candidate would silently lose data from the
+    other side.
+
+    Carries ``candidate_names`` (verbatim SharePoint folder names) so the
+    catch-site can persist them as a JSON list without re-parsing the
+    exception message.
+    """
+
+    def __init__(self, message: str, candidate_names: list[str] | None = None):
+        super().__init__(message)
+        self.candidate_names: list[str] = list(candidate_names or [])
+
+
 _URL_LINKIFY_PATTERN = re.compile(
     r'(?<!href=")(?<!href=\')(?<!src=")(?<!src=\')(https?://[^\s<>"\']+)'
 )
@@ -1260,6 +1292,92 @@ class GraphClient:
         result = self._make_request("GET", url)
         return result is not None and "id" in result
 
+    @staticmethod
+    def _normalise_folder_key(name: str) -> str:
+        """Case-fold + collapse internal whitespace + trim. Used only to
+        detect collisions inside `_ensure_client_folder_exists`; the verbatim
+        SharePoint name is what gets returned to callers and put into upload
+        paths."""
+        return re.sub(r"\s+", " ", name or "").strip().lower()
+
+    def _ensure_client_folder_exists(
+        self,
+        *,
+        site_id: str,
+        drive_id: str,
+        parent_path: str,
+        folder_name: str,
+    ) -> str:
+        """Verify exactly one folder named `folder_name` exists under
+        `parent_path`, and return its verbatim display name.
+
+        The verbatim return value is load-bearing: if the existing folder is
+        ``ABC Pty. Ltd.`` and the caller-supplied ``folder_name`` is
+        ``ABC Pty Ltd`` (period-stripped by some upstream normaliser), using
+        the verbatim name in the upload path is what stops Graph from
+        silently auto-creating a parallel ``ABC Pty Ltd`` folder.
+
+        Behaviour:
+          - 1 match (case-insensitive, whitespace-collapsed): return the
+            verbatim existing folder name.
+          - 0 matches: raise ``SharePointFolderMissing``.
+          - 2+ matches: raise ``SharePointFolderAmbiguous`` with verbatim
+            candidate names.
+
+        This function is read-only by design — it never creates folders.
+
+        Note: requests $top=200 children. If the listing is paginated and
+        no match is found in the first page, raises ``SharePointFolderMissing``
+        with a pagination hint rather than silently missing a match further
+        in the listing. 200+ client folders is well above any plausible MC&S
+        roster size; if a future firm hits that, add proper pagination here.
+        """
+        # site_id is part of the function signature for caller clarity but
+        # the existing /drives/{drive_id}/root:/... pattern in this file
+        # doesn't need it on the URL — drive_id is already site-scoped via
+        # get_sharepoint_drive_id.
+        del site_id  # noqa: intentionally unused; preserved in the API
+        url = (
+            f"{GRAPH_BASE}/drives/{drive_id}/root:/{parent_path}"
+            f":/children?$select=id,name,folder&$top=200"
+        )
+        result = self._make_request("GET", url)
+        items = (result or {}).get("value") or []
+        has_next_page = bool((result or {}).get("@odata.nextLink"))
+
+        requested_key = self._normalise_folder_key(folder_name)
+        matches = [
+            item for item in items
+            if item.get("folder") is not None
+            and self._normalise_folder_key(item.get("name", "")) == requested_key
+        ]
+
+        if len(matches) == 1:
+            return matches[0]["name"]
+
+        if len(matches) == 0:
+            if has_next_page:
+                raise SharePointFolderMissing(
+                    f"Could not find folder '{folder_name}' under "
+                    f"'{parent_path}' in the first 200 entries. The listing "
+                    f"is paginated — folder may exist further in. "
+                    f"_ensure_client_folder_exists needs pagination support."
+                )
+            raise SharePointFolderMissing(
+                f"No SharePoint folder matches '{folder_name}' under "
+                f"'{parent_path}'. Create the folder (or rename an existing "
+                f"folder to match) before CoWorker can file documents for "
+                f"this client."
+            )
+
+        # 2+ matches — surface the verbatim names so a human can decide.
+        candidate_names = [m["name"] for m in matches]
+        raise SharePointFolderAmbiguous(
+            f"Multiple SharePoint folders match '{folder_name}' under "
+            f"'{parent_path}': {candidate_names}. Merge these in SharePoint.",
+            candidate_names=candidate_names,
+        )
+
     def upload_to_sharepoint(
         self,
         file_content: bytes,
@@ -1270,7 +1388,15 @@ class GraphClient:
     ) -> str | None:
         """Upload a file to a client's SharePoint folder.
 
-        Returns the SharePoint webUrl if successful, None if failed.
+        Returns the SharePoint webUrl if successful, None if a low-level
+        upload failure occurred.
+
+        Raises ``SharePointFolderMissing`` or ``SharePointFolderAmbiguous``
+        when the requested client folder cannot be uniquely resolved under
+        ``client_base``. Callers (Smart Responder, chat export) are expected
+        to catch these and surface them — auto-creation is forbidden so the
+        accountant can resolve the folder state in SharePoint deliberately.
+
         Path: /{library}/{client_base}/{client_name}/{entity_name}/{subfolder}/{filename}
         """
         site_id = self.get_sharepoint_site_id()
@@ -1285,7 +1411,17 @@ class GraphClient:
         config = self._get_sharepoint_config()
         folder_path = config["client_base"]
         if client_name:
-            folder_path += f"/{client_name}"
+            # Verify the client folder exists exactly once before uploading.
+            # Substitute the verbatim SharePoint name into the path so a
+            # casing/punctuation mismatch in the requested ``client_name``
+            # cannot cause Graph to silently auto-create a parallel folder.
+            actual_folder_name = self._ensure_client_folder_exists(
+                site_id=site_id,
+                drive_id=drive_id,
+                parent_path=config["client_base"],
+                folder_name=client_name,
+            )
+            folder_path += f"/{actual_folder_name}"
         if entity_name:
             folder_path += f"/{entity_name}"
         if subfolder:

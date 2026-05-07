@@ -187,6 +187,29 @@ def init_db():
             action       TEXT
         );
 
+        -- Pending SharePoint uploads that hit a folder governance error
+        -- (missing or ambiguous client folder). Recorded by the
+        -- smart_responder catch-and-record path; drained by the morning
+        -- briefing's pre-brief retry pass.
+        --
+        -- candidate_names_json is a JSON-encoded list of the verbatim
+        -- SharePoint folder names that collided (for ambiguous), or NULL
+        -- (for missing).
+        --
+        -- UNIQUE(message_id, action) prevents queue bloat when the same
+        -- email re-runs through smart_responder before resolution; second
+        -- and subsequent INSERTs use OR IGNORE.
+        CREATE TABLE IF NOT EXISTS sharepoint_upload_pending (
+            id                   INTEGER PRIMARY KEY AUTOINCREMENT,
+            message_id           TEXT NOT NULL,
+            action               TEXT NOT NULL DEFAULT 'upload_pending',
+            client_name          TEXT NOT NULL,
+            candidate_names_json TEXT,
+            created_at           TEXT DEFAULT CURRENT_TIMESTAMP,
+            resolved_at          TEXT,
+            UNIQUE(message_id, action)
+        );
+
         CREATE TABLE IF NOT EXISTS staff_signatures (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             name       TEXT NOT NULL,
@@ -1136,3 +1159,85 @@ def bulk_replace_bas_clients(rows: list[dict]) -> int:
     conn.commit()
     conn.close()
     return count
+
+
+# ── SharePoint upload-pending queue ───────────────────────────────────────────
+# Recorded when smart_responder's auto-file path hits a folder governance
+# error (SharePointFolderMissing or SharePointFolderAmbiguous). Drained by
+# the morning briefing's pre-brief retry pass.
+
+def record_sharepoint_upload_pending(
+    message_id: str,
+    client_name: str,
+    candidate_names: list[str] | None = None,
+) -> bool:
+    """Record a pending SharePoint upload. INSERT OR IGNORE on
+    (message_id, action) so re-runs against the same unresolved email don't
+    bloat the queue.
+
+    Returns True if a new row was inserted, False if the (message_id, action)
+    pair already existed and the INSERT was ignored.
+
+    candidate_names: pass the verbatim SharePoint folder names for an
+    ambiguous-folder situation; pass None for a missing-folder situation.
+    """
+    if not message_id or not client_name:
+        return False
+    payload = (
+        json.dumps(list(candidate_names))
+        if candidate_names
+        else None
+    )
+    conn = get_db()
+    cur = conn.execute(
+        "INSERT OR IGNORE INTO sharepoint_upload_pending "
+        "(message_id, action, client_name, candidate_names_json) "
+        "VALUES (?, 'upload_pending', ?, ?)",
+        (message_id, client_name, payload),
+    )
+    inserted = cur.rowcount > 0
+    conn.commit()
+    conn.close()
+    return inserted
+
+
+def list_sharepoint_upload_pending(only_unresolved: bool = True) -> list[dict]:
+    """Return pending SharePoint upload rows, oldest first.
+
+    Each row dict contains: id, message_id, action, client_name,
+    candidate_names (parsed list or None), created_at, resolved_at.
+    """
+    conn = get_db()
+    if only_unresolved:
+        sql = (
+            "SELECT * FROM sharepoint_upload_pending "
+            "WHERE resolved_at IS NULL ORDER BY created_at ASC"
+        )
+    else:
+        sql = "SELECT * FROM sharepoint_upload_pending ORDER BY created_at ASC"
+    rows = conn.execute(sql).fetchall()
+    conn.close()
+    out = []
+    for r in rows:
+        d = dict(r)
+        raw = d.pop("candidate_names_json", None)
+        try:
+            d["candidate_names"] = json.loads(raw) if raw else None
+        except (TypeError, ValueError):
+            d["candidate_names"] = None
+        out.append(d)
+    return out
+
+
+def delete_sharepoint_upload_pending(row_id: int) -> None:
+    """Remove a pending row — called by the retry path on a successful
+    upload. resolution-via-delete is the contract; the resolved_at column
+    exists for forward-compat (e.g. an external reconciler that wants to
+    mark resolved without deleting), but is unused today."""
+    conn = get_db()
+    conn.execute(
+        "DELETE FROM sharepoint_upload_pending WHERE id = ?",
+        (row_id,),
+    )
+    conn.commit()
+    conn.close()

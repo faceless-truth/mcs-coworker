@@ -2765,13 +2765,26 @@ def export_to_sharepoint():
     # the client folder — `entity_name` is ignored so the picker is the
     # single source of truth for the destination.
     upload_entity = None if subfolder_raw else entity_name
-    url = graph.upload_to_sharepoint(
-        file_content=buf.read(),
-        filename=filename,
-        client_name=client_name,
-        entity_name=upload_entity,
-        subfolder=subfolder,
+    from graph_client import (
+        SharePointFolderAmbiguous,
+        SharePointFolderMissing,
     )
+    try:
+        url = graph.upload_to_sharepoint(
+            file_content=buf.read(),
+            filename=filename,
+            client_name=client_name,
+            entity_name=upload_entity,
+            subfolder=subfolder,
+        )
+    except SharePointFolderMissing as e:
+        # The picker normally constrains client_name to existing folders,
+        # but a folder can disappear between picker time and submit time.
+        # Surface a 409 with the underlying message so the frontend can
+        # render it instead of a generic 500.
+        return jsonify({"ok": False, "error": str(e)}), 409
+    except SharePointFolderAmbiguous as e:
+        return jsonify({"ok": False, "error": str(e)}), 409
     if url:
         return jsonify({
             "ok": True,
