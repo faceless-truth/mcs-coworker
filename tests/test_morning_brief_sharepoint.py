@@ -23,7 +23,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 REPO_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(REPO_ROOT))
@@ -211,6 +211,98 @@ class TestRenderSharePointIssuesSection(unittest.TestCase):
         # Stale heading appears AFTER the fresh content (sections are
         # rendered in fresh-then-stale order).
         self.assertLess(out.index("Fresh Client"), out.index("Stale SharePoint"))
+
+
+class TestQuietDaySuppressionWithSharePointPending(unittest.TestCase):
+    """Pin the contract that unresolved SharePoint folder issues count
+    toward the quiet-day actionable tally. A quiet day with accumulated
+    SP issues must NOT suppress the brief — otherwise the punch list
+    silently grows."""
+
+    def setUp(self):
+        # Wipe both pending queue and any previous user_email so two tests
+        # in the same process don't leak settings into each other.
+        conn = cfg.get_db()
+        conn.execute("DELETE FROM sharepoint_upload_pending")
+        conn.execute(
+            "DELETE FROM settings WHERE key IN ('user_email')"
+        )
+        conn.commit()
+        conn.close()
+
+        from plugin_morning_briefing import MorningBriefingPlugin
+        self.plugin = MorningBriefingPlugin()
+
+        from plugin_base import PluginContext
+        self.ctx = MagicMock(spec=PluginContext)
+        self.ctx.draft_mode = True
+        self.ctx.graph = MagicMock()
+        self.ctx.memory = None
+        self.ctx.gateway = None
+        self.ctx.event_bus = None
+        self.ctx.approval_queue = None
+        self.ctx.log = MagicMock()
+        self.ctx.claude_reason = MagicMock()
+        self.ctx.claude_fast = MagicMock()
+        self.ctx.claude = self.ctx.claude_reason
+
+    def _run_at_8am_monday(self, actionable_count: int):
+        """Drive run() through the time/business-day gates with a known
+        Monday 08:00 'now', a stubbed compile that returns the desired
+        actionable count, and a no-op retry pass so seeded SP rows survive
+        into the bump-and-suppression-check window.
+
+        Patches `datetime` surgically: `.now()` returns the fixed Monday
+        morning so the time gate passes, but `.utcnow()` and
+        `.fromisoformat()` delegate to the real class so the issues-section
+        renderer's staleness arithmetic works.
+        """
+        # 2025-05-12 was a Monday; 08:00 matches the default briefing_hour.
+        mocked_now = datetime(2025, 5, 12, 8, 0)
+        with patch("plugin_morning_briefing.datetime") as mock_dt, \
+             patch.object(self.plugin, "_compile_accountant_briefing",
+                          return_value=("Brief body", actionable_count)), \
+             patch.object(self.plugin, "_retry_pending_sharepoint_uploads",
+                          return_value=(0, 0)):
+            mock_dt.now.return_value = mocked_now
+            mock_dt.utcnow.side_effect = datetime.utcnow
+            mock_dt.fromisoformat.side_effect = datetime.fromisoformat
+            return self.plugin.run(self.ctx)
+
+    # Regression-pin existing behaviour: empty queue → suppression still
+    # fires when the day is otherwise quiet.
+    def test_quiet_day_with_empty_queue_still_suppresses(self):
+        result = self._run_at_8am_monday(actionable_count=0)
+        self.assertIn("suppressed", result.summary.lower())
+        self.ctx.graph.create_draft.assert_not_called()
+        self.ctx.graph.send_email.assert_not_called()
+
+    # New behaviour: empty otherwise-actionable but unresolved SP rows
+    # bump the tally past the quiet threshold, brief proceeds, issues
+    # section ends up in the email body.
+    def test_quiet_day_with_sp_rows_does_not_suppress_and_renders_section(self):
+        cfg.record_sharepoint_upload_pending("MSG-Q-1", "Korkie, Gordon")
+        cfg.record_sharepoint_upload_pending(
+            "MSG-Q-2", "Beta Holdings",
+            candidate_names=["Beta Holdings", "Beta  Holdings"],
+        )
+        cfg.record_sharepoint_upload_pending("MSG-Q-3", "Gamma Inc")
+        # Configure a recipient so create_draft actually fires; otherwise
+        # the brief code path skips delivery on empty recipients and we
+        # can't inspect the body that would have been sent.
+        cfg.set_setting("user_email", "elio@mcands.com.au")
+
+        result = self._run_at_8am_monday(actionable_count=0)
+
+        self.assertNotIn("suppressed", result.summary.lower())
+        self.ctx.graph.create_draft.assert_called_once()
+        # Body argument carries the issues section verbatim.
+        positional = self.ctx.graph.create_draft.call_args.args
+        body_html = positional[2] if len(positional) >= 3 else ""
+        self.assertIn("SharePoint folder issues", body_html)
+        self.assertIn("Korkie, Gordon", body_html)
+        # Verbatim ambiguous candidates including the double-space.
+        self.assertIn(f"{SHAREPOINT_CLIENT_BASE}/Beta  Holdings", body_html)
 
 
 if __name__ == "__main__":

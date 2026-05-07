@@ -141,6 +141,14 @@ class MorningBriefingPlugin(AgentPlugin):
             briefing_text, actionable = self._compile_accountant_briefing(
                 context, today_str, is_monday)
 
+        # Unresolved SharePoint folder issues count toward the actionable
+        # tally so a quiet-otherwise day with accumulated SP issues doesn't
+        # suppress the brief and leave the punch list invisible. Reads the
+        # queue once here; the issues-section renderer below reads it again
+        # — both reads see the same state because the retry pass already
+        # ran and no other writer touches the queue mid-run.
+        actionable += len(list_sharepoint_upload_pending(only_unresolved=True))
+
         # ── Quiet-day suppression ─────────────────────────────────────────────
         if self.get_plugin_setting("suppress_if_quiet", "1") == "1":
             quiet_threshold = int(self.get_plugin_setting("quiet_threshold", "3"))
@@ -173,6 +181,12 @@ class MorningBriefingPlugin(AgentPlugin):
             # verbatim folder names (including subtle whitespace/punctuation
             # differences that signal duplicates) reach the accountant intact.
             # Empty-section header is suppressed by the renderer.
+            #
+            # Note: Option (a) retry semantics. Drafts that fail to auto-file
+            # during a missing-folder window do NOT get filed retroactively
+            # once the folder is fixed. The next inbound email from the same
+            # client will auto-file once the folder is uniquely resolvable.
+            # See docs/recon/MARK_UNREAD_AND_SHAREPOINT_DUP.md.
             issues_section = self._render_sharepoint_issues_section()
             email_body_text = briefing_text
             if issues_section:
