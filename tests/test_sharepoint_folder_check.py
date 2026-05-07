@@ -90,7 +90,10 @@ class TestEnsureClientFolderExists(unittest.TestCase):
                 )
         self.assertIn("ABC Pty Ltd", str(cm.exception))
 
-    # 5. Two matches → SharePointFolderAmbiguous, message lists candidates.
+    # 5. Two matches → SharePointFolderAmbiguous, message lists candidates,
+    #    and the exception carries them on a structured `candidate_names`
+    #    attribute so catch-sites can persist them without parsing the
+    #    message string.
     def test_two_matches_raises_ambiguous_with_both_names(self):
         response = {"value": [
             _folder("Beta Holdings"),
@@ -105,6 +108,11 @@ class TestEnsureClientFolderExists(unittest.TestCase):
         msg = str(cm.exception)
         self.assertIn("Beta Holdings", msg)
         self.assertIn("Beta  Holdings", msg)  # verbatim, double-space preserved
+        # Structured candidate names — catch-sites use this directly.
+        self.assertEqual(
+            cm.exception.candidate_names,
+            ["Beta Holdings", "Beta  Holdings"],
+        )
 
     # 6. Empty parent → Missing.
     def test_empty_parent_raises_missing(self):

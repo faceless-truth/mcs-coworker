@@ -43,7 +43,9 @@ from plugin_base import (
 )
 from config import (
     get_setting, log_activity, get_knowledge_entries, get_db,
+    record_sharepoint_upload_pending,
 )
+from graph_client import SharePointFolderAmbiguous, SharePointFolderMissing
 from prompt_utils import wrap_untrusted_content, UNTRUSTED_CONTENT_SYSTEM_PROMPT
 from bas_dates import format_bas_dates_for_prompt
 from client_utils import normalise_client_name
@@ -292,9 +294,16 @@ class SmartEmailResponderPlugin(AgentPlugin):
 
                 # Best-effort copy of the draft to the client's SharePoint
                 # folder so the correspondence file is visible alongside
-                # other client documents. Skip silently if SharePoint is
-                # not configured or the upload fails — the draft itself
-                # has already been created successfully.
+                # other client documents. Three failure paths:
+                #   - SharePointFolderMissing / Ambiguous: expected
+                #     operational state. Record to the pending-upload
+                #     queue so the morning brief can surface it and the
+                #     retry pass can re-attempt later. logger.info, not
+                #     warning — auto-creation is forbidden by design,
+                #     this isn't an error.
+                #   - Other Exception: existing best-effort behaviour —
+                #     log warning and continue. Smart responder owns the
+                #     draft; the SharePoint copy is a secondary artefact.
                 try:
                     if client_name:
                         from datetime import datetime as _dt
@@ -316,6 +325,27 @@ class SmartEmailResponderPlugin(AgentPlugin):
                             client_name=client_name,
                             subfolder="CoWorker Correspondence",
                         )
+                except SharePointFolderMissing as e:
+                    record_sharepoint_upload_pending(
+                        message_id=message_id,
+                        client_name=client_name,
+                        candidate_names=None,
+                    )
+                    logger.info(
+                        "SharePoint folder missing for '%s' — recorded for "
+                        "retry: %s", client_name, e,
+                    )
+                except SharePointFolderAmbiguous as e:
+                    record_sharepoint_upload_pending(
+                        message_id=message_id,
+                        client_name=client_name,
+                        candidate_names=e.candidate_names,
+                    )
+                    logger.info(
+                        "SharePoint folder ambiguous for '%s' (candidates=%s) "
+                        "— recorded for retry: %s",
+                        client_name, e.candidate_names, e,
+                    )
                 except Exception as e:
                     logger.warning("SharePoint auto-file failed (non-fatal): %s", e)
             except Exception as e:

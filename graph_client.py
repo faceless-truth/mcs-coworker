@@ -124,8 +124,16 @@ class SharePointFolderAmbiguous(Exception):
     to the same normalised key — i.e. legacy duplicates that differ only by
     casing, whitespace, or punctuation. Requires human-mediated merge in
     SharePoint; auto-picking a candidate would silently lose data from the
-    other side."""
-    pass
+    other side.
+
+    Carries ``candidate_names`` (verbatim SharePoint folder names) so the
+    catch-site can persist them as a JSON list without re-parsing the
+    exception message.
+    """
+
+    def __init__(self, message: str, candidate_names: list[str] | None = None):
+        super().__init__(message)
+        self.candidate_names: list[str] = list(candidate_names or [])
 
 
 _URL_LINKIFY_PATTERN = re.compile(
@@ -1374,7 +1382,8 @@ class GraphClient:
         candidate_names = [m["name"] for m in matches]
         raise SharePointFolderAmbiguous(
             f"Multiple SharePoint folders match '{folder_name}' under "
-            f"'{parent_path}': {candidate_names}. Merge these in SharePoint."
+            f"'{parent_path}': {candidate_names}. Merge these in SharePoint.",
+            candidate_names=candidate_names,
         )
 
     def upload_to_sharepoint(
@@ -1387,7 +1396,15 @@ class GraphClient:
     ) -> str | None:
         """Upload a file to a client's SharePoint folder.
 
-        Returns the SharePoint webUrl if successful, None if failed.
+        Returns the SharePoint webUrl if successful, None if a low-level
+        upload failure occurred.
+
+        Raises ``SharePointFolderMissing`` or ``SharePointFolderAmbiguous``
+        when the requested client folder cannot be uniquely resolved under
+        ``client_base``. Callers (Smart Responder, chat export) are expected
+        to catch these and surface them — auto-creation is forbidden so the
+        accountant can resolve the folder state in SharePoint deliberately.
+
         Path: /{library}/{client_base}/{client_name}/{entity_name}/{subfolder}/{filename}
         """
         site_id = self.get_sharepoint_site_id()
@@ -1402,7 +1419,17 @@ class GraphClient:
         config = self._get_sharepoint_config()
         folder_path = config["client_base"]
         if client_name:
-            folder_path += f"/{client_name}"
+            # Verify the client folder exists exactly once before uploading.
+            # Substitute the verbatim SharePoint name into the path so a
+            # casing/punctuation mismatch in the requested ``client_name``
+            # cannot cause Graph to silently auto-create a parallel folder.
+            actual_folder_name = self._ensure_client_folder_exists(
+                site_id=site_id,
+                drive_id=drive_id,
+                parent_path=config["client_base"],
+                folder_name=client_name,
+            )
+            folder_path += f"/{actual_folder_name}"
         if entity_name:
             folder_path += f"/{entity_name}"
         if subfolder:
