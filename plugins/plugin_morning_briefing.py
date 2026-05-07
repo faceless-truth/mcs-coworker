@@ -32,13 +32,30 @@ SCHEDULE
 Default: once daily at 8:00 AM (business days only).
 """
 
+import logging
 import re
 import time
 import requests
 from datetime import datetime, date, timedelta
 from plugin_base import AgentPlugin, PluginContext, PluginResult, Schedule, PluginCategory
-from config import get_setting, log_activity, get_active_lessons
+from config import (
+    get_setting, log_activity, get_active_lessons,
+    list_sharepoint_upload_pending, delete_sharepoint_upload_pending,
+)
+from graph_client import (
+    SHAREPOINT_CLIENT_BASE,
+    SharePointFolderAmbiguous,
+    SharePointFolderMissing,
+)
 from bas_dates import get_upcoming_deadlines, get_next_due_quarter
+
+logger = logging.getLogger(__name__)
+
+
+# Rows older than this are surfaced under a "Stale" sub-heading in the
+# brief's SharePoint folder issues section. Heuristic, not load-bearing —
+# tune after a few weeks of real data.
+SHAREPOINT_PENDING_STALE_DAYS = 7
 
 
 # ── Industry digest sources ───────────────────────────────────────────────────
@@ -108,6 +125,11 @@ class MorningBriefingPlugin(AgentPlugin):
 
         context.log(f"[MorningBriefing] Compiling briefing for {today_str}...")
 
+        # Drain resolved rows from the SharePoint upload-pending queue before
+        # compiling the brief, so the issues section we render below only
+        # lists genuinely-still-broken folders. No-op when the queue is empty.
+        self._retry_pending_sharepoint_uploads(context.graph)
+
         reception_mode = get_setting("reception_mode", "0") == "1"
         is_monday = now.weekday() == 0  # Monday = 0
 
@@ -147,9 +169,18 @@ class MorningBriefingPlugin(AgentPlugin):
             else:
                 subject = f"Morning Briefing — {today_str}"
 
+            # Append the SharePoint folder issues section AFTER synthesis so
+            # verbatim folder names (including subtle whitespace/punctuation
+            # differences that signal duplicates) reach the accountant intact.
+            # Empty-section header is suppressed by the renderer.
+            issues_section = self._render_sharepoint_issues_section()
+            email_body_text = briefing_text
+            if issues_section:
+                email_body_text += "\n\n" + issues_section
+
             body_html = (
                 f"<pre style='font-family:Calibri,sans-serif;font-size:14px'>"
-                f"{briefing_text}</pre>"
+                f"{email_body_text}</pre>"
             )
             for email in [r.strip() for r in recipients_setting.split(",") if r.strip()]:
                 try:
@@ -662,6 +693,164 @@ Do NOT include any sign-off, closing, or signature in your draft. No Kind regard
                 f"Morning Briefing — {today}\n{'=' * 50}\n{raw_data}"
                 f"\n\n[AI synthesis unavailable: {e}]"
             )
+
+    # ── SharePoint pending uploads ────────────────────────────────────────────
+
+    def _retry_pending_sharepoint_uploads(self, graph) -> tuple[int, int]:
+        """Re-probe each unresolved row in sharepoint_upload_pending. Delete
+        rows whose folder situation has been resolved (now uniquely matches
+        a single existing folder); leave rows that still raise Missing or
+        Ambiguous.
+
+        This is a probe, not an upload retry — the original draft body was
+        never preserved on the queue. The auto-file is best-effort and the
+        canonical artefact remains the Outlook draft. Once the folder is
+        fixed, future inbound emails for the same client auto-file natively.
+
+        Returns (scanned_count, resolved_count) for the log line.
+        """
+        rows = list_sharepoint_upload_pending(only_unresolved=True)
+        if not rows:
+            return (0, 0)
+        if graph is None:
+            logger.warning(
+                "[Brief] SharePoint retry pass skipped — Graph client not "
+                "available (queue depth=%d)", len(rows),
+            )
+            return (len(rows), 0)
+        site_id = graph.get_sharepoint_site_id()
+        drive_id = graph.get_sharepoint_drive_id(site_id) if site_id else None
+        if not drive_id:
+            logger.warning(
+                "[Brief] SharePoint retry pass skipped — site/drive not "
+                "reachable (queue depth=%d)", len(rows),
+            )
+            return (len(rows), 0)
+
+        resolved = 0
+        for row in rows:
+            try:
+                # Reach into the private helper deliberately: this is a read-only
+                # probe, not a public API. Adding a public wrapper for this single
+                # caller would be a thin proxy with no value.
+                graph._ensure_client_folder_exists(
+                    site_id=site_id,
+                    drive_id=drive_id,
+                    parent_path=SHAREPOINT_CLIENT_BASE,
+                    folder_name=row["client_name"],
+                )
+            except (SharePointFolderMissing, SharePointFolderAmbiguous):
+                # Still unresolved — leave the row, including its original
+                # created_at so the staleness threshold keeps working.
+                continue
+            except Exception as e:
+                logger.warning(
+                    "[Brief] SharePoint retry probe failed for '%s': %s",
+                    row["client_name"], e,
+                )
+                continue
+            # Helper returned without raising → folder is uniquely resolvable.
+            delete_sharepoint_upload_pending(row["id"])
+            resolved += 1
+
+        logger.info(
+            "[Brief] SharePoint retry pass: scanned %d, resolved %d",
+            len(rows), resolved,
+        )
+        return (len(rows), resolved)
+
+    def _render_sharepoint_issues_section(self) -> str:
+        """Render the SharePoint folder issues block for the brief.
+
+        Returns "" when there are no unresolved rows — callers concat the
+        result without checking, and an empty string is a no-op. An empty
+        section header is worse than no section.
+
+        Splits rows by staleness: fresh (≤ SHAREPOINT_PENDING_STALE_DAYS old)
+        render under the main "SharePoint folder issues" heading; stale rows
+        render under a separate "Stale SharePoint issues" heading. Each row
+        appears in exactly one section so a row never duplicates.
+
+        Folder names are rendered verbatim — this is the whole point of
+        Option C from the design discussion. The brief's main body goes
+        through Claude synthesis; this section does not, so a folder name
+        like "Beta  Holdings" with a double-space stays exactly that way
+        for the human reader to act on.
+        """
+        rows = list_sharepoint_upload_pending(only_unresolved=True)
+        if not rows:
+            return ""
+
+        threshold = datetime.utcnow() - timedelta(
+            days=SHAREPOINT_PENDING_STALE_DAYS
+        )
+        fresh: list[dict] = []
+        stale: list[dict] = []
+        for row in rows:
+            created_at = self._parse_pending_created_at(row.get("created_at"))
+            if created_at is not None and created_at < threshold:
+                stale.append(row)
+            else:
+                fresh.append(row)
+
+        chunks: list[str] = []
+        divider = "─" * 60
+
+        if fresh:
+            chunks.append(divider)
+            chunks.append("SharePoint folder issues")
+            chunks.append(divider)
+            chunks.append("")
+            for row in fresh:
+                chunks.append(self._render_pending_row(row))
+
+        if stale:
+            chunks.append(divider)
+            chunks.append("Stale SharePoint issues "
+                          f"(>{SHAREPOINT_PENDING_STALE_DAYS} days unresolved):")
+            chunks.append(divider)
+            chunks.append("")
+            for row in stale:
+                chunks.append(self._render_pending_row(row))
+
+        return "\n".join(chunks).rstrip() + "\n"
+
+    @staticmethod
+    def _parse_pending_created_at(raw):
+        """Parse a sharepoint_upload_pending.created_at into a naive UTC
+        datetime, or return None if it can't be parsed. SQLite's
+        CURRENT_TIMESTAMP returns 'YYYY-MM-DD HH:MM:SS' (UTC, naive)."""
+        if not raw:
+            return None
+        try:
+            return datetime.fromisoformat(raw)
+        except ValueError:
+            return None
+
+    @staticmethod
+    def _render_pending_row(row: dict) -> str:
+        """Render a single pending row as a bullet plus indented detail.
+        Folder names are inserted verbatim — see Option C rationale in
+        _render_sharepoint_issues_section."""
+        client_name = row.get("client_name", "(unknown client)")
+        candidate_names = row.get("candidate_names")
+        lines = [f"• {client_name}"]
+        if not candidate_names:
+            lines.append(
+                f"    Folder not found at {SHAREPOINT_CLIENT_BASE}/. "
+                "Please create the"
+            )
+            lines.append(
+                "    folder in SharePoint, or rename an existing folder "
+                "to match."
+            )
+        else:
+            lines.append("    Multiple folders match this client name:")
+            for name in candidate_names:
+                lines.append(f"        {SHAREPOINT_CLIENT_BASE}/{name}")
+            lines.append("    Please merge these in SharePoint.")
+        lines.append("")
+        return "\n".join(lines)
 
     # ── Utility ───────────────────────────────────────────────────────────────
 
