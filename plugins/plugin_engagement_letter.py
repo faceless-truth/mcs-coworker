@@ -168,10 +168,11 @@ class EngagementLetterPlugin(AgentPlugin):
                     f"Engagement Letter — {practice}",
                     letter,
                 )
-                # Flag the inbound trigger email so the accountant sees the
-                # draft is ready for review. Non-fatal on failure.
+                # Mark the inbound trigger email unread so the accountant
+                # sees a bold row in the inbox — the cue that a draft is
+                # ready for review. Non-fatal on failure.
                 try:
-                    context.graph.flag_email(msg_id)
+                    context.graph.mark_as_unread(msg_id)
                 except Exception:
                     pass
                 try:

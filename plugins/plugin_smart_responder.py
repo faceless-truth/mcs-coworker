@@ -228,19 +228,26 @@ class SmartEmailResponderPlugin(AgentPlugin):
                     graph.mark_as_read(message_id)
                 except Exception as e:
                     context.log(f"🧠 Couldn't mark read '{subject}' after drafting: {e}")
-                # Flag the original so a flag icon appears in the inbox — a
-                # visual cue that a draft reply is waiting. Non-fatal on
+                # Force the original back to unread so it shows bold in the
+                # inbox — the visual cue that a draft reply is waiting for
+                # human review. The Drafted category (below) provides the
+                # text label; the flag icon has been retired. Idempotency is
+                # guarded by the smart_responder_processed table, so leaving
+                # the email unread cannot cause re-drafting. Non-fatal on
                 # failure: the draft has already been created successfully.
                 try:
-                    graph.flag_email(message_id)
+                    graph.mark_as_unread(message_id)
                     logger.info(
-                        "Flagged email %s — draft ready for review", message_id
+                        "Marked email %s unread — draft ready for review",
+                        message_id,
                     )
                 except Exception as e:
-                    logger.warning("Could not flag email %s: %s", message_id, e)
+                    logger.warning(
+                        "Could not mark email %s unread: %s", message_id, e
+                    )
                 # "Drafted" category gives the inbox a visible text label
-                # alongside the flag icon. Best-effort — the draft and flag
-                # are already in place, so a category failure is non-fatal.
+                # alongside the bold unread row. Best-effort — the draft is
+                # already in place, so a category failure is non-fatal.
                 try:
                     graph.add_category(message_id, "Drafted")
                 except Exception as e:
