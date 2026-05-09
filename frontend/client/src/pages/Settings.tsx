@@ -871,6 +871,7 @@ type StaffSignatureRow = {
   title: string | null;
   email: string;
   enabled: number;
+  include_signature: number;
 };
 
 function EmailSignatureSection({
@@ -1043,7 +1044,7 @@ function EmailSignatureSection({
       </Field>
 
       {/* Staff table */}
-      <Field label="Staff signatures" hint="Edit name, title, or email; click Save on a row to commit. Disable a row to make that person fall back to the legacy image.">
+      <Field label="Staff signatures" hint="Edit name, title, or email; click Save on a row to commit. Disable a row to make that person fall back to the legacy image. Untick 'Append' to send AI drafts with no signature for that staff member.">
         {loading ? (
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             <Loader2 className="w-4 h-4 animate-spin" /> Loading…
@@ -1057,6 +1058,10 @@ function EmailSignatureSection({
                   <th className="text-left px-2 py-2 font-medium">Title</th>
                   <th className="text-left px-2 py-2 font-medium">Email (M365 match)</th>
                   <th className="text-left px-2 py-2 font-medium w-20">Enabled</th>
+                  <th
+                    className="text-left px-2 py-2 font-medium w-20"
+                    title="When unticked, AI-generated drafts for this staff member are created without the standard signature block."
+                  >Append</th>
                   <th className="text-right px-2 py-2 font-medium w-32">Actions</th>
                 </tr>
               </thead>
@@ -1090,6 +1095,14 @@ function EmailSignatureSection({
                         type="checkbox"
                         checked={!!row.enabled}
                         onChange={e => updateRowField(row.id, "enabled", e.target.checked ? 1 : 0)}
+                      />
+                    </td>
+                    <td className="px-2 py-1 text-center">
+                      <input
+                        type="checkbox"
+                        checked={row.include_signature !== 0}
+                        onChange={e => updateRowField(row.id, "include_signature", e.target.checked ? 1 : 0)}
+                        title="Append signature to AI drafts"
                       />
                     </td>
                     <td className="px-2 py-1 text-right space-x-1">

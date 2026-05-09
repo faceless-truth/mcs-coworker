@@ -211,13 +211,14 @@ def init_db():
         );
 
         CREATE TABLE IF NOT EXISTS staff_signatures (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            name       TEXT NOT NULL,
-            title      TEXT,
-            email      TEXT NOT NULL UNIQUE,
-            enabled    INTEGER NOT NULL DEFAULT 1,
-            created_at REAL NOT NULL DEFAULT (strftime('%s','now')),
-            updated_at REAL NOT NULL DEFAULT (strftime('%s','now'))
+            id                INTEGER PRIMARY KEY AUTOINCREMENT,
+            name              TEXT NOT NULL,
+            title             TEXT,
+            email             TEXT NOT NULL UNIQUE,
+            enabled           INTEGER NOT NULL DEFAULT 1,
+            include_signature INTEGER NOT NULL DEFAULT 1,
+            created_at        REAL NOT NULL DEFAULT (strftime('%s','now')),
+            updated_at        REAL NOT NULL DEFAULT (strftime('%s','now'))
         );
 
         CREATE INDEX IF NOT EXISTS idx_staff_signatures_email
@@ -227,6 +228,16 @@ def init_db():
     # Add display_name column if upgrading from older schema
     try:
         c.execute("ALTER TABLE plugin_registry ADD COLUMN display_name TEXT")
+    except sqlite3.OperationalError:
+        pass  # Column already exists
+
+    # Per-staff signature toggle. Default 1 preserves the prior behaviour for
+    # rows that existed before this column was introduced.
+    try:
+        c.execute(
+            "ALTER TABLE staff_signatures "
+            "ADD COLUMN include_signature INTEGER NOT NULL DEFAULT 1"
+        )
     except sqlite3.OperationalError:
         pass  # Column already exists
 
@@ -643,7 +654,7 @@ def delete_staff(staff_id: int):
 # M365 signed-in email is matched (case-insensitively) to the `email` column
 # to pick up their name + title for every plugin draft.
 
-STAFF_SIGNATURE_COLUMNS = {"name", "title", "email", "enabled"}
+STAFF_SIGNATURE_COLUMNS = {"name", "title", "email", "enabled", "include_signature"}
 
 
 def _validate_signature_email(email: str) -> str:
@@ -697,23 +708,25 @@ def save_staff_signature(data: dict) -> int:
     email = _validate_signature_email(data.get("email", ""))
     title = (data.get("title") or "").strip() or None
     enabled = 1 if data.get("enabled", 1) else 0
+    include_signature = 1 if data.get("include_signature", 1) else 0
 
     conn = get_db()
     try:
         if data.get("id"):
             conn.execute(
                 "UPDATE staff_signatures "
-                "SET name=?, title=?, email=?, enabled=?, "
+                "SET name=?, title=?, email=?, enabled=?, include_signature=?, "
                 "    updated_at=strftime('%s','now') "
                 "WHERE id=?",
-                (name, title, email, enabled, int(data["id"])),
+                (name, title, email, enabled, include_signature, int(data["id"])),
             )
             row_id = int(data["id"])
         else:
             cur = conn.execute(
-                "INSERT INTO staff_signatures (name, title, email, enabled) "
-                "VALUES (?, ?, ?, ?)",
-                (name, title, email, enabled),
+                "INSERT INTO staff_signatures "
+                "(name, title, email, enabled, include_signature) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (name, title, email, enabled, include_signature),
             )
             row_id = cur.lastrowid
         conn.commit()

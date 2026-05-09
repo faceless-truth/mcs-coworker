@@ -106,6 +106,43 @@ class TestSignatureBuilder(unittest.TestCase):
         out = sb.build_signature_html(None, _legacy)
         self.assertEqual(out, "<LEGACY-SIGNATURE-SENTINEL>")
 
+    # ── Per-user include_signature toggle ──────────────────────────────
+
+    def test_include_signature_default_on_renders_signature(self):
+        # Existing seeded rows default to include_signature=1, so behaviour is
+        # unchanged from before the column was added.
+        elio = cfg.get_staff_signature_by_email("elio@mcands.com.au")
+        self.assertEqual(elio["include_signature"], 1)
+        out = sb.build_signature_html("elio@mcands.com.au", _legacy)
+        self.assertIn("Elio Scarton", out)
+
+    def test_include_signature_off_returns_empty_string(self):
+        # Toggle Elio's flag off and confirm the builder returns an empty
+        # string — not the legacy fallback. Otherwise the toggle would do
+        # nothing for users with a legacy image configured.
+        elio = cfg.get_staff_signature_by_email("elio@mcands.com.au")
+        cfg.save_staff_signature({**elio, "include_signature": 0})
+        try:
+            out = sb.build_signature_html("elio@mcands.com.au", _legacy)
+            self.assertEqual(out, "")
+        finally:
+            cfg.save_staff_signature({**elio, "include_signature": 1})
+
+    def test_include_signature_toggle_round_trips_via_save_helper(self):
+        elio = cfg.get_staff_signature_by_email("elio@mcands.com.au")
+        cfg.save_staff_signature({**elio, "include_signature": 0})
+        try:
+            self.assertEqual(
+                cfg.get_staff_signature_by_email("elio@mcands.com.au")["include_signature"],
+                0,
+            )
+        finally:
+            cfg.save_staff_signature({**elio, "include_signature": 1})
+        self.assertEqual(
+            cfg.get_staff_signature_by_email("elio@mcands.com.au")["include_signature"],
+            1,
+        )
+
     # ── Firm constants + LinkedIn slot ─────────────────────────────────
 
     def test_linkedin_url_unset_omits_linkedin(self):

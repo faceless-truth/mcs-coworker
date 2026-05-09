@@ -351,6 +351,12 @@ def build_signature_html(
             )
             return _invoke_legacy(legacy_fallback)
 
+        # Per-user opt-out. The accountant has explicitly turned the standard
+        # signature off for their drafts — return empty rather than falling
+        # back to the legacy image, otherwise the toggle would do nothing.
+        if not staff.get("include_signature", 1):
+            return ""
+
         _ensure_images_loaded()
         settings = _resolve_settings()
         return _build_html(staff, settings, _image_cache)
