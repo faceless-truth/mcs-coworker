@@ -176,6 +176,16 @@ def get_all_agents() -> Dict[str, SpecialistAgent]:
             file_types=[".pdf", ".xlsx", ".csv", ".txt"],
             model_preference="sonnet",
         ),
+        SpecialistAgent(
+            id="chattel_mortgage",
+            name="Chattel Mortgage",
+            description="Australian chattel mortgage finance — AASB 9 effective-interest amortisation schedules",
+            icon="🧮",
+            category="tax",
+            system_prompt=_load_prompt("chattel_mortgage.md"),
+            supports_files=False,
+            model_preference="sonnet",
+        ),
     ]}
 
 

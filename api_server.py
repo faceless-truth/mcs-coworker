@@ -1248,6 +1248,58 @@ def list_agents():
     })
 
 
+@app.route("/api/specialists/chattel-mortgage/export-schedule", methods=["POST"])
+def chattel_mortgage_export():
+    """Render an .xlsx amortisation workbook from the structured loan inputs
+    the Chattel Mortgage specialist emits. The body is a JSON object of shape
+    {"loans": [{...}, ...]} — see specialists/prompts/chattel_mortgage.md for
+    the per-loan field contract. Auth is the global Bearer token gate.
+    """
+    from datetime import datetime
+    from specialists.chattel_mortgage.schedule import LoanInputs, render_workbook
+
+    payload = request.get_json(silent=True) or {}
+    loans_in = payload.get("loans") or []
+    if not loans_in:
+        return err("No loans supplied", 400)
+
+    loans: list[LoanInputs] = []
+    for raw in loans_in:
+        try:
+            loans.append(LoanInputs(
+                asset=str(raw["asset"]).strip(),
+                start_date=datetime.strptime(raw["start_date"], "%Y-%m-%d").date(),
+                amount_financed=float(raw["amount_financed"]),
+                stated_rate_pa=float(raw["stated_rate_pa"]),
+                term_months=int(raw["term_months"]),
+                monthly_payment=float(raw["monthly_payment"]),
+                balloon=float(raw.get("balloon", 0) or 0),
+                convention=str(raw.get("convention", "in_advance")),
+            ))
+        except (KeyError, ValueError, TypeError) as e:
+            return err(f"Invalid loan input: {e}", 400)
+
+    try:
+        xlsx_bytes = render_workbook(loans)
+    except Exception as e:
+        logger.exception("chattel_mortgage_export render failed")
+        return err(f"Workbook render failed: {e}", 500)
+
+    if len(loans) == 1:
+        safe = "".join(
+            c for c in loans[0].asset if c.isalnum() or c in " -_"
+        )[:50].strip().replace(" ", "_")
+        filename = f"Chattel_Mortgage_{safe or 'Schedule'}.xlsx"
+    else:
+        filename = "Chattel_Mortgage_Schedules.xlsx"
+
+    return Response(
+        xlsx_bytes,
+        mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @app.route("/api/chat", methods=["POST"])
 def chat():
     if not _check_chat_rate():

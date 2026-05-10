@@ -96,6 +96,11 @@ const AGENT_EXAMPLES: Record<string, string[]> = {
     "Reconcile these WRAP and Annual statements",
     "Generate BGL import CSV from this data",
   ],
+  chattel_mortgage: [
+    "Schedule one chattel mortgage — 2024 Hilux, $58,500, 6.85% p.a., 48 months, $1,442.10/month",
+    "Two loans for the same client — produce a multi-sheet workbook",
+    "Loan with a $10,000 balloon at the end — show me the schedule",
+  ],
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -240,6 +245,7 @@ export default function Chat() {
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   const [exportingType, setExportingType] = useState<"transcript" | "summary" | "recommendation" | null>(null);
+  const [exportingChattel, setExportingChattel] = useState<number | null>(null);
   const [clientName, setClientName] = useState("");
   const [entityName, setEntityName] = useState("");
   const [clientNamesList, setClientNamesList] = useState<string[]>([]);
@@ -523,6 +529,63 @@ export default function Chat() {
     }
 
     return md;
+  };
+
+  // Post the Chattel Mortgage specialist's emitted inputs block to the
+  // export endpoint and stream the returned .xlsx blob to a browser download.
+  const exportChattelMortgage = async (
+    inputs: { loans: any[] },
+    msgId: number,
+  ) => {
+    const loanCount = Array.isArray(inputs?.loans) ? inputs.loans.length : 0;
+    if (loanCount === 0) {
+      toast.error("No loans in the inputs block");
+      return;
+    }
+    setExportingChattel(msgId);
+    try {
+      const token = (window as any).__API_TOKEN__ || "";
+      const res = await fetch(
+        "http://127.0.0.1:7842/api/specialists/chattel-mortgage/export-schedule",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify(inputs),
+        },
+      );
+      if (!res.ok) {
+        let msg = `HTTP ${res.status}`;
+        try {
+          const body = await res.json();
+          msg = body.error || msg;
+        } catch {
+          /* fall through with HTTP status */
+        }
+        throw new Error(msg);
+      }
+      const blob = await res.blob();
+      // Filename comes back in Content-Disposition; fall back to a sensible default.
+      const cd = res.headers.get("Content-Disposition") || "";
+      const match = cd.match(/filename="?([^"]+)"?/i);
+      const filename = match?.[1] ||
+        (loanCount === 1 ? "Chattel_Mortgage_Schedule.xlsx" : "Chattel_Mortgage_Schedules.xlsx");
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      toast.success(`Downloaded ${filename}`);
+    } catch (e: any) {
+      toast.error("Export failed", { description: e?.message ?? "" });
+    } finally {
+      setExportingChattel(null);
+    }
   };
 
   const handleExport = async (
@@ -947,6 +1010,45 @@ export default function Chat() {
                 </div>
               )}
               {renderContent(msg.content)}
+              {msg.role === "assistant" && (() => {
+                const m = msg.content.match(/```chattel_mortgage_inputs\s*\n([\s\S]*?)\n```/);
+                if (!m) return null;
+                let inputs: any;
+                try {
+                  inputs = JSON.parse(m[1]);
+                } catch {
+                  return (
+                    <div className="mt-3 pt-3 border-t border-slate-200 text-xs text-amber-700">
+                      Chattel mortgage inputs block was malformed JSON — ask the specialist to re-emit it.
+                    </div>
+                  );
+                }
+                const loanCount = Array.isArray(inputs?.loans) ? inputs.loans.length : 0;
+                if (loanCount === 0) return null;
+                const downloading = exportingChattel === msg.id;
+                return (
+                  <div className="mt-3 pt-3 border-t border-slate-200 flex flex-col gap-1.5">
+                    <button
+                      type="button"
+                      disabled={downloading}
+                      onClick={() => exportChattelMortgage(inputs, msg.id)}
+                      className={`inline-flex items-center gap-1.5 self-start px-2.5 py-1 rounded-md text-xs font-medium border transition-all ${
+                        downloading
+                          ? "border-slate-200 bg-slate-50 text-slate-400 cursor-default"
+                          : "border-emerald-200 bg-emerald-50 text-emerald-700 hover:border-emerald-400 hover:bg-emerald-100"
+                      }`}
+                      title={`Export ${loanCount === 1 ? "amortisation schedule" : `${loanCount} amortisation schedules`} to Excel`}
+                    >
+                      <Download className="w-3 h-3" />
+                      {downloading
+                        ? "Exporting…"
+                        : loanCount === 1
+                          ? "Export Schedule"
+                          : `Export ${loanCount} Schedules`}
+                    </button>
+                  </div>
+                );
+              })()}
               {msg.role === "assistant" && (() => {
                 const blocks = parseEmailBlocks(msg.content, msg.id);
                 if (blocks.length === 0) return null;
