@@ -70,6 +70,12 @@ const AGENT_EXAMPLES: Record<string, string[]> = {
     "IT contractor, single client, $200k profit — PSI implications?",
     "Family with 3 adult beneficiaries, business profit $300k",
   ],
+  senior_tax_advisor: [
+    "Corporate beneficiary UPE from FY24 trust resolution, $250k unpaid — Div 7A exposure post-Bendel?",
+    "Family trust holding shares for 15 years — small business CGT concession eligibility on sale",
+    "s 100A reimbursement agreement risk on adult-child distribution funding parents' lifestyle",
+    "Pre-CGT business asset sale into a new corporate structure — Pt IVA exposure?",
+  ],
   payroll: [
     "New receptionist in a law firm — what award and rate?",
     "Casual kitchen hand in a cafe — pay rates and penalties",

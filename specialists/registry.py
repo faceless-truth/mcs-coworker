@@ -122,6 +122,17 @@ def get_all_agents() -> Dict[str, SpecialistAgent]:
             model_preference="opus",
         ),
         SpecialistAgent(
+            id="senior_tax_advisor",
+            name="Senior Tax Advisor",
+            description="Senior-level Australian tax advisory. Complex multi-domain matters: integrity provisions (Div 7A, s 100A, Pt IVA), CGT concessions and rollovers, trust resolutions, restructures, CPA-grade memoranda with statute, case, and ruling citations.",
+            icon="⚖️",
+            category="tax",
+            system_prompt=_load_prompt("senior_tax_advisor.md"),
+            supports_files=True,
+            file_types=[".pdf", ".docx", ".xlsx", ".csv", ".txt"],
+            model_preference="opus",
+        ),
+        SpecialistAgent(
             id="individual_tax",
             name="Individual Tax Deductions",
             description="Occupation-specific deductions, rental property, audit risk assessment",
